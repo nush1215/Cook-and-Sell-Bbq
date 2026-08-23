@@ -1,0 +1,11 @@
+{
+    "[lua]": {
+        "editor.defaultFormatter": "JohnnyMorganz.stylua",
+        "editor.formatOnSave": true
+    },
+
+    "robloxLsp.diagnostics.disable": [
+        "redundant-parameter"
+    ],
+    "stylua.targetReleaseVersion": "latest"
+}

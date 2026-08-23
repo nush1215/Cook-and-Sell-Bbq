@@ -1,0 +1,25 @@
+[package]
+name = "ascora-studios/cook-and-sell-bbq"
+version = "0.1.0"
+registry = "https://github.com/UpliftGames/wally-index"
+realm = "shared"
+
+[dependencies]
+Replica = "aykut92/replica@*"
+Promise = "evaera/promise@*"
+Trove = "sleitnick/trove@*"
+Component = "sleitnick/component@*"
+PartCache = "andremhpra/partcache@*"
+TopbarPlus = "legitatx/topbarplus@*"
+ZonePlus = "mattschrubb/zoneplus@*"
+Signal = "sleitnick/signal@*"
+Spring = "brittonfischer/spring@*"
+Spr = "artisticvampyre/spr@*"
+Cmdr = "evaera/cmdr@*"
+CameraShaker = "brittonfischer/camerashaker@*"
+Input = "sleitnick/input@*"
+RaycastHitbox = "ulferno/raycasthitbox@*"
+Sift = "csqrl/sift@*"
+
+[server-dependencies]
+ProfileStore = "lm-loleris/profilestore@*"

@@ -1,0 +1,14 @@
+# Project place file
+/Template-B.rbxlx
+
+# Rojo files
+sourcemap.json
+
+# Roblox Studio lock files
+/*.rbxlx.lock
+/*.rbxl.lock
+
+# Wally packages
+Packages
+ServerPackages
+*.lock
