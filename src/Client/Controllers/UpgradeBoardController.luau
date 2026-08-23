@@ -58,8 +58,8 @@ local function getScreenGui(): ScreenGui
 	return screenGui
 end
 
--- Paints one section from current player data: the title ("Stick Stands (2)"), the level line ("2>3"
--- or "Max (5)"), the currency price, and hides the buy buttons once the stand is maxed so a
+-- Paints one section from current player data: the title ("Ingredient Rolls (2)"), the level line
+-- ("2>3" or "Max (6)"), the currency price, and hides the buy buttons once the group is maxed so a
 -- fully-upgraded one can't be fired at.
 function UpgradeBoardController:_refreshSection(frame: Frame, unlock: BaseUnlocks.Unlock)
 	local unlocks = PlayerDataController:GetKey("Unlocks") or {}
@@ -123,7 +123,7 @@ end
 -- yields on its first MarketplaceService call for an id and the buttons are painted from a data change.
 -- Repaints the board afterwards so a section drawn while the lookups were in flight picks its price up.
 -- Walks the whole config rather than the board's sections, the same way _notifyAffordableUpgrades does,
--- so the grillers -- priced on their own unlock sign, with no section here -- are warmed by this too.
+-- so an unlock group that gains a section later is warmed by this without anything being added here.
 function UpgradeBoardController:_cacheRobuxPrices()
 	for _, unlock in BaseUnlocks.Data do
 		if not unlock.RobuxProductIds then
@@ -150,8 +150,8 @@ end
 -- go and buy it rather than having to re-read the prices themselves. Latched per level: the next
 -- level already announced is remembered, so a balance that dips under the cost and climbs back stays
 -- quiet, while buying the level makes the stored number stale and re-arms the one after it.
--- Walks the whole config rather than the board's sections, so the grillers -- bought out at their own
--- unlock sign, with no section here -- are covered too.
+-- Walks the whole config rather than the board's sections, so an unlock group with no section on the
+-- board is still announced.
 function UpgradeBoardController:_notifyAffordableUpgrades(currency: number)
 	local unlocks = PlayerDataController:GetKey("Unlocks") or {}
 
@@ -219,7 +219,6 @@ function UpgradeBoardController:_setupBase()
 
 	self._sections = {
 		{ frame = clone.IngredientRolls, unlock = BaseUnlocks.GetUnlockFromId("RollingStands") },
-		{ frame = clone.StickStands, unlock = BaseUnlocks.GetUnlockFromId("StickStand") },
 	}
 
 	for _, section in self._sections do

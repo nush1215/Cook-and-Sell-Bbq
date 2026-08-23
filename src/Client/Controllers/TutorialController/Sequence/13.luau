@@ -14,8 +14,7 @@ local CookStates = require(ReplicatedStorage.Shared.Config.CookStates)
 local NEAR_DISTANCE = 12
 
 return function(self)
-	local base = self:GetBase()
-	local slot = base.Interactables.Grillers["1"]
+	local slot = self:GetStructure("Grillers")
 	local knob = slot.Knob.Handle
 
 	local highlight = self:CreateHighlight(knob)

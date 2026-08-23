@@ -4,8 +4,7 @@ local EquippedItem = require(script.Parent.Parent.Parent.Parent.Modules.Equipped
 local NEAR_DISTANCE = 12
 
 return function(self)
-	local base = self:GetBase()
-	local slot = base.Interactables.Grillers["1"]
+	local slot = self:GetStructure("Grillers")
 
 	-- The grill prompt's attachment rather than the slot: it marks where the player has to stand to place
 	-- or take, and the model is wide enough that its centre reads as near from places nothing on it is in

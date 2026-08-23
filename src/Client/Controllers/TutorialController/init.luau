@@ -1,5 +1,6 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 
@@ -14,6 +15,7 @@ local Network = require(Shared.Network)
 local GuiUtil = require(Shared.GuiUtil)
 local Highlights = require(Shared.Config.Highlights)
 local Keywords = require(Shared.Config.Keywords)
+local Structures = require(Shared.Config.Structures)
 
 -- Modules
 local Modules = script.Parent.Parent.Modules
@@ -266,6 +268,35 @@ function TutorialController:GetBaseIfPresent(): Model?
 	self.Base = (baseId and baseFolder and baseFolder:FindFirstChild(baseId)) or nil
 
 	return self.Base
+end
+
+-- Returns one of the player's structures of the given kind, blocking until there is one. Grillers and
+-- stands are things the player builds rather than slots authored into a base (see Config.Structures),
+-- so a step can't reach for a fixed path -- it asks for a griller and gets whichever one they have.
+--
+-- Keyed on the category rather than a structure id, so a step still finds the player's only griller
+-- when that griller is some later model of one.
+--
+-- BEWARE: this blocks until the player has one, and nothing gives them a starting build any more --
+-- so a step calling it before the player has built the thing it wants waits forever, and the funnel
+-- stops dead there. Whatever re-enables the tutorial (data.TutorialCompleted starts true today, so it
+-- doesn't run) has to make building a griller and a stand steps of its own, ahead of steps 8-14.
+function TutorialController:GetStructure(category: string): Model
+	local base = self:GetBase()
+	local folder = base:WaitForChild(Structures.FOLDER_NAME)
+
+	while true do
+		for _, model in folder:GetChildren() do
+			if model:HasTag(category) then
+				return model
+			end
+		end
+
+		-- The tag goes on last, after the model is parented and its attributes are set, so a structure
+		-- arriving is not the same moment as it becoming findable. Waiting on the tag rather than the
+		-- child is what makes sure the one handed back is ready to be pointed at.
+		CollectionService:GetInstanceAddedSignal(category):Wait()
+	end
 end
 
 -- Logs an onboarding funnel step. The server owns the ordering and names; the client only sends the

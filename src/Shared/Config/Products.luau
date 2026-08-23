@@ -5,10 +5,10 @@ local RunService = game:GetService("RunService")
 -- Config
 local Sticks = require(script.Parent.Sticks)
 local BaseUnlocks = require(script.Parent.BaseUnlocks)
+local Plots = require(script.Parent.Plots)
 local Crates = require(script.Parent.Crates)
 local StarterPack = require(script.Parent.StarterPack)
 local BuxPacks = require(script.Parent.BuxPacks)
-local CookSpeed = require(script.Parent.CookSpeed)
 local Ingredients = require(script.Parent.Ingredients)
 
 --
@@ -77,6 +77,28 @@ for _, unlock in BaseUnlocks.Data do
 	end
 end
 
+-- Plot Robux products, one per plot a player can buy (see Plots.RobuxProductIds). The index only sets
+-- the price: every one of these buys one plot, and which plot that is was chosen at the sign rather
+-- than carried on the product, so BaseManager remembers it when it raises the prompt.
+for index, productId in Plots.RobuxProductIds do
+	table.insert(Products.Data, {
+		Id = Plots.GetProductStringId(index),
+		Name = `Plot Upgrade {index}`,
+		Type = "Core",
+		PurchaseOnce = false,
+		ProductId = productId,
+		Callback = function(player: Player)
+			if RunService:IsClient() then
+				return
+			end
+
+			-- Lazy require to avoid pulling BaseManager's dependency graph at module load.
+			local BaseManager = require(ServerScriptService.Server.Managers.BaseManager)
+			BaseManager:GrantPlotFromProduct(player)
+		end,
+	})
+end
+
 -- Crate Robux products, one per bundle a dev product was made for (see Crates.RobuxProductIds). The
 -- amount is baked into the product rather than asked for at purchase time, so a receipt grants exactly
 -- the bundle it was sold as.
@@ -105,28 +127,6 @@ for _, crate in Crates.Data do
 			end,
 		})
 	end
-end
-
--- Cook-speed Robux products, one per price band (see CookSpeed.RobuxProductIds). The band only sets the
--- price: every one of these buys the next cook-speed level on whichever grill the player opened the
--- prompt from, which GrillerManager remembers, so a receipt that lands out of order can't skip a level.
-for tier, productId in CookSpeed.RobuxProductIds do
-	table.insert(Products.Data, {
-		Id = CookSpeed.GetProductStringId(tier),
-		Name = `Cook Speed Upgrade (Tier {tier})`,
-		Type = "Core",
-		PurchaseOnce = false,
-		ProductId = productId,
-		Callback = function(player: Player)
-			if RunService:IsClient() then
-				return
-			end
-
-			-- Lazy require to avoid pulling GrillerManager's dependency graph at module load.
-			local GrillerManager = require(ServerScriptService.Server.Managers.GrillerManager)
-			GrillerManager:GrantCookSpeedUpgradeFromProduct(player)
-		end,
-	})
 end
 
 -- Ingredient Robux products, one per price band (see Ingredients.RobuxProductIds). The band only sets

@@ -1,5 +1,6 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
@@ -17,75 +18,75 @@ local StickStand = require(script.StickStand)
 --
 local LocalPlayer = Players.LocalPlayer
 
+-- The structure category stick stands are, which is also the tag every placed one wears. The category
+-- and not one model's id, so a second kind of stand renders through this controller with nothing changed.
+local STAND_CATEGORY = "StickStands"
+
+-- The child a StickStand has to have to seat anything. It comes off the structure's template, so it's
+-- always there -- but a placed stand replicates in mid-session rather than existing from place-load,
+-- so it's waited on rather than assumed (see _addStand).
+local REQUIRED_CHILD = "Stand"
+local CHILD_TIMEOUT = 10
+
 --[[
     Renders the sticks placed on every base's stick stands and drives the owner's place/remove prompt.
 
-    One StickStand instance per stand clone, across every base, so visitors see placed sticks too --
+    One StickStand instance per placed stand, across every base, so visitors see placed sticks too --
     the server writes which stick sits on each stand to a PlacedStickId attribute and the class
-    renders it. The prompt is the class's own concern and only appears on the local player's base.
+    renders it. The prompt is the class's own concern and only appears on stands the local player owns.
+
+    Stands are structures a player builds rather than slots authored into their base, so they're found
+    off the StickStand tag: one appearing mid-session is picked up the same way as one that was already
+    down when the client started, and the OwnerUserId attribute on it is what says whose it is.
 ]]
 
 --
 local StickStandController = {
 	ToggleStickEvent = Network.Event("ToggleStickOnStand"),
 
-	_stands = {}, -- [clone: Model] = StickStand
+	_stands = {}, -- [model: Model] = StickStand
 	_cleaner = Trove.new(),
 }
 
--- Builds a StickStand for a stand clone the base just added, unless one already tracks it.
-function StickStandController:_addStand(clone: Model, baseId: string)
-	if self._stands[clone] then
+-- Builds a StickStand for a placed stand, unless one already tracks it.
+function StickStandController:_addStand(model: Model)
+	if self._stands[model] then
 		return
 	end
 
-	local stand = StickStand.new(clone, baseId)
-	self._stands[clone] = stand
+	-- The server builds the stand complete before it tags it, and Roblox replicates a newly-parented
+	-- model's descendants together, so this is belt-and-braces -- but a stand built without it has
+	-- nowhere to seat a stick for good rather than merely late.
+	if not model:WaitForChild(REQUIRED_CHILD, CHILD_TIMEOUT) then
+		warn(`[StickStand] {model.Name} has no {REQUIRED_CHILD}, it won't render`)
+		return
+	end
+
+	-- Waiting above yields, so the stand can have been taken away in the meantime.
+	if not model.Parent or self._stands[model] then
+		return
+	end
+
+	local stand = StickStand.new(model)
+	self._stands[model] = stand
 	self._cleaner:Add(stand)
 end
 
--- Drops the StickStand for a stand clone the base took away (a downgrade, or the base being cleared).
-function StickStandController:_removeStand(clone: Model)
-	local stand = self._stands[clone]
+-- Drops the StickStand for a stand that's been taken away.
+function StickStandController:_removeStand(model: Model)
+	local stand = self._stands[model]
 	if not stand then
 		return
 	end
 
 	self._cleaner:Remove(stand)
-	self._stands[clone] = nil
-end
-
--- Tracks a base's stick stands as its owner unlocks and (rarely) loses them. The server parks a
--- stand out of the world while it's locked and parents it back in when it's bought, so the folder is
--- what says which stands a base has.
-function StickStandController:_setupBase(baseModel: Model)
-	local interactables = baseModel:FindFirstChild("Interactables")
-	local standFolder = interactables and interactables:FindFirstChild("StickStand")
-	if not standFolder then
-		return
-	end
-
-	for _, clone in standFolder:GetChildren() do
-		if tonumber(clone.Name) then
-			self:_addStand(clone, baseModel.Name)
-		end
-	end
-
-	self._cleaner:Connect(standFolder.ChildAdded, function(clone)
-		if tonumber(clone.Name) then
-			self:_addStand(clone, baseModel.Name)
-		end
-	end)
-
-	self._cleaner:Connect(standFolder.ChildRemoved, function(clone)
-		self:_removeStand(clone)
-	end)
+	self._stands[model] = nil
 end
 
 -- Asks the server to place the equipped stick on this stand, load an ingredient onto it, or take it
 -- back off -- the server decides which from what the player holds and the stand's state.
-function StickStandController:RequestToggle(slotId: string)
-	self.ToggleStickEvent:FireServer(slotId)
+function StickStandController:RequestToggle(uid: string)
+	self.ToggleStickEvent:FireServer(uid)
 end
 
 -- Re-checks every stand's prompt (ownership + text). Cheap, and the prompt text depends on what the
@@ -117,24 +118,29 @@ end
 function StickStandController:OnStart()
 	self._characterCleaner = self._cleaner:Construct(Trove)
 
-	-- Bases are fixed in the place file, so sweep them once. Each base drives its own stands as they
-	-- come and go.
-	for _, baseModel in workspace.Base:GetChildren() do
-		self:_setupBase(baseModel)
+	-- A stand placed on any base wires itself up here, whether it went down before this client started
+	-- or while it's running.
+	self._cleaner:Connect(CollectionService:GetInstanceAddedSignal(STAND_CATEGORY), function(model)
+		self:_addStand(model)
+	end)
+
+	self._cleaner:Connect(CollectionService:GetInstanceRemovedSignal(STAND_CATEGORY), function(model)
+		self:_removeStand(model)
+	end)
+
+	-- _addStand waits on the stand's children, so keep the sweep off the main thread.
+	for _, model in CollectionService:GetTagged(STAND_CATEGORY) do
+		task.spawn(function()
+			self:_addStand(model)
+		end)
 	end
 
 	-- One loop keeps every placed stick (and its ingredients) glued to its stand as the client
-	-- animates the stand in and reflows the grid.
+	-- animates it into place.
 	RunService.Heartbeat:Connect(function(deltaTime: number)
 		for _, stand in self._stands do
 			stand:Update(deltaTime)
 		end
-	end)
-
-	-- BaseId lands after the stands are already built (Base clones them before setting the attribute),
-	-- and it changes when the local player is assigned or loses a base -- re-check every stand's prompt.
-	LocalPlayer:GetAttributeChangedSignal("BaseId"):Connect(function()
-		self:_refreshPrompts()
 	end)
 
 	-- Equipping/unequipping an ingredient changes what the prompt should say.

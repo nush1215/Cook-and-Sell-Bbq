@@ -46,8 +46,8 @@ export type StickRecord = {
 	-- carries neither -- GetCookStateId is what reads the pair back as a state.
 	CookState: string?,
 	-- How far up the bar a pull off the raw band got, as a fraction of it, so the next light resumes
-	-- from there rather than from cold. A fraction and not seconds, so it means the same thing on a
-	-- grill with a different CookSpeed. Only ever on a raw skewer -- any cook that gets past that band
+	-- from there rather than from cold. A fraction and not seconds, so it means the same thing however
+	-- long the bar it resumes on runs. Only ever on a raw skewer -- any cook that gets past that band
 	-- settles into CookState instead and clears this.
 	CookProgress: number?,
 	Sauce: string?, -- a Sauces id, whose particles ride on every ingredient of the skewer

@@ -57,6 +57,8 @@ local TUTORIAL_CRATE_DELAY = 2
 local PROGRESS_RESET_KEYS = {
 	"Currency",
 	"Unlocks",
+	"Plots",
+	"Structures",
 	"Ingredients",
 	"PendingRolls",
 	"IngredientIndex",
@@ -65,7 +67,6 @@ local PROGRESS_RESET_KEYS = {
 	"SkewerStand",
 	"FilledSticks",
 	"Grillers",
-	"GrillerCookSpeed",
 	"SauceDispensers",
 	"Sauces",
 	"Crates",

@@ -54,6 +54,11 @@ local StatsManager
     it to its size's capacity. The bottles themselves are SauceToolManager's.
 ]]
 
+-- How see-through the preview of the next size up is. Applied as a floor, never a set, so a part the
+-- place file authored invisible doesn't fade *into* view. Lived on Config.BaseUnlocks while grillers
+-- were a Ghost unlock and shared it; this is the only reader left.
+local GHOST_TRANSPARENCY = 0.7
+
 --
 local SauceDispenserManager = {
 	-- The size upgrade is driven by the dispenser's size sign (the unlock by BaseManager's generic
@@ -306,7 +311,7 @@ function SauceDispenserManager:_renderBottle(
 	if isPreview then
 		for _, descendant in model:GetDescendants() do
 			if descendant:IsA("BasePart") then
-				descendant.Transparency = math.max(descendant.Transparency, BaseUnlocks.GHOST_TRANSPARENCY)
+				descendant.Transparency = math.max(descendant.Transparency, GHOST_TRANSPARENCY)
 			end
 		end
 	end

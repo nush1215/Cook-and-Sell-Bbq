@@ -12,6 +12,7 @@ local Shared = ReplicatedStorage.Shared
 local Sticks = require(Shared.Config.Sticks)
 local Ingredients = require(Shared.Config.Ingredients)
 local Highlights = require(Shared.Config.Highlights)
+local Structures = require(Shared.Config.Structures)
 local StickIngredients = require(Shared.StickIngredients)
 local RandomUtil = require(Shared.RandomUtil)
 
@@ -56,20 +57,21 @@ local function sourceModel(ingredient: Ingredients.Ingredient, cooked: boolean):
 end
 
 --[[
-    Class for a single stick stand on some base.
+    Class for a single placed stick stand on some base.
 
-    One instance per stand clone, on every client, so placed sticks and their ingredients show up for
-    visitors too. The server writes the stick + ingredient list to the clone's PlacedStickId /
+    One instance per stand, on every client, so placed sticks and their ingredients show up for
+    visitors too. The server writes the stick + ingredient list to the stand's PlacedStickId /
     PlacedIngredients attributes; this renders them onto the stand's StickAttachment and keeps them
-    there as the client animates the stand. A freshly-added ingredient drops in from above; the rest
-    render in place. The place/put/remove prompt only goes up on the local player's own base.
+    there as the client animates the stand into place. A freshly-added ingredient drops in from above;
+    the rest render in place. The place/put/remove prompt only goes up on stands the local player owns,
+    which the OwnerUserId attribute the base stamped on it is what says.
 ]]
 
 --
 local StickStand = {}
 StickStand.__index = StickStand
 
-function StickStand.new(clone: Model, baseId: string)
+function StickStand.new(clone: Model)
 	--
 	local cleaner = Trove.new()
 
@@ -80,7 +82,13 @@ function StickStand.new(clone: Model, baseId: string)
 	local self = setmetatable({
 		--
 		_clone = clone,
-		_baseId = baseId,
+
+		-- Which placed stand this is, and whose it is. Both are stamped on by the base before it tags
+		-- the model, so they're set by the time this class is ever built, and a stand only exists while
+		-- its owner does -- so ownership is fixed for the whole life of one of these.
+		_uid = clone:GetAttribute(Structures.UID_ATTRIBUTE),
+		_ownerUserId = clone:GetAttribute(Structures.OWNER_ATTRIBUTE),
+
 		_stand = stand,
 		_attachment = attachment,
 		_promptAttachment = promptAttachment,
@@ -115,15 +123,15 @@ function StickStand.new(clone: Model, baseId: string)
 		_promptCleaner = cleaner:Construct(Trove),
 	}, StickStand)
 
-	-- The parts live in the place file, not this repo, so a missing Stand/attachment is a real failure
-	-- case rather than something the code guarantees.
+	-- The parts come off the structure's template in the place file, not this repo, so a missing
+	-- Stand/attachment is a real failure case rather than something the code guarantees.
 	if not attachment then
-		warn(`[StickStand] {baseId} stand {clone.Name} has no Stand.StickAttachment, it won't render`)
+		warn(`[StickStand] {clone.Name} has no Stand.StickAttachment, it won't render`)
 		return self
 	end
 
 	if not promptAttachment then
-		warn(`[StickStand] {baseId} stand {clone.Name} has no Stand.StickPromptAttachment, it won't prompt`)
+		warn(`[StickStand] {clone.Name} has no Stand.StickPromptAttachment, it won't prompt`)
 	end
 
 	cleaner:Connect(clone:GetAttributeChangedSignal("PlacedStickId"), function()
@@ -456,7 +464,7 @@ function StickStand:RefreshPrompt()
 		return
 	end
 
-	local owned = self._baseId == LocalPlayer:GetAttribute("BaseId")
+	local owned = self._ownerUserId == LocalPlayer.UserId
 
 	if owned and not self._prompt then
 		local prompt = Instance.new("ProximityPrompt")
@@ -470,7 +478,7 @@ function StickStand:RefreshPrompt()
 		self._promptCleaner:Add(prompt)
 		self._promptCleaner:Connect(prompt.Triggered, function()
 			StickStandController = StickStandController or require(script.Parent)
-			StickStandController:RequestToggle(self._clone.Name)
+			StickStandController:RequestToggle(self._uid)
 		end)
 	elseif not owned and self._prompt then
 		self._promptCleaner:Clean()
@@ -521,7 +529,7 @@ end
 -- they hold a stick to put on it, or the placed stick while they hold an ingredient it has room for.
 -- Reads the same state the prompt text does, so what glows and what the prompt says can't disagree.
 function StickStand:RefreshHighlights()
-	local owned = self._baseId == LocalPlayer:GetAttribute("BaseId")
+	local owned = self._ownerUserId == LocalPlayer.UserId
 	local stickId = self._clone:GetAttribute("PlacedStickId")
 
 	local canPlaceStick = owned and not stickId and EquippedItem.GetStickId() ~= nil
@@ -561,8 +569,9 @@ end
 function StickStand:Destroy()
 	self:_clearIngredients()
 
-	-- The server parks a locked stand out of the world rather than destroying it, so it can come back
-	-- with our tag still on it -- and breathe on a stand nobody owns. Take it off on the way out.
+	-- The base destroys the stand itself, but the removed-tag signal that brings us here can land before
+	-- it does -- so the model can outlive this class for a frame with our tag still on it, breathing on
+	-- a stand that's on its way out. Take it off rather than leave that to timing.
 	self._clone:RemoveTag(Highlights.TAG)
 
 	-- The billboard and its detached template live under the stand clone, not the stick model, so drop

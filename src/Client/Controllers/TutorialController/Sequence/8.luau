@@ -5,8 +5,7 @@ local NEAR_DISTANCE = 12
 local BEAM_HIDE_DISTANCE = 12
 
 return function(self)
-	local base = self:GetBase()
-	local slot = base.Interactables.StickStand["1"]
+	local slot = self:GetStructure("StickStands")
 
 	local highlight = self:CreateHighlight(slot)
 	local beam = self:CreateBeam(slot.Stand, BEAM_HIDE_DISTANCE)

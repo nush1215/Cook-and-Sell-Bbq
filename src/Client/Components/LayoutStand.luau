@@ -21,13 +21,15 @@ local EffectController = require(script.Parent.Parent.Controllers.EffectControll
 	rises up and pops to full scale on start; an upgrade that reshuffles the grid retargets the
 	attribute and the copy slides across (scale is left alone, so it doesn't re-pop).
 
-	Ghost slots' signs ride the same flow: one bought slot's sign is dropped in above its spot and
-	tagged, so it springs down into place like it was planted. They're authored at full scale, so
-	the scale target below is a no-op for them.
+	A freshly-placed structure rides the same spring the other way up: the server authors it *above*
+	its slot and at full size, so it drops onto the spot rather than growing out of it -- buying an
+	upgrade and building something read differently on purpose. Nothing here tells the two apart;
+	where the model starts is the whole difference, and being already full size makes the scale
+	target below a no-op for them.
 
-	A copy that came up on a purchase also carries PulseOnSpawn, and flashes gold as it rises. The
-	server only sets it on the render that follows an actual upgrade, so a base building itself out
-	on join stays quiet -- and it never goes on signs, since the pulse marks the thing you bought.
+	A model that came up on a purchase or a placement also carries PulseOnSpawn, and flashes gold as
+	it moves. The server only sets it on the render that follows an actual change, so a base building
+	itself out on join stays quiet.
 ]]
 local LayoutStand = Component.new({
 	Tag = script.Name,

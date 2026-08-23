@@ -21,9 +21,10 @@ Gamepasses.Data = {
 		Name = "x2 Bux",
 		PassId = 1952486659,
 	},
-	-- Unlocks the sixth griller slot, which sits past the Griller unlock's Limit so nothing on the
-	-- currency ladder can reach it. The slot itself is described by that unlock's GamepassSlots entry in
-	-- Config.BaseUnlocks -- both the base's render and the client's sign read this Id as the tag.
+	-- Currently perk-less. It used to unlock a sixth griller slot that sat past the Griller unlock's
+	-- Limit, but grillers are freely-placed structures now (see Config.Structures) and there's no ladder
+	-- for a slot to sit past. Kept rather than removed: the pass is live and its owners still carry this
+	-- Id as a tag, so whatever the new golden grill turns out to be can hang off the same ownership.
 	{
 		Id = "GoldenGrill",
 		Name = "Golden Grill",

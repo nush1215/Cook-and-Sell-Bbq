@@ -6,12 +6,41 @@ return {
 
 		-- Core Game
 		Unlocks = {
-			Griller = 1, -- the Griller
-			StickStand = 1, -- the Stick Stand
 			SauceDispenser = 0, -- the Sauce Dispenser
 			SkewerStand = 1,
 			RollingStands = 1, -- The gambling thing
 		},
+
+		-- Which plots on their base the player has bought, keyed by the plot's name in the base's Plots
+		-- folder. The starting plot isn't in here -- it's the START cell in Config.Plots' grid, owned
+		-- from the moment the base is handed over, and it's what makes the three plots touching it the
+		-- first ones on offer. What a plot costs is priced off how many of these there are rather than
+		-- which ones, so the player's choice is where to expand and never how much for.
+		Plots = {}, -- [plotId] = true
+
+		-- Everything the player has built on their base, keyed by a uid minted at placement
+		-- (HttpService:GenerateGUID(false), the same as a FilledStick's). Type is a Config.Structures id,
+		-- naming the Assets.Structures model it's cloned from. Where it sits is the plot it's on plus the
+		-- grid cell it starts at and how many quarter-turns it's been rotated -- relative rather than
+		-- absolute, because a player is handed whichever base is free and an absolute pose would rebuild
+		-- on the wrong one.
+		--
+		-- Cells rather than a pose because that's exactly what the client sends and the server checks, so
+		-- what's saved is what was validated: the build comes back on a rejoin on the same cells with no
+		-- drift, and which plot has to be unlocked for a structure to exist is a lookup rather than
+		-- something worked out backwards from a position.
+		--
+		-- Grillers and StickStands below are keyed by these same uids: the structure is the thing, and
+		-- those are whatever is sitting on it.
+		Structures = {}, -- [uid] = { Type, PlotId, CellX, CellZ, Rotation }
+		-- Structures the player owns but hasn't put down yet, held as a stacking tool each. A structure
+		-- is only ever in one of the two places: counted here, or standing on a plot above. Placing one
+		-- spends it from here and demolishing it puts it back, so nothing is lost to a bad spot.
+		--
+		-- Seeded with one of each because there's nowhere to buy them yet -- a new player needs a griller
+		-- and a stand to have a game at all. Once a shop exists this goes back to empty and the shop
+		-- calls BuildManager:GrantStructure instead.
+		OwnedStructures = { BaseGriller = 1, BaseStickStand = 1 }, -- [structureId] = amount owned
 
 		-- Core Shop Stuff
 		StarterPackStart = 0,
@@ -42,29 +71,30 @@ return {
 		-- neither, so on everything that reads those two it's indistinguishable from one that was never lit.
 		-- What it does carry is CookProgress: how far up the bar that pull got, as a fraction of it, so the
 		-- next light resumes there instead of starting from cold. A fraction rather than seconds, so it
-		-- means the same thing on a griller with a different CookSpeed; only ever below CookStates.RAW_END,
+		-- means the same thing however long the bar it resumes on runs; only ever below CookStates.RAW_END,
 		-- since any cook that gets past that band settles into CookState and clears this. Adding an
 		-- ingredient wipes it -- a trip through a stick stand drops it on purpose (see StickStandManager).
 		-- Sauce is a Sauces id, applied at a dispenser once it's cooked and likewise permanent -- so it only
 		-- ever appears on FilledSticks and SkewerStand records, never on a stick stand or griller.
 		-- Mutation is a Mutations id and permanent too, but it's the grill's doing rather than the
-		-- player's: a stop on a gamepass griller (the Golden Grill) stamps it, and like CookState a raw
-		-- pull carries none. It multiplies what the skewer sells for and puts its particles on it.
+		-- player's. Nothing stamps one today -- the grill that did was the Golden Grill's slot, which went
+		-- with the unlock ladder -- so it only appears on skewers made before that, and on whatever the
+		-- new golden grill ends up being. It multiplies what the skewer sells for and puts its particles
+		-- on it.
 		Sticks = {}, -- [stickId] = amount owned
-		StickStands = {}, -- [slotId] = { StickId, Ingredients = { ingredientId }, Cooked? } placed on that stand
+		-- [structureUid] = { StickId, Ingredients = { ingredientId }, Cooked? } placed on that stand
+		StickStands = {},
 		-- The sell stall's SkewerStand: an array (max 6) of cooked skewers on display, in placement order.
 		-- One stand per base, so this is a plain list rather than slot-keyed; each entry is a full skewer record.
 		SkewerStand = {}, -- { { StickId, Ingredients = { ingredientId }, Cooked = true, Sauce?, Mutation? }, ... }
 		FilledSticks = {}, -- [uid] = { StickId, Ingredients, Cooked?, Sauce?, Mutation? } held as a distinct tool
-		-- [slotId] = { StickId, Ingredients = { ingredientId }, Cooked?, CookState?, CookProgress?, Mutation? } sitting
+		-- [structureUid] = { StickId, Ingredients = { ingredientId }, Cooked?, CookState?, CookProgress?, Mutation? } sitting
 		-- on that griller. While it's cooking it also carries Cooking = true, CookStartedAt =
 		-- workspace:GetServerTimeNow() and CookTime = the whole 0 -> 1 run in seconds. The player decides
 		-- when to stop it, so a cook nobody comes back for still ends on schedule -- burnt -- even across a
 		-- rejoin. It may also carry CookWindowStretch, how many times longer this one cook's perfect window
 		-- runs (see CookStates.GetBarElapsed) -- stamped at the light and absent on every ordinary cook.
 		Grillers = {},
-		-- [slotId] = CookSpeed upgrade level on that griller; absent or 0 cooks at the base speed.
-		GrillerCookSpeed = {},
 
 		-- Sauce Dispenser
 		-- [slotId] = { Size = "Small", Sauce = sauceId?, Remaining = number, Skewer? }. Remaining starts at the
@@ -127,7 +157,7 @@ return {
 		-- gameplay progress wiped on the way out (see TutorialManager.PROGRESS_RESET_KEYS), so a
 		-- rejoin always starts the sequence over on a clean base rather than dropping them halfway
 		-- through a loop they never saw the start of.
-		TutorialCompleted = false,
+		TutorialCompleted = true,
 		TutorialStep = 0, -- furthest onboarding funnel step reached; written for analytics, never read back
 
 		-- Stats

@@ -5,8 +5,7 @@ local EquippedItem = require(script.Parent.Parent.Parent.Parent.Modules.Equipped
 local NEAR_DISTANCE = 12
 
 return function(self)
-	local base = self:GetBase()
-	local slot = base.Interactables.StickStand["1"]
+	local slot = self:GetStructure("StickStands")
 
 	local highlight = self:CreateHighlight(slot)
 

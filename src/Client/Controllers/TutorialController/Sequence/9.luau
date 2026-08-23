@@ -18,8 +18,7 @@ return function(self)
 	local pinnedIngredient = Ingredients.GetIngredientFromId(TUTORIAL_INGREDIENT_ID)
 	local ingredientName = self:Emphasize(pinnedIngredient.Name, pinnedIngredient.Color)
 
-	local base = self:GetBase()
-	local slot = base.Interactables.StickStand["1"]
+	local slot = self:GetStructure("StickStands")
 
 	local highlight = self:CreateHighlight(slot)
 

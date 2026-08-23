@@ -39,9 +39,9 @@ local CustomFields = Enum.AnalyticsCustomFieldKeys
 -- listed falls back to Gameplay.
 local SOURCE_TRANSACTION_TYPES = {
 	BaseUnlock = Enum.AnalyticsEconomyTransactionType.Shop.Name,
+	PlotUnlock = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	IngredientPurchase = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	StickPurchase = Enum.AnalyticsEconomyTransactionType.Shop.Name,
-	CookSpeedUpgrade = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	SauceDispenserUpgrade = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	BuxPack = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 }
@@ -181,8 +181,8 @@ function AnalyticsManager:OnStart()
 	StickShopManager.OnStickPurchased:Connect(function(player, stickId, price, method)
 		logCustom(player, "Stick Bought", price, stickId, method)
 	end)
-	GrillerManager.OnCookCompleted:Connect(function(player, cookStateId, elapsed, cookSpeedLevel, method)
-		logCustom(player, "Cook Completed", elapsed, cookStateId, tostring(cookSpeedLevel), method)
+	GrillerManager.OnCookCompleted:Connect(function(player, cookStateId, elapsed, method)
+		logCustom(player, "Cook Completed", elapsed, cookStateId, method)
 	end)
 	SkewerStandManager.OnSkewerPlaced:Connect(function(player, record, placedCount)
 		logCustom(player, "Skewer Placed", 1, StickModel.GetCookStateId(record), tostring(placedCount))
@@ -219,8 +219,8 @@ function AnalyticsManager:OnStart()
 			logCustom(player, "Base Upgraded", cost, unlockId, tostring(newLevel), method)
 		end
 	end)
-	GrillerManager.OnCookSpeedUpgraded:Connect(function(player, slotId, newLevel, cost, method)
-		logCustom(player, "Cook Speed Upgraded", cost, slotId, tostring(newLevel), method)
+	BaseManager.OnPlotPurchased:Connect(function(player, plotId, newCount, cost, method)
+		logCustom(player, "Plot Unlocked", cost, plotId, tostring(newCount), method)
 	end)
 	BadgeManager.OnBadgeAwarded:Connect(function(player, badgeKey)
 		logCustom(player, "Badge Awarded", 1, badgeKey)

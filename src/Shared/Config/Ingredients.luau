@@ -81,9 +81,9 @@ Ingredients.SALE_VALUE_MULTIPLIER = 1.1
 Ingredients.CHANCE_SUM_TOLERANCE = 0.02
 
 -- The Robux dev products an ingredient can be bought outright with when the player hasn't the Bux for
--- it, cheapest first. Like CookSpeed.RobuxProductIds these are keyed by *band* rather than by the thing
--- they buy: there are eighteen ingredients and more coming, against ten products, so a product is a
--- price band and whichever ingredient falls into it is what that band sells.
+-- it, cheapest first. These are keyed by *band* rather than by the thing they buy: there are eighteen
+-- ingredients and more coming, against ten products, so a product is a price band and whichever
+-- ingredient falls into it is what that band sells.
 Ingredients.RobuxProductIds = {
 	3709025916,
 	3709025936,

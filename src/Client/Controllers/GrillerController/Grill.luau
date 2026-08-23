@@ -11,14 +11,12 @@ local Spr = require(Packages.Spr)
 local Shared = ReplicatedStorage.Shared
 local Ingredients = require(Shared.Config.Ingredients)
 local Highlights = require(Shared.Config.Highlights)
-local BaseUnlocks = require(Shared.Config.BaseUnlocks)
-local CookSpeed = require(Shared.Config.CookSpeed)
+local Structures = require(Shared.Config.Structures)
 local CookStates = require(Shared.Config.CookStates)
 local GuiUtil = require(Shared.GuiUtil)
 
 -- Controllers
 local Controllers = script.Parent.Parent
-local UIController = require(Controllers.UIController)
 local SoundController = require(Controllers.SoundController)
 local ShopController = require(Controllers.ShopController)
 
@@ -33,7 +31,6 @@ local Particles = ReplicatedStorage.Assets.Particles
 
 --
 local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer.PlayerGui
 
 local GRILL_PROMPT_DISTANCE = 10
 local KNOB_PROMPT_DISTANCE = 15
@@ -78,20 +75,14 @@ local LED_ON_COLOR = Color3.fromRGB(0, 255, 0)
 local LED_OFF_COLOR = Color3.fromRGB(255, 0, 0)
 local HANDLE_ON_ROTATION = CFrame.Angles(0, math.rad(90), 0) -- how far the knob turns when the stove's on
 
--- The signs the base plants on a griller, and the UI each one wears. The base decides which is up:
--- the unlock sign only while this grill is the next one up for purchase, the CookSpeed sign once it's
--- bought.
-local UNLOCK_SIGN_NAME = "UnlockSign"
-local COOK_SPEED_SIGN_NAME = "CookSpeedUpgradeSign"
-
 -- Required lazily to break the cycle: GrillerController requires this class.
 local GrillerController
 
 --[[
-    Class for a single griller slot, on every client, so a cooking skewer spins and browns for
+    Class for a single placed griller, on every client, so a cooking skewer spins and browns for
     visitors too.
 
-    The server clones the (static) skewer model onto the slot and mirrors the record onto the slot's
+    The server clones the (static) skewer model onto the griller and mirrors the record onto its
     attributes (PlacedStickId / Cooking / Cooked / CookStartedAt / CookTime / CookIngredients). This
     class reads those and renders the cook locally: while Cooking it spins the skewer (fully
     client-authoritative -- it spins up, holds speed, and after the stop winds itself down onto a
@@ -109,29 +100,10 @@ local GrillerController
     telling them. The bands and those timings both live in the CookStates config, so the bar this draws
     and the state the server settles on when the stop lands can't disagree.
 
-    The place/stop/take prompt and the cook knob only go up on the local player's own base, and only
-    once the slot's Unlocked -- a locked grill is faded, its knob is hidden outright, and it carries no
-    interaction at all.
-
-    The signs on a locked/owned grill are the base's (it plants and pulls the models); what this class
-    does is mount their UI -- the unlock price, and the CookSpeed upgrade -- on the owner's client, and
-    take the models themselves down on everyone else's. Both halves of a sign are the owner's business,
-    so on a base the local player doesn't own there's nothing left of one to see or walk into.
+    The place/stop/take prompt and the cook knob only go up on grillers the local player owns, which
+    the OwnerUserId attribute the base stamped on it is what says. A griller only exists while its
+    owner does, so that never changes over one griller's life.
 ]]
-
--- The one ScreenGui the grill signs live under. They sit in PlayerGui adorned back onto the sign's
--- board rather than in the world, because that's what makes their buttons clickable.
-local function getScreenGui(): ScreenGui
-	local screenGui = PlayerGui:FindFirstChild("GrillSigns")
-	if screenGui == nil then
-		screenGui = Instance.new("ScreenGui")
-		screenGui.Name = "GrillSigns"
-		screenGui.ResetOnSpawn = false
-		screenGui.Parent = PlayerGui
-	end
-
-	return screenGui
-end
 
 -- How far the spin has turned by `elapsed`, expressed in full-speed seconds: it eases up from a
 -- standstill to full speed over the first `ramp` seconds (integrated from a smoothstep so it accelerates
@@ -164,7 +136,7 @@ end
 local Grill = {}
 Grill.__index = Grill
 
-function Grill.new(slot: Instance, baseId: string)
+function Grill.new(slot: Instance)
 	--
 	local cleaner = Trove.new()
 
@@ -176,10 +148,15 @@ function Grill.new(slot: Instance, baseId: string)
 	local self = setmetatable({
 		--
 		_slot = slot,
-		_baseId = baseId,
 
-		-- The skewer spins about the attachment where the server seated it; captured once since the
-		-- griller is a static Ghost the server never moves.
+		-- Which placed griller this is, and whose it is. Both are stamped on by the base before it tags
+		-- the model, so they're set by the time this class is ever built, and a griller only exists
+		-- while its owner does -- so ownership is fixed for the whole life of one of these.
+		_uid = slot:GetAttribute(Structures.UID_ATTRIBUTE),
+		_ownerUserId = slot:GetAttribute(Structures.OWNER_ATTRIBUTE),
+
+		-- The skewer spins about the attachment where the server seated it; captured once, since a
+		-- griller doesn't move again once it's been placed.
 		_attachment = attachment,
 		_baseCFrame = attachment and attachment.WorldCFrame,
 
@@ -238,16 +215,7 @@ function Grill.new(slot: Instance, baseId: string)
 		_knobPrompt = nil,
 		_takeSkewerPrompt = nil,
 
-		-- The sign UIs currently mounted on this grill's boards, by sign name.
-		_signUIs = {}, -- [signName] = { UI, Cleaner }
-
-		-- The authored look of every sign instance we've hidden, so signs on a base we're handed go back
-		-- up exactly as the place file had them. Keyed loosely on purpose: the restore just writes each
-		-- pair back, so it never has to work out what a given instance was.
-		_signLooks = {}, -- [Instance] = { [property] = value }
-
-		-- [id] = true for every Robux price this grill's signs have already gone and asked for -- the
-		-- unlock's dev product or pass, and each cook-speed band in turn -- so a lookup that came back
+		-- [id] = true for every Robux price this grill has already gone and asked for -- so a lookup that came back
 		-- empty isn't tried again every time a sign is repainted.
 		_requestedPrices = {},
 
@@ -264,10 +232,10 @@ function Grill.new(slot: Instance, baseId: string)
 
 	self._handleRestCFrame = self._handle and self._handle.CFrame
 
-	-- The prompt/knob and the spin all need the slot's parts, which live in the place file -- a missing
-	-- attachment is a real failure case rather than something the code guarantees.
+	-- The prompt/knob and the spin all need the griller's parts. GrillerController waits on them before
+	-- building this class, so reaching here without one means the structure's template is wrong.
 	if not attachment then
-		warn(`[Griller] {baseId} slot {slot.Name} has no StickAttachment, its cook won't render`)
+		warn(`[Griller] {slot.Name} has no StickAttachment, its cook won't render`)
 		return self
 	end
 
@@ -293,7 +261,7 @@ function Grill.new(slot: Instance, baseId: string)
 		end
 	end)
 
-	-- The cook animation, the stove, the prompt and the signs all track these.
+	-- The cook animation, the stove and the prompt all track these.
 	local attributes = {
 		"PlacedStickId",
 		"Cooking",
@@ -303,26 +271,10 @@ function Grill.new(slot: Instance, baseId: string)
 		"CookWindowStretch",
 		"CookProgress",
 		"CookIngredients",
-		"Unlocked",
-		"CookSpeedLevel",
 	}
 	for _, attribute in attributes do
 		cleaner:Connect(slot:GetAttributeChangedSignal(attribute), function()
 			self:_sync()
-		end)
-	end
-
-	-- Buying a grill plants a sign on the *next* one along, whose own attributes never changed, so
-	-- follow the folder rather than relying on this slot's state to catch it. Descendants and not just
-	-- children, because a planted sign replicates model-first -- the board its UI adorns arrives after
-	-- the model does, and that arrival is what makes the sign mountable.
-	local signs = slot:FindFirstChild("Signs")
-	if signs then
-		cleaner:Connect(signs.DescendantAdded, function()
-			self:_refreshSigns()
-		end)
-		cleaner:Connect(signs.ChildRemoved, function()
-			self:_refreshSigns()
 		end)
 	end
 
@@ -823,7 +775,7 @@ function Grill:Update()
 	-- Once the bar has nowhere left to go, ring the owner's alarm on the grill: a burst, a gap, and again
 	-- for as long as the stove's left on. Only theirs -- a visitor stood by a full grill isn't the one who
 	-- can do anything about it.
-	if overtime >= 0 and self._baseId == LocalPlayer:GetAttribute("BaseId") then
+	if overtime >= 0 and self._ownerUserId == LocalPlayer.UserId then
 		if not self._alarmNextAt or os.clock() >= self._alarmNextAt then
 			-- Re-derived from now rather than advanced by the interval, so a hitch can't queue two bursts
 			-- back to back.
@@ -855,76 +807,14 @@ function Grill:Update()
 	end
 end
 
--- Mounts one of the slot's sign UIs on its board, or takes it down, following the sign model the base
--- plants and pulls. The UI lives in PlayerGui adorned back onto the board, because world-parented
--- buttons don't take clicks. Returns the mounted UI, or nil when that sign isn't up.
+-- A Robux price as it goes on a prompt, reading "-" until the MarketplaceService lookup lands (or if it
+-- failed), matching how ShopController:GetPrice reports one it couldn't get.
 --
--- `buttons` maps a child of the template's Holder.Buttons onto what pressing it does, bound once as the
--- UI goes up. Anything under Buttons the map doesn't name is hidden, which is what lets one function
--- mount three templates that offer different things: the unlock sign sells for currency or Robux, the
--- cook speed sign for currency alone (there's no dev product behind it yet), and a gamepass slot's sign
--- has the single button that buys its pass.
-function Grill:_syncSignUI(signName: string, template: Instance, buttons: { [string]: () -> () }): Instance?
-	local signs = self._slot:FindFirstChild("Signs")
-	local sign = signs and signs:FindFirstChild(signName)
-	local mounted = self._signUIs[signName]
-
-	if not sign then
-		if mounted then
-			self._cleaner:Remove(mounted.Cleaner)
-			self._signUIs[signName] = nil
-		end
-
-		return nil
-	end
-
-	if mounted then
-		return mounted.UI
-	end
-
-	-- The sign model replicates ahead of its own parts, so on a join the board it adorns can still be
-	-- on the way. The folder's DescendantAdded brings us back here once it lands.
-	local board = sign:FindFirstChild("Board")
-	if not board then
-		return nil
-	end
-
-	local signCleaner = self._cleaner:Construct(Trove)
-
-	local ui = template:Clone()
-	ui.Adornee = board
-	ui.Active = true
-	ui.Parent = getScreenGui()
-	signCleaner:Add(ui)
-
-	for _, button in ui.Holder.Buttons:GetChildren() do
-		if not button:IsA("GuiButton") then
-			continue
-		end
-
-		local onClick = buttons[button.Name]
-		if onClick then
-			local binding = UIController:BindButtonClick(button, onClick, true)
-			signCleaner:Add(binding.Disconnect)
-		else
-			button.Visible = false
-		end
-	end
-
-	self._signUIs[signName] = { UI = ui, Cleaner = signCleaner }
-
-	return ui
-end
-
--- A Robux price as it goes on a buy button or a prompt, reading "-" until the MarketplaceService lookup
--- lands (or if it failed), matching how ShopController:GetPrice reports one it couldn't get.
---
--- The signs and the skip prompt are only repainted when something about the slot changes, so a price that
--- wasn't cached yet when one went up would read "-" for as long as it stands. The lookup yields, so it
--- goes on its own thread and brings the whole slot back through RefreshInteraction once it lands. Each id
--- is asked for once rather than retried -- a failed lookup would otherwise spin here, since nothing caches
--- the failure. It's tracked per id rather than once per grill because the cook-speed sign moves through
--- several products as its level climbs.
+-- The skip prompt is only repainted when something about the griller changes, so a price that wasn't
+-- cached yet when it went up would read "-" for as long as it stands. The lookup yields, so it goes on
+-- its own thread and brings the whole griller back through RefreshInteraction once it lands. Each id is
+-- asked for once rather than retried -- a failed lookup would otherwise spin here, since nothing caches
+-- the failure.
 -- @param id A Products or Gamepasses id -- ShopController resolves a price for either
 function Grill:_robuxPriceText(id: string): string
 	local price = ShopController:GetCachedPrice(id)
@@ -941,195 +831,18 @@ function Grill:_robuxPriceText(id: string): string
 	return `{GuiUtil.ROBUX_ICON}{price or "-"}`
 end
 
--- Takes this grill's sign models down on a base the local player doesn't own, and puts them back on the
--- one they do. The base plants signs for everyone, but only their owner has anything to do with them --
--- left standing they'd be blank boards in the way, so they come down entirely, collision included.
---
--- Client-side because the server has one world to replicate and can't show a model to one player and
--- not another, and safe to do here because it never writes a sign part's look itself: see the skip in
--- Base:_cacheSlots, where signs are left out of the ghost-fade bookkeeping.
-function Grill:_setSignsShown(shown: boolean)
-	if shown then
-		for instance, authored in self._signLooks do
-			local target = instance :: any
-			for property, value in authored do
-				target[property] = value
-			end
-		end
-
-		-- Nothing's hidden any more, so the next hide starts from the world's own values again. This is
-		-- also what keeps signs the base has since pulled from piling up in here.
-		table.clear(self._signLooks)
-
-		return
-	end
-
-	local signs = self._slot:FindFirstChild("Signs")
-	if not signs then
-		return
-	end
-
-	-- A planted sign replicates model-first, so this runs again for each part as it lands (the folder's
-	-- DescendantAdded); anything already hidden is skipped rather than re-read, or the second pass would
-	-- capture the values the first one wrote.
-	for _, descendant in signs:GetDescendants() do
-		if self._signLooks[descendant] then
-			continue
-		end
-
-		if descendant:IsA("BasePart") then
-			-- The collision goes with the fade: an invisible board is still a wall to walk into.
-			self._signLooks[descendant] = {
-				Transparency = descendant.Transparency,
-				CanCollide = descendant.CanCollide,
-			}
-			descendant.Transparency = 1
-			descendant.CanCollide = false
-		elseif descendant:IsA("Decal") then
-			-- Texture inherits from Decal, so the one check covers both.
-			self._signLooks[descendant] = { Transparency = descendant.Transparency }
-			descendant.Transparency = 1
-		elseif
-			descendant:IsA("SurfaceGui")
-			or descendant:IsA("BillboardGui")
-			or descendant:IsA("ParticleEmitter")
-			or descendant:IsA("Beam")
-			or descendant:IsA("Trail")
-			or descendant:IsA("Light")
-		then
-			-- Read rather than assumed on, so a piece authored off doesn't light up when the sign returns.
-			self._signLooks[descendant] = { Enabled = descendant.Enabled }
-			descendant.Enabled = false
-		end
-	end
-end
-
--- Paints this grill's signs from the level the base and the server put on the slot: the unlock price
--- while it's the next grill up for purchase, the CookSpeed step and price once it's owned. Owner-only,
--- since the buttons buy on the local player's own base.
-function Grill:_refreshSigns()
-	local slotNumber = tonumber(self._slot.Name)
-	local owned = self._baseId == LocalPlayer:GetAttribute("BaseId")
-
-	self:_setSignsShown(owned)
-
-	-- Off our base, drop whatever's mounted -- the models have just gone with the call above, so there's
-	-- no board left for a UI to adorn.
-	if not owned then
-		for signName, mounted in self._signUIs do
-			self._cleaner:Remove(mounted.Cleaner)
-			self._signUIs[signName] = nil
-		end
-
-		return
-	end
-
-	-- A gamepass slot -- the Golden Grill -- sits off the currency ladder entirely, so its unlock sign
-	-- wears its own template and sells the pass rather than a level. Everything the ladder's sign shows
-	-- (the next level, its currency cost, its dev product) is meaningless on it.
-	local gamepassSlot = BaseUnlocks.GetGamepassSlot("Griller", slotNumber)
-
-	if gamepassSlot then
-		local gamepassUI = self:_syncSignUI(UNLOCK_SIGN_NAME, UI[gamepassSlot.SignUI], {
-			Purchase = function()
-				ShopController:PromptGamepassPurchaseFromId(gamepassSlot.Gamepass)
-			end,
-		})
-
-		if gamepassUI then
-			gamepassUI.Holder.TextLabel.Text = gamepassSlot.Name
-			gamepassUI.Holder.Buttons.Purchase.Title.Text = self:_robuxPriceText(gamepassSlot.Gamepass)
-		end
-	else
-		-- Only the next locked grill ever wears an unlock sign, so this slot's number is the level being
-		-- bought -- which is what picks the dev product out, the same way it picks the currency price out.
-		local griller = BaseUnlocks.GetUnlockFromId("Griller")
-		local unlockProductId = griller.RobuxProductIds and griller.RobuxProductIds[slotNumber]
-		local unlockProductStringId = BaseUnlocks.GetProductStringId("Griller", slotNumber)
-
-		local unlockButtons = {
-			CurrencyPurchase = function()
-				GrillerController = GrillerController or require(script.Parent)
-				GrillerController:RequestUnlockGrill()
-			end,
-		}
-
-		if unlockProductId then
-			unlockButtons.RobuxPurchase = function()
-				ShopController:PromptProductPurchaseFromId(unlockProductStringId)
-			end
-		end
-
-		local unlockUI = self:_syncSignUI(UNLOCK_SIGN_NAME, UI.GrillUnlockUI, unlockButtons)
-
-		if unlockUI then
-			unlockUI.Holder.TextLabel.Text = `Unlock Grill {slotNumber}`
-			unlockUI.Holder.Buttons.CurrencyPurchase.Title.Text =
-				`${GuiUtil.ConvertNumberWithSuffix(griller.Costs[slotNumber])}`
-
-			if unlockProductId then
-				unlockUI.Holder.Buttons.RobuxPurchase.Title.Text = self:_robuxPriceText(unlockProductStringId)
-			end
-		end
-	end
-
-	-- Every owned grill upgrades its cook speed the same way, the Golden Grill included -- the base puts
-	-- this sign up on any unlocked slot, so nothing here has to tell them apart.
-	local cookSpeedUI = self:_syncSignUI(COOK_SPEED_SIGN_NAME, UI.CookSpeedUI, {
-		CurrencyPurchase = function()
-			GrillerController = GrillerController or require(script.Parent)
-			GrillerController:RequestCookSpeedUpgrade(self._slot.Name)
-		end,
-		-- Unlike every other Robux button on a sign, this one doesn't prompt through ShopController: the
-		-- server has to know which grill is being upgraded, and the product it prompts is a price band
-		-- shared by several levels whose receipt can't say.
-		RobuxPurchase = function()
-			GrillerController = GrillerController or require(script.Parent)
-			GrillerController:RequestCookSpeedUpgradeProduct(self._slot.Name)
-		end,
-	})
-
-	if cookSpeedUI then
-		local level = self._slot:GetAttribute("CookSpeedLevel") or 0
-		local isMax = level >= CookSpeed.MAX_LEVEL
-		local holder = cookSpeedUI.Holder
-
-		holder.TextLabel.Text = "Cook Speed"
-		holder.Level.Text = if isMax
-			then `Max ({CookSpeed.FormatMultiplier(CookSpeed.MAX_LEVEL)}x)`
-			else `{CookSpeed.FormatMultiplier(level)}x>{CookSpeed.FormatMultiplier(level + 1)}x`
-		holder.Buttons.Visible = not isMax
-
-		if not isMax then
-			holder.Buttons.CurrencyPurchase.Title.Text =
-				`${GuiUtil.ConvertNumberWithSuffix(CookSpeed.GetCost(slotNumber, level + 1))}`
-
-			-- Nil until the place file authors a Robux button onto CookSpeedUI beside its currency one, at
-			-- which point the sign starts selling the band the next level falls in -- a price that climbs
-			-- as the grill levels up, and again on a later grill.
-			local robuxButton = holder.Buttons:FindFirstChild("RobuxPurchase")
-			if robuxButton then
-				local productStringId = CookSpeed.GetProductStringIdForLevel(slotNumber, level + 1)
-				robuxButton.Title.Text = self:_robuxPriceText(productStringId :: string)
-			end
-		end
-	end
-end
-
--- Puts the grill's prompts and cues up on the local player's own base and takes them down otherwise, so
--- visitors just see the result. The grill prompt carries whichever verb the slot is actually offering --
+-- Puts the grill's prompts and cues up on grillers the local player owns and takes them down otherwise,
+-- so visitors just see the result. The grill prompt carries whichever verb it's actually offering --
 -- place it, stop the cook, take it back off; the knob is the stove's own switch, reading Cook or Stop
 -- Cooking; and the skewer wears its own take prompt so the two aren't both reaching for the same one.
 function Grill:RefreshInteraction()
-	self:_refreshSigns()
-
 	if not self._attachment then
 		return
 	end
 
-	-- A locked grill is scenery: it's faded, its knob is hidden outright, and every cue below hangs
-	-- off this, so nothing on it can be prompted or highlighted until it's bought.
-	local owned = self._baseId == LocalPlayer:GetAttribute("BaseId") and self._slot:GetAttribute("Unlocked") == true
+	-- Every cue below hangs off this, so a griller someone else built is scenery: no prompt, no
+	-- highlight, nothing to walk into.
+	local owned = self._ownerUserId == LocalPlayer.UserId
 	local placed = self._slot:GetAttribute("PlacedStickId")
 	local cooking = self._slot:GetAttribute("Cooking") == true
 	local cooked = self._slot:GetAttribute("Cooked") == true
@@ -1160,7 +873,7 @@ function Grill:RefreshInteraction()
 			self._promptCleaner:Add(prompt)
 			self._promptCleaner:Connect(prompt.Triggered, function()
 				GrillerController = GrillerController or require(script.Parent)
-				GrillerController:RequestToggle(self._slot.Name)
+				GrillerController:RequestToggle(self._uid)
 			end)
 
 			-- The skip shares this attachment and this cleaner: the two are never up at the same time (one
@@ -1177,7 +890,7 @@ function Grill:RefreshInteraction()
 			self._promptCleaner:Add(skipPrompt)
 			self._promptCleaner:Connect(skipPrompt.Triggered, function()
 				GrillerController = GrillerController or require(script.Parent)
-				GrillerController:RequestSkipCook(self._slot.Name)
+				GrillerController:RequestSkipCook(self._uid)
 			end)
 		end
 	elseif not owned and self._prompt then
@@ -1233,9 +946,9 @@ function Grill:RefreshInteraction()
 
 				GrillerController = GrillerController or require(script.Parent)
 				if self._slot:GetAttribute("Cooking") then
-					GrillerController:RequestStopCook(self._slot.Name)
+					GrillerController:RequestStopCook(self._uid)
 				else
-					GrillerController:RequestCook(self._slot.Name)
+					GrillerController:RequestCook(self._uid)
 				end
 			end)
 		end
@@ -1291,7 +1004,7 @@ function Grill:RefreshInteraction()
 			self._takeSkewerCleaner:Add(prompt)
 			self._takeSkewerCleaner:Connect(prompt.Triggered, function()
 				GrillerController = GrillerController or require(script.Parent)
-				GrillerController:RequestToggle(self._slot.Name)
+				GrillerController:RequestToggle(self._uid)
 			end)
 		end
 	elseif not canTake and self._takeSkewerPrompt then
