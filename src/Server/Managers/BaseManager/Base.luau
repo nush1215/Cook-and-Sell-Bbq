@@ -8,6 +8,7 @@ local Trove = require(Packages.Trove)
 
 -- Managers
 local EffectManager = require(script.Parent.Parent.EffectManager)
+local SoundManager = require(script.Parent.Parent.SoundManager)
 
 -- Shared
 local Shared = ReplicatedStorage.Shared
@@ -22,6 +23,12 @@ local UI = ReplicatedStorage.Assets.UI
 --
 local SPAWN_HEIGHT_OFFSET = 5
 local RESPAWN_DELAY = 5
+
+-- The two halves of moving a structure, under SoundService.Building. Played positionally on the cell
+-- the structure lands on or leaves, and heard by everyone -- a base being rearranged is something a
+-- visitor standing on it should hear happen where it happens, not flatly in their ear.
+local PLACE_SOUND = "Place"
+local TAKE_SOUND = "Take"
 
 --[[
     Class for a single base in the world.
@@ -455,11 +462,14 @@ function Base:BuildStructure(uid: string, placed: Structures.PlacedStructure, an
 	-- at full size rather than small -- so building reads as putting a finished thing down, where buying
 	-- an upgrade reads as one growing into place.
 	--
-	-- One going down on a rejoin snaps instead, so nobody watches their whole base rain in on join.
+	-- One going down on a rejoin snaps instead, so nobody watches their whole base rain in on join --
+	-- and, since the sound rides the same flag, nobody hears it rain in either.
 	if animate then
 		model:PivotTo(pose * CFrame.new(0, Structures.PLACE_DROP_HEIGHT, 0))
 		model:SetAttribute("PulseOnSpawn", true)
 		model:AddTag("LayoutStand")
+
+		SoundManager:PlaySound("All", PLACE_SOUND, pose)
 	else
 		model:PivotTo(pose)
 	end
@@ -483,6 +493,13 @@ end
 function Base:RenderStructures(structures: { [string]: Structures.PlacedStructure }, animate: boolean?)
 	for uid, model in self._structures do
 		if not structures[uid] then
+			-- Read off the model rather than the record, which has already gone from data by the time this
+			-- runs. Same flag as the drop above, so a structure only sounds when it's actually been taken
+			-- back up -- clearing a base for the next player through is silent.
+			if animate then
+				SoundManager:PlaySound("All", TAKE_SOUND, model:GetPivot())
+			end
+
 			model:Destroy()
 			self._structures[uid] = nil
 		end

@@ -7,13 +7,17 @@ local Shared = ReplicatedStorage.Shared
 local Network = require(Shared.Network)
 local Structures = require(Shared.Config.Structures)
 
+-- Assets
+local Assets = ReplicatedStorage.Assets
+local PickupToolTemplate = Assets.Tools.Hammer
+
 -- Managers
 local PlayerDataManager
 local BaseManager
 
 --[[
     Owns building: the structures a player has bought but not yet put down, the tools they place them
-    with, and the two remotes they build and demolish through.
+    with, and the two remotes they build and pick back up through.
 
     Player data is the only source of truth. Nothing hands a tool over directly -- any write to
     OwnedStructures re-runs the reconcile, which diffs what the player owns against what's in their
@@ -21,7 +25,7 @@ local BaseManager
     out of that one path, the same way sticks and ingredients work (see StickManager).
 
     A structure is therefore only ever in one of two places: in the backpack as an owned item, or
-    standing on a plot. Placing moves it from the first to the second and demolishing moves it back,
+    standing on a plot. Placing moves it from the first to the second and picking it up moves it back,
     so nothing is ever spent by putting something in the wrong spot -- which is what lets a player
     rearrange a base they've paid for.
 
@@ -41,10 +45,14 @@ local TOOL_TAG = "StructureTool"
 local STRUCTURE_ATTRIBUTE = "StructureId"
 local COUNT_ATTRIBUTE = "Count"
 
--- The demolish tool. Not an owned item -- it's a mode rather than a thing you have, so it's handed
+-- The pickup tool. Not an owned item -- it's a mode rather than a thing you have, so it's handed
 -- over on every spawn rather than reconciled against data.
-local REMOVE_TOOL_ATTRIBUTE = "RemoveTool"
-local REMOVE_TOOL_NAME = "Demolish"
+local PICKUP_TOOL_ATTRIBUTE = "PickupTool"
+local PICKUP_TOOL_NAME = "Pickup"
+
+-- Keeps it on the first hotbar slot however many structures the player is carrying, so the one tool
+-- they never choose to have is always in the same place. Read by the backpack (see Modules.Satchel).
+local PINNED_TOOL_TAG = "PinnedTool"
 
 -- A whole, finite number, which is the only shape a cell or a rotation may arrive in. Both halves
 -- matter against a crafted payload: a fraction would sit between two blocks and overlap neither, and
@@ -106,7 +114,7 @@ local BuildManager = {
 
 -- Brings the player's structure tools in line with data.OwnedStructures: one tool per kind they own,
 -- carrying how many on a Count attribute. Every write to that table comes back through here, so a
--- purchase, a placement and a demolish all reconcile down the same path.
+-- purchase, a placement and a pickup all reconcile down the same path.
 function BuildManager:_reconcileTools(player: Player)
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData or not player:IsDescendantOf(Players) then
@@ -163,32 +171,40 @@ function BuildManager:_reconcileTools(player: Player)
 	end
 end
 
--- Hands over the demolish tool, clearing any left from a previous life so respawns don't stack
+-- Hands over the pickup tool, clearing any left from a previous life so respawns don't stack
 -- duplicates. Kept apart from the reconcile above because it isn't something the player owns any
--- number of -- they either can take structures down or they can't.
-function BuildManager:_giveRemoveTool(player: Player)
+-- number of -- they either can take structures back up or they can't.
+--
+-- Cloned from the authored hammer rather than built from nothing, unlike the structure tools above:
+-- those are one per kind and would each need a model, where this is the single tool every player
+-- carries. So RequiresHandle is deliberately left alone -- the template comes with its handle, and
+-- forcing it off is what would leave the hammer invisible in hand.
+function BuildManager:_givePickupTool(player: Player)
 	local backpack = player:FindFirstChildOfClass("Backpack")
 	if not backpack then
 		return
 	end
 
 	for _, tool in backpack:GetChildren() do
-		if tool:GetAttribute(REMOVE_TOOL_ATTRIBUTE) then
+		if tool:GetAttribute(PICKUP_TOOL_ATTRIBUTE) then
 			tool:Destroy()
 		end
 	end
 
-	local tool = Instance.new("Tool")
-	tool.Name = REMOVE_TOOL_NAME
-	tool.ToolTip = REMOVE_TOOL_NAME
-	tool.RequiresHandle = false
+	local tool = PickupToolTemplate:Clone()
+	tool.Name = PICKUP_TOOL_NAME
+	tool.ToolTip = PICKUP_TOOL_NAME
 	tool.CanBeDropped = false
-	tool:SetAttribute(REMOVE_TOOL_ATTRIBUTE, true)
+	tool:SetAttribute(PICKUP_TOOL_ATTRIBUTE, true)
+
+	-- Tag last, against a fully assembled tool -- the backpack reads it off the back of the parenting
+	-- below to decide which slot it lands in.
+	tool:AddTag(PINNED_TOOL_TAG)
 	tool.Parent = backpack
 end
 
 -- Adds structures to what the player owns (default one), which the reconcile turns into a backpack
--- tool or a higher Count. What a shop calls once there is one, and what a demolished structure comes
+-- tool or a higher Count. What a shop calls once there is one, and what a picked-up structure comes
 -- back through.
 function BuildManager:GrantStructure(player: Player, structureId: string, amount: number?)
 	if not Structures.GetStructureFromId(structureId) then
@@ -241,13 +257,17 @@ function BuildManager:_setupPlayer(player: Player)
 
 	-- CharacterAutoLoads is off and Base drives every respawn through LoadCharacterAsync, which clears
 	-- the backpack. Runtime tools aren't in StarterGear, so rebuild them on each spawn.
+	--
+	-- The pickup tool goes in first, ahead of the reconcile that yields on player data: it claims the
+	-- first slot either way, but arriving first means the structure tools fill in behind it rather than
+	-- one of them being bumped along to make room.
 	player.CharacterAdded:Connect(function()
+		self:_givePickupTool(player)
 		self:_reconcileTools(player)
-		self:_giveRemoveTool(player)
 	end)
 
+	self:_givePickupTool(player)
 	self:_reconcileTools(player)
-	self:_giveRemoveTool(player)
 end
 
 function BuildManager:OnInit()

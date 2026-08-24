@@ -1,5 +1,6 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 
 -- Packages
@@ -13,6 +14,7 @@ local Ingredients = require(Shared.Config.Ingredients)
 local Highlights = require(Shared.Config.Highlights)
 local Structures = require(Shared.Config.Structures)
 local CookStates = require(Shared.Config.CookStates)
+local StickModel = require(Shared.StickModel)
 local GuiUtil = require(Shared.GuiUtil)
 
 -- Controllers
@@ -43,6 +45,12 @@ local STOP_PROMPT_HOLD = 0
 -- this one opens a Robux purchase, so it's the one prompt on the grill worth making hard to brush past.
 local SKIP_PROMPT_HOLD = 0.5
 local SKIP_COOK_PRODUCT = "SkipCook" -- the Products entry the skip prompt is priced from and buys
+-- The tag that outlines an instance for as long as its prompt is on screen. Matches the
+-- PromptSubjectHighlight component's file name, which is what it registers itself under.
+local PROMPT_HIGHLIGHT_TAG = "PromptSubjectHighlight"
+-- How see-through the preview of the BBQ in hand is while it's shown seated on the grill. The same
+-- figure the build ghost uses, so a ghosted thing reads as ghosted wherever the game shows one.
+local GHOST_TRANSPARENCY = 0.3
 local KNOB_UI_FLOAT_AMPLITUDE = 0.15 -- how far the knob billboard bobs, in studs
 local KNOB_UI_FLOAT_SPEED = 3 -- how fast the bob cycles, in radians per second
 
@@ -100,9 +108,11 @@ local GrillerController
     telling them. The bands and those timings both live in the CookStates config, so the bar this draws
     and the state the server settles on when the stop lands can't disagree.
 
-    The place/stop/take prompt and the cook knob only go up on grillers the local player owns, which
-    the OwnerUserId attribute the base stamped on it is what says. A griller only exists while its
-    owner does, so that never changes over one griller's life.
+    The grill's prompts and the cook knob only go up on grillers the local player owns, which the
+    OwnerUserId attribute the base stamped on it is what says. A griller only exists while its owner
+    does, so that never changes over one griller's life. Each one sits on the thing it acts on: the
+    place (and the Robux skip standing in for it through a cook) on the body's GrillAttachment, the
+    stove's switch on the knob, and the take on the skewer being taken.
 ]]
 
 -- How far the spin has turned by `elapsed`, expressed in full-speed seconds: it eases up from a
@@ -141,7 +151,10 @@ function Grill.new(slot: Instance)
 	local cleaner = Trove.new()
 
 	local knob = slot:FindFirstChild("Knob")
-	local attachment = slot:FindFirstChild("StickAttachment")
+	-- The two attachments sit on GrillModel's Base part, two levels down rather than as children of
+	-- the griller, so they're looked for the whole way down. Everything else is still a direct child.
+	local attachment = slot:FindFirstChild("StickAttachment", true)
+	local grillAttachment = slot:FindFirstChild("GrillAttachment", true)
 	local grillModel = slot:FindFirstChild("GrillModel")
 	local grate = grillModel and grillModel:FindFirstChild("Grate")
 
@@ -155,10 +168,17 @@ function Grill.new(slot: Instance)
 		_uid = slot:GetAttribute(Structures.UID_ATTRIBUTE),
 		_ownerUserId = slot:GetAttribute(Structures.OWNER_ATTRIBUTE),
 
-		-- The skewer spins about the attachment where the server seated it; captured once, since a
-		-- griller doesn't move again once it's been placed.
+		-- Where the skewer seats, as an offset from the griller's own pivot rather than as the world pose
+		-- it works out to. A world pose read here would be wrong twice over: a griller placed this
+		-- session is still springing down onto its cell when this class is built (the server sets it
+		-- PLACE_DROP_HEIGHT above its slot and LayoutStand drops it), and one that's later moved leaves
+		-- any pose captured before the move behind. The offset holds through both -- see _seatedCFrame.
 		_attachment = attachment,
-		_baseCFrame = attachment and attachment.WorldCFrame,
+		_seatOffset = attachment and slot:GetPivot():Inverse() * attachment.WorldCFrame,
+
+		-- Where the grill body's own prompts hang: the place, and the Robux skip that stands in its
+		-- place through a cook. The take isn't one of them -- it rides on the skewer itself.
+		_grillAttachment = grillAttachment,
 
 		-- Stove parts, and their authored rest so turning the stove off can put them back. Captured
 		-- before we ever touch them (the server no longer drives the stove).
@@ -166,10 +186,14 @@ function Grill.new(slot: Instance)
 		_led = knob and knob:FindFirstChild("LED"),
 		_handle = knob and knob:FindFirstChild("Handle"),
 		_charcoal = slot:FindFirstChild("Charcoal"),
-		_handleRestCFrame = nil,
+		_handleRestOffset = nil,
+		-- Whether the stove is currently *shown* lit, so the handle is only ever sprung when that
+		-- actually changes. Springing it to where it already is would be harmless on a settled griller,
+		-- but on one still dropping in it pins the knob to a pose the rest of the model hasn't reached.
+		_stoveLit = false,
 
-		-- The grill body itself, which the place/claim cue adorns -- the slot holds the knob and the
-		-- attachments too, so highlighting it would outline those as well.
+		-- The grill body itself, which the place cue adorns rather than the whole griller -- the griller
+		-- holds the knob as well, and that carries its own cue on its own condition.
 		_grillModel = grillModel,
 
 		-- The grate the skewer sits on: what the cook's particles mount to, and what its sounds play from,
@@ -195,9 +219,9 @@ function Grill.new(slot: Instance)
 		_spinDown = nil,
 		_stoveOff = nil,
 
-		-- The cooking bar shown on the slot while it cooks, the authored fill size Update only swaps the
-		-- X of, and the last band it was painted for. Plus the floating "cook me" billboard shown on the
-		-- knob while the skewer's waiting to be lit.
+		-- The cooking bar shown on the griller while it cooks, the authored fill size Update only swaps
+		-- the X of, and the last band it was painted for. Plus the floating "cook me" billboard shown on
+		-- the knob while the skewer's waiting to be lit.
 		_cookingUI = nil,
 		_cookingFillSize = nil,
 		_cookingState = nil,
@@ -214,6 +238,15 @@ function Grill.new(slot: Instance)
 		_skipPrompt = nil,
 		_knobPrompt = nil,
 		_takeSkewerPrompt = nil,
+		_takeSkewerModel = nil, -- the skewer model the take prompt was built on, so a swap rebuilds it
+
+		-- The see-through BBQ preview: the skewer RefreshInteraction last worked out is worth previewing,
+		-- the place prompt's own visibility, and the tool the model standing there was actually built
+		-- from -- so a refresh that hasn't changed what's in hand leaves it alone rather than rebuilding
+		-- it under the player. The first two are what decide whether it's up (see _refreshGhost).
+		_ghostSource = nil,
+		_promptShown = false,
+		_ghostTool = nil,
 
 		-- [id] = true for every Robux price this grill has already gone and asked for -- so a lookup that came back
 		-- empty isn't tried again every time a sign is repainted.
@@ -225,12 +258,13 @@ function Grill.new(slot: Instance)
 		_knobCleaner = cleaner:Construct(Trove),
 		_knobUICleaner = cleaner:Construct(Trove),
 		_takeSkewerCleaner = cleaner:Construct(Trove),
+		_ghostCleaner = cleaner:Construct(Trove),
 		_particleCleaner = cleaner:Construct(Trove),
 		_soundCleaner = cleaner:Construct(Trove),
 		_alarmCleaner = cleaner:Construct(Trove),
 	}, Grill)
 
-	self._handleRestCFrame = self._handle and self._handle.CFrame
+	self._handleRestOffset = self._handle and slot:GetPivot():Inverse() * self._handle.CFrame
 
 	-- The prompt/knob and the spin all need the griller's parts. GrillerController waits on them before
 	-- building this class, so reaching here without one means the structure's template is wrong.
@@ -289,6 +323,25 @@ function Grill.new(slot: Instance)
 	self:_sync()
 
 	return self
+end
+
+-- The pose this griller belongs at, which isn't necessarily the one it's in. The server writes its cell
+-- to SlotCFrame and the client springs the model there (LayoutStand), so between a griller appearing and
+-- its drop-in landing the live pivot is up to PLACE_DROP_HEIGHT above where everything below wants to
+-- measure from -- and a griller that's been moved slides to a new one the same way. Everything this class
+-- seats reads through here, so none of it can end up hanging in the air over the grill.
+function Grill:_settledPivot(): CFrame
+	return self._slot:GetAttribute("SlotCFrame") or self._slot:GetPivot()
+end
+
+-- Where a skewer sits when it's seated on this griller: the same pose the server pivots the real one to.
+function Grill:_seatedCFrame(): CFrame
+	return self:_settledPivot() * self._seatOffset
+end
+
+-- Where the knob handle sits with the stove off. The stove turning on rotates it from here.
+function Grill:_handleRestCFrame(): CFrame
+	return self:_settledPivot() * self._handleRestOffset
 end
 
 -- Seconds since this cook started, off the synced server clock so every client agrees. Zero when
@@ -504,8 +557,13 @@ function Grill:_setStoveOn()
 		self._led.Color = LED_ON_COLOR
 	end
 
-	if self._handle and self._handleRestCFrame then
-		Spr.target(self._handle, 0.7, 3, { CFrame = self._handleRestCFrame * HANDLE_ON_ROTATION })
+	if self._stoveLit then
+		return
+	end
+	self._stoveLit = true
+
+	if self._handle then
+		Spr.target(self._handle, 0.7, 3, { CFrame = self:_handleRestCFrame() * HANDLE_ON_ROTATION })
 	end
 end
 
@@ -517,17 +575,25 @@ function Grill:_setStoveOff()
 		self._led.Color = LED_OFF_COLOR
 	end
 
-	if self._handle and self._handleRestCFrame then
-		Spr.target(self._handle, 0.7, 3, { CFrame = self._handleRestCFrame })
+	-- The knob is only turned back when it's actually been turned. It's authored at rest, so the off look
+	-- a fresh griller starts on is already on screen -- and springing it there anyway would pin it to a
+	-- pose the drop-in hasn't carried the rest of the griller down to yet, leaving the knob in the air.
+	if not self._stoveLit then
+		return
+	end
+	self._stoveLit = false
+
+	if self._handle then
+		Spr.target(self._handle, 0.7, 3, { CFrame = self:_handleRestCFrame() })
 	end
 end
 
--- Puts the cooking bar up on the slot's TimerUIAttachment, marks where the bands meet, and takes down
--- the authored fill geometry so Update can swap its X without flattening the rest of it.
+-- Puts the cooking bar up on the griller's CookingUIAttachment, marks where the bands meet, and takes
+-- down the authored fill geometry so Update can swap its X without flattening the rest of it.
 function Grill:_showCookingUI()
 	self:_hideCookingUI()
 
-	local attachment = self._slot:FindFirstChild("TimerUIAttachment")
+	local attachment = self._slot:FindFirstChild("CookingUIAttachment", true)
 	if not attachment then
 		return
 	end
@@ -655,7 +721,7 @@ end
 -- anchored, server-owned model, so they never fight the server. Everything derives from the elapsed time, so
 -- a rebuilt model self-corrects and every client renders the same thing.
 function Grill:Update()
-	if not self._baseCFrame then
+	if not self._attachment then
 		return
 	end
 
@@ -684,7 +750,7 @@ function Grill:Update()
 			if u >= spinDown.Hold + SPIN_RAMP_TIME then
 				self._spinDown = nil
 				if model and model.Parent then
-					model:PivotTo(self._baseCFrame)
+					model:PivotTo(self:_seatedCFrame())
 				end
 			elseif model and model.Parent then
 				local distance = u -- full-speed seconds covered so far
@@ -692,7 +758,7 @@ function Grill:Update()
 					local y = (spinDown.Hold + SPIN_RAMP_TIME - u) / SPIN_RAMP_TIME
 					distance = spinDown.Hold + 0.5 * SPIN_RAMP_TIME - SPIN_RAMP_TIME * (y ^ 3 - 0.5 * y ^ 4)
 				end
-				model:PivotTo(self._baseCFrame * CFrame.Angles(0, spinDown.StartAngle + SPIN_SPEED * distance, 0))
+				model:PivotTo(self:_seatedCFrame() * CFrame.Angles(0, spinDown.StartAngle + SPIN_SPEED * distance, 0))
 			end
 		end
 		return
@@ -728,7 +794,7 @@ function Grill:Update()
 	-- SPIN_RAMP_TIME so it accelerates like a motor, then turning at a steady speed until the stop edge
 	-- hands off to the wind-down above. Deriving it from the synced clock keeps it framerate-proof and
 	-- consistent across every client.
-	model:PivotTo(self._baseCFrame * CFrame.Angles(0, self:_spinAngleNow(), 0))
+	model:PivotTo(self:_seatedCFrame() * CFrame.Angles(0, self:_spinAngleNow(), 0))
 
 	-- Fade the charcoal glow in over the first CHARCOAL_FADE_TIME and hold it there. There's no finish to
 	-- fade back out toward now the player picks the moment, so the cool-down is the wind-down's job.
@@ -831,10 +897,69 @@ function Grill:_robuxPriceText(id: string): string
 	return `{GuiUtil.ROBUX_ICON}{price or "-"}`
 end
 
+-- Seats a see-through copy of the BBQ in hand where the real one would land, so the player can see what
+-- they're about to put down before they put it down -- or takes the current one back down when there's
+-- nothing to preview. Reads the two halves of that off the class rather than taking them as arguments,
+-- since the prompt's own shown/hidden is what calls this half the time and RefreshInteraction the other.
+-- Only rebuilt when what's in hand changes: a refresh that leaves the preview identical would otherwise
+-- pop the model.
+function Grill:_refreshGhost()
+	local tool = if self._promptShown then self._ghostSource else nil
+
+	if tool == self._ghostTool then
+		return
+	end
+
+	self._ghostCleaner:Clean()
+	self._ghostTool = tool
+
+	if not tool then
+		return
+	end
+
+	-- Built off the tool's own attributes through the same builder every other skewer visual goes
+	-- through, so what's previewed is exactly the model the place would put down.
+	local model = StickModel.BuildStickModel({
+		StickId = tool:GetAttribute("StickId"),
+		Ingredients = HttpService:JSONDecode(tool:GetAttribute("Ingredients")),
+		Cooked = tool:GetAttribute("Cooked"),
+		CookState = tool:GetAttribute("CookState"),
+		Sauce = tool:GetAttribute("Sauce"),
+		Mutation = tool:GetAttribute("Mutation"),
+	})
+	if not model then
+		return
+	end
+
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("BasePart") then
+			descendant.Anchored = true
+			descendant.CanCollide = false
+			descendant.CanQuery = false
+			descendant.CanTouch = false
+			descendant.CastShadow = false
+			-- A floor rather than a set, so a part authored see-through isn't made more solid than the
+			-- skewer it's standing in for.
+			descendant.Transparency = math.max(descendant.Transparency, GHOST_TRANSPARENCY)
+		elseif descendant:IsA("ParticleEmitter") then
+			-- A sauce or a mutation hangs real emitters on every ingredient, and a preview throwing off
+			-- sparks reads as a BBQ that's already down.
+			descendant:Destroy()
+		end
+	end
+
+	-- Anything but "Skewer": that's the name the slot's ChildAdded keys the server's real model on.
+	model.Name = "GhostSkewer"
+	model:PivotTo(self:_seatedCFrame())
+	model.Parent = self._slot
+
+	self._ghostCleaner:Add(model)
+end
+
 -- Puts the grill's prompts and cues up on grillers the local player owns and takes them down otherwise,
--- so visitors just see the result. The grill prompt carries whichever verb it's actually offering --
--- place it, stop the cook, take it back off; the knob is the stove's own switch, reading Cook or Stop
--- Cooking; and the skewer wears its own take prompt so the two aren't both reaching for the same one.
+-- so visitors just see the result. Each prompt sits on the thing it acts on: the body offers the place
+-- (and the Robux skip that stands in for it through a cook), the knob is the stove's own switch reading
+-- Cook or Stop Cooking, and the take rides on the skewer that's being taken.
 function Grill:RefreshInteraction()
 	if not self._attachment then
 		return
@@ -852,21 +977,28 @@ function Grill:RefreshInteraction()
 	-- What the slot is offering right now. A cook can only be stopped; a skewer sitting there raw can be
 	-- lit or taken; one that's already been through the heat can only be taken (it can't cook twice).
 	local canPlace = owned and placed == nil
+	-- Holding a BBQ the grill would actually take is a stricter thing than the grate merely being free,
+	-- and it's what the body's glow and the ghost preview both hang off -- neither has anything to say
+	-- to someone stood there empty-handed. A cooked skewer can't go back on the heat.
+	local heldSkewer = EquippedItem.GetSkewer()
+	local canPlaceHeld = canPlace and heldSkewer ~= nil and heldSkewer:GetAttribute("Cooked") ~= true
 	local canCook = owned and placed ~= nil and not cooking and not cooked
 	local canStop = owned and cooking
-	-- The take is the one of these that can be held off from outside. Gated here rather than on the
-	-- prompts themselves so the whole offer goes with it: both attachments' prompts and the skewer's own
-	-- glow all read this, so none of them is left saying take me while the take is shut.
+	-- The take is the one of these that can be held off from outside. Gated here rather than on the prompt
+	-- itself so the whole offer goes with it: the skewer's prompt and its outline both read this, so
+	-- neither is left saying take me while the take is shut.
 	local canTake = owned and placed ~= nil and not cooking and not GrillerController:IsTakeLocked()
 
 	-- Prompt: up whenever the local player owns the base.
 	if owned and not self._prompt then
-		local promptAttachment = self._slot:FindFirstChild("GrillPromptAttachment")
+		local promptAttachment = self._grillAttachment
 		if promptAttachment then
 			local prompt = Instance.new("ProximityPrompt")
 			prompt.RequiresLineOfSight = false
 			prompt.Style = Enum.ProximityPromptStyle.Custom
 			prompt.MaxActivationDistance = GRILL_PROMPT_DISTANCE
+			-- Fixed, unlike the verb this used to carry: the body only ever offers the place now.
+			prompt.ActionText = "Place BBQ"
 			prompt.Parent = promptAttachment
 
 			self._prompt = prompt
@@ -874,6 +1006,20 @@ function Grill:RefreshInteraction()
 			self._promptCleaner:Connect(prompt.Triggered, function()
 				GrillerController = GrillerController or require(script.Parent)
 				GrillerController:RequestToggle(self._uid)
+			end)
+
+			-- The ghost is this prompt's own picture of what pressing it would do, so it comes and goes
+			-- with the label rather than with the eligibility behind it -- a see-through BBQ sat on every
+			-- free grill across the base would just be clutter. Only the ghost from here, never the whole
+			-- refresh: that writes Enabled, and the tutorial holds prompts shut by writing it straight back
+			-- whenever something re-enables one, so the two would sit there flipping it at each other.
+			self._promptCleaner:Connect(prompt.PromptShown, function()
+				self._promptShown = true
+				self:_refreshGhost()
+			end)
+			self._promptCleaner:Connect(prompt.PromptHidden, function()
+				self._promptShown = false
+				self:_refreshGhost()
 			end)
 
 			-- The skip shares this attachment and this cleaner: the two are never up at the same time (one
@@ -899,18 +1045,13 @@ function Grill:RefreshInteraction()
 		self._skipPrompt = nil
 	end
 
-	-- Place and take only. Stopping a cook belongs to the knob and nowhere else: it's the stove's switch,
-	-- and a second way to do it on the grill body meant the timing call that decides what the BBQ is worth
-	-- could be taken from two places that look nothing alike. The prompt is simply down for the length of
-	-- a cook.
+	-- Place only. Taking belongs to the skewer, and stopping a cook to the knob and nowhere else: the
+	-- knob's is the timing call that decides what the BBQ is worth, and a second way to make it on the
+	-- grill body meant it could be taken from two places that look nothing alike. So the body offers the
+	-- place while the grate is free and the skip below while it isn't, and is down the rest of the time.
 	if self._prompt then
-		self._prompt.Enabled = canPlace or canTake
+		self._prompt.Enabled = canPlace
 		self._prompt.HoldDuration = GRILL_PROMPT_HOLD
-
-		-- Only a skewer ever goes on a grill -- a bare stick has nothing to cook. Once it's off the heat
-		-- the take reads the same whether it came off raw, cooked or burnt: it's the same action, and the
-		-- bar has already said which one they got.
-		self._prompt.ActionText = if canPlace then "Place BBQ" else "Take BBQ"
 	end
 
 	-- The one thing the grill body offers through a cook, which is exactly the stretch the prompt above is
@@ -986,19 +1127,30 @@ function Grill:RefreshInteraction()
 		self._knobUI = nil
 	end
 
-	-- The skewer wears its own take prompt on its own attachment, so reaching for the one on the skewer
-	-- and the one on the grill body both work. Shares the grill prompt's key, so Roblox shows whichever
-	-- you're nearer to.
-	if canTake and not self._takeSkewerPrompt then
-		local takeAttachment = self._slot:FindFirstChild("TakeSkewerAttachment")
-		if takeAttachment then
+	-- The take rides on the skewer itself, so what's reached for is the thing that comes off. The server
+	-- rebuilds that model on every record write and the prompt goes with it, so the model it was built on
+	-- is what's tracked rather than the prompt alone -- otherwise a swap would leave a destroyed prompt
+	-- standing in for one and the new skewer would go without.
+	local takeModel = if canTake then self._skewerModel else nil
+
+	if takeModel ~= self._takeSkewerModel then
+		self._takeSkewerCleaner:Clean()
+		self._takeSkewerPrompt = nil
+		self._takeSkewerModel = takeModel
+
+		-- Hung off a part rather than the model: the custom prompt UI adorns whatever the prompt is
+		-- parented to, and a Model is no use to a BillboardGui. Same fallback the cooking bar uses, since
+		-- not every stick model is authored with a PrimaryPart.
+		local host = takeModel and (takeModel.PrimaryPart or takeModel:FindFirstChildWhichIsA("BasePart", true))
+
+		if host then
 			local prompt = Instance.new("ProximityPrompt")
 			prompt.RequiresLineOfSight = false
 			prompt.HoldDuration = GRILL_PROMPT_HOLD
 			prompt.Style = Enum.ProximityPromptStyle.Custom
 			prompt.MaxActivationDistance = GRILL_PROMPT_DISTANCE
 			prompt.ActionText = "Take BBQ"
-			prompt.Parent = takeAttachment
+			prompt.Parent = host
 
 			self._takeSkewerPrompt = prompt
 			self._takeSkewerCleaner:Add(prompt)
@@ -1007,9 +1159,6 @@ function Grill:RefreshInteraction()
 				GrillerController:RequestToggle(self._uid)
 			end)
 		end
-	elseif not canTake and self._takeSkewerPrompt then
-		self._takeSkewerCleaner:Clean()
-		self._takeSkewerPrompt = nil
 	end
 
 	-- The knob breathes on the same condition its prompt goes up, so the glow and the prompt are never
@@ -1027,9 +1176,6 @@ function Grill:RefreshInteraction()
 	-- holding here", while the slot's free. It lives in the place file like the rest of the slot's parts,
 	-- so a slot without one just goes without.
 	if self._grillModel then
-		local skewer = EquippedItem.GetSkewer()
-		local canPlaceHeld = canPlace and skewer ~= nil and skewer:GetAttribute("Cooked") ~= true
-
 		self._grillModel:SetAttribute("HighlightColor", Highlights.PLACE)
 		if canPlaceHeld then
 			self._grillModel:AddTag(Highlights.TAG)
@@ -1039,17 +1185,26 @@ function Grill:RefreshInteraction()
 	end
 
 	-- "Take this off" rides on the skewer itself rather than the grill, so it outlines the thing being
-	-- claimed. Off through the whole cook -- while it's on the heat there's nothing to claim, and the bar
-	-- is already carrying the player's attention. The server rebuilds this model on every record write,
-	-- which is why the slot's ChildAdded brings us back here to re-tag the new one.
+	-- claimed. Tied to that prompt being on screen rather than breathing for as long as there's something
+	-- to claim: the prompt now sits on the skewer too, so the outline is what picks it out from behind the
+	-- label. Off through the whole cook -- while it's on the heat there's nothing to claim, and the bar is
+	-- already carrying the player's attention. Tagged after the prompt above is in, since the component
+	-- resolves the prompt once as it starts and gives up if there isn't one. The server rebuilds this
+	-- model on every record write, which is why the slot's ChildAdded brings us back here to re-tag it.
 	if self._skewerModel then
 		self._skewerModel:SetAttribute("HighlightColor", Highlights.CLAIM)
 		if canTake then
-			self._skewerModel:AddTag(Highlights.TAG)
+			self._skewerModel:AddTag(PROMPT_HIGHLIGHT_TAG)
 		else
-			self._skewerModel:RemoveTag(Highlights.TAG)
+			self._skewerModel:RemoveTag(PROMPT_HIGHLIGHT_TAG)
 		end
 	end
+
+	-- What the ghost would preview, worked out here with the rest of what's on offer rather than in
+	-- _refreshGhost -- which the prompt's own shown/hidden also calls, and which has no business
+	-- deciding eligibility a second time. Shown only while that prompt is actually up.
+	self._ghostSource = if canPlaceHeld then heldSkewer else nil
+	self:_refreshGhost()
 end
 
 function Grill:Destroy()
@@ -1064,7 +1219,7 @@ function Grill:Destroy()
 		self._knob:RemoveTag(Highlights.TAG)
 	end
 	if self._skewerModel then
-		self._skewerModel:RemoveTag(Highlights.TAG)
+		self._skewerModel:RemoveTag(PROMPT_HIGHLIGHT_TAG)
 	end
 
 	self._cleaner:Destroy()

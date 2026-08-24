@@ -421,7 +421,7 @@ end
 -- griller removed with a BBQ on it would otherwise leave the record behind forever, keyed by a uid
 -- nothing can reach any more.
 --
--- The structure comes back but its contents don't, so demolishing is how a base gets rearranged
+-- The structure comes back but its contents don't, so picking one up is how a base gets rearranged
 -- rather than a way to lose what you paid for -- while a griller mid-cook still costs you the skewer.
 function BaseManager:RemoveStructureFromBase(player: Player, uid: string): boolean
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()

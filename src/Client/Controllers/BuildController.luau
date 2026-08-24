@@ -1,12 +1,14 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
+local GuiService = game:GetService("GuiService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
 -- Packages
 local Packages = ReplicatedStorage.Packages
 local Trove = require(Packages.Trove)
+local Spr = require(Packages.Spr)
 
 -- Shared
 local Shared = ReplicatedStorage.Shared
@@ -17,27 +19,101 @@ local GridUtil = require(Shared.GridUtil)
 
 -- Controllers
 local PlayerDataController = require(script.Parent.PlayerDataController)
+local NotificationController = require(script.Parent.NotificationController)
+
+-- Modules
+local Modules = script.Parent.Parent.Modules
+
+-- Required on first use rather than at the top of the file. On a touch device this module yields at
+-- require time waiting on Roblox's TouchGui, which doesn't exist until the player's touch controls are
+-- up -- later than the Loader requires its controllers. A top-level require would therefore hold the
+-- whole client boot behind it on mobile. By the time a build tool is equipped there's a character, so
+-- the wait is already over and this resolves instantly.
+local ContextActionUtility
 
 --
 local LocalPlayer = Players.LocalPlayer
 
 -- What BuildManager marks its tools with. The tag is on the ones that place a structure and the
--- attribute beside it says which; the demolish tool wears its own attribute instead, being a mode
+-- attribute beside it says which; the pickup tool wears its own attribute instead, being a mode
 -- rather than something the player owns any number of.
 local STRUCTURE_TOOL_TAG = "StructureTool"
 local STRUCTURE_TOOL_ATTRIBUTE = "StructureId"
-local REMOVE_TOOL_ATTRIBUTE = "RemoveTool"
+local PICKUP_TOOL_ATTRIBUTE = "PickupTool"
 
-local GHOST_TRANSPARENCY = 0.5
-local VALID_COLOR = Color3.fromRGB(70, 220, 90)
+local VALID_COLOR = Color3.fromRGB(0, 255, 0)
 local INVALID_COLOR = Color3.fromRGB(220, 70, 70)
-local REMOVE_COLOR = Color3.fromRGB(220, 70, 70)
--- Kept faint, so the structure about to go is obvious without its own colours being lost -- you're
--- picking one of several near-identical things out of a row.
-local REMOVE_FILL_TRANSPARENCY = 0.6
+-- The ghost keeps its own colours and wears the verdict as an outline around them, so what the player
+-- is judging the fit of is the structure itself rather than a tinted silhouette of one. The fill only
+-- takes the flatness off the outline.
+local GHOST_FILL_TRANSPARENCY = 0.3
+local GHOST_OUTLINE_TRANSPARENCY = 0
+
+-- The calm pass the pickup tool puts over every structure it could take back. Faint on purpose, and
+-- occluded rather than drawn through walls: a whole base outlined at once should read as outlined,
+-- not washed white.
+local PICKUP_COLOR = Color3.fromRGB(255, 255, 255)
+local PICKUP_FILL_TRANSPARENCY = 0.85
+local PICKUP_OUTLINE_TRANSPARENCY = 0.25
+
+-- The one under the cursor. Sits between the white above and the red below on the way to warm, so
+-- pointing at a structure and then picking it reads as one action getting closer rather than as two
+-- unrelated colours -- and stronger than the calm pass, because there's only ever one of these.
+local HOVER_COLOR = Color3.fromRGB(255, 150, 45)
+local HOVER_FILL_TRANSPARENCY = 0.7
+local HOVER_OUTLINE_TRANSPARENCY = 0
+
+-- The one that's been picked and is waiting on a second click. Left at a Highlight's default
+-- AlwaysOnTop, unlike the two passes above: the structure a click would take down has to be
+-- unmistakable even with something standing in front of it. The fill is kept faint so its own colours
+-- still show through -- you're picking one of several near-identical things out of a row.
+local ARMED_COLOR = Color3.fromRGB(220, 70, 70)
+local ARMED_FILL_TRANSPARENCY = 0.6
+local ARMED_OUTLINE_TRANSPARENCY = 0
+
+-- Roblox renders at most 31 Highlights at once and silently drops the rest, so a big enough base would
+-- otherwise push the red one out of the pool and leave the click that matters unmarked. The calm pass
+-- is therefore a fixed number of highlights handed to whichever structures are nearest the camera,
+-- with headroom left for the game's own outlines (BreathingHighlight, PromptSubjectHighlight).
+local PICKUP_HIGHLIGHT_BUDGET = 24
+-- Seconds between re-picking which structures wear them. Lower = the pass keeps up with a fast camera
+-- more closely; each one walks every structure on the base.
+local PICKUP_REFRESH_INTERVAL = 0.2
 
 local RAY_LENGTH = 1000
 local ROTATE_KEY = Enum.KeyCode.R
+
+-- Where a touch player's ghost sits, there being no cursor to point with: this far ahead of them, and
+-- aimed at from this far above so the ray comes down onto the floor rather than into their own back.
+-- Distance wants tuning on a real device -- too close and the character's own body hides the ghost,
+-- too far and it's hard to tell which cell it's on.
+local TOUCH_AIM_DISTANCE = 8
+local TOUCH_AIM_HEIGHT = 12
+
+-- The two actions a player drives placement with. Both are bound through ContextActionUtility, which
+-- pairs the binding with an on-screen button on touch devices and does nothing extra anywhere else --
+-- so these are what gives a phone a way to rotate at all, there being no key to press.
+local PLACE_ACTION = "BuildPlace"
+local ROTATE_ACTION = "BuildRotate"
+
+-- The guide telling a desktop player what to press while they're placing -- the counterpart to the
+-- touch buttons above, since on a keyboard the controls exist but nothing on screen says so. Authored
+-- in the place file under StarterGui, so these are the names it's found by.
+local GUIDE_GUI_NAME = "BuildingUI"
+local GUIDE_FRAME_NAME = "PCGuide"
+local GUIDE_PLACE_ENTRY = "Place"
+local GUIDE_ROTATE_ENTRY = "Rotate"
+local GUIDE_TIMEOUT = 10
+
+-- Lifted from UIController's own button springs, so holding a key presses its hint exactly the way
+-- clicking presses a button anywhere else in the game, rather than in a second, nearly-identical way.
+local GUIDE_PRESS_SCALE = 0.93
+local GUIDE_NORMAL_SCALE = 1
+local GUIDE_DAMPING = 0.45
+local GUIDE_FREQUENCY = 6
+
+-- Higher = the guide catches up to the cursor faster.
+local GUIDE_FOLLOW_SPEED = 25
 -- Higher = the ghost catches up to the cell under the cursor faster. Eased rather than snapped so
 -- dragging across the grid glides instead of stepping cell to cell.
 local GHOST_FOLLOW_SPEED = 30
@@ -65,8 +141,12 @@ local BACKPACK_TIMEOUT = 10
     clears it and it becomes buildable in the same moment, without re-equipping. That's what the data
     listener is for.
 
-    The demolish tool rides the same loop pointed the other way -- it raycasts the placed structures
-    rather than the floors, and outlines the one under the cursor.
+    The pickup tool is the other half of that, and works by pointing rather than dragging. Equipping it
+    outlines every structure on the base as something that can be taken back; the one under the cursor
+    warms to orange; and it takes two clicks on one to send it -- the first picks it and turns it red,
+    the second commits. So a structure says it can go, then that it's the one being aimed at, then that
+    it's about to, and the click that removes something is never the click that found it -- which
+    matters, because a griller's contents don't come back with it.
 ]]
 
 --
@@ -222,68 +302,128 @@ function BuildController:_isBlockFreeLocally(
 	return true
 end
 
--- A see-through, inert copy of what the tool builds. Stripped of anything that would make it act like
--- the real thing: it can't be collided with, can't be raycast against (or it'd block its own
--- placement ray), and carries no tag, so no controller mistakes it for a structure that exists.
+-- An inert copy of what the tool builds, left looking exactly as it will once it's down. Whether the
+-- spot is any good is said by a Highlight around it rather than by recolouring it, so the player is
+-- always looking at the real thing.
+--
+-- Stripped of anything that would make it act like that real thing: it can't be collided with, can't
+-- be raycast against (or it'd block its own placement ray), and carries no tag, so no controller
+-- mistakes it for a structure that exists.
 function BuildController:_createGhost(structure: Structures.Structure): Model
 	local ghost = structure.Model:Clone()
 
 	local parts = {}
 	for _, descendant in ghost:GetDescendants() do
 		if descendant:IsA("BasePart") then
-			table.insert(parts, descendant)
+			-- Kept alongside the part so hiding the ghost can put it back: one authored invisible on
+			-- purpose (a hitbox, a mount) has to stay invisible when the ghost returns.
+			table.insert(parts, { Part = descendant, Transparency = descendant.Transparency })
 		elseif descendant:IsA("Script") or descendant:IsA("LocalScript") then
 			descendant:Destroy()
 		end
 	end
 
-	for _, part in parts do
-		part.Anchored = true
-		part.CanCollide = false
-		part.CanQuery = false
-		part.CanTouch = false
-		part.Transparency = GHOST_TRANSPARENCY
+	for _, entry in parts do
+		entry.Part.Anchored = true
+		entry.Part.CanCollide = false
+		entry.Part.CanQuery = false
+		entry.Part.CanTouch = false
 	end
 
+	-- Parented away from the thing it outlines, like the pickup ones, so it can be pointed at the
+	-- ghost without living inside it.
+	local highlight = Instance.new("Highlight")
+	highlight.FillTransparency = GHOST_FILL_TRANSPARENCY
+	highlight.OutlineTransparency = GHOST_OUTLINE_TRANSPARENCY
+	highlight.Adornee = ghost
+	highlight.Parent = self._highlightHolder
+
 	self._ghostParts = parts
+	self._ghostHighlight = self._placementCleaner:Add(highlight)
 	ghost.Parent = workspace
 
 	return ghost
 end
 
--- Tints the ghost, and hides it outright when there's nowhere to put it -- a ghost stuck at the last
--- spot the cursor was over reads as a placement that's still on offer.
-function BuildController:_paintGhost(transparency: number, color: Color3?)
+-- Marks the spot under the cursor good or bad, or takes the ghost out of sight entirely when there's
+-- nowhere to put it at all -- one left standing at the last spot the cursor was over reads as a
+-- placement that's still on offer.
+function BuildController:_paintGhost(shown: boolean, valid: boolean?)
 	if not self._ghostParts then
 		return
 	end
 
-	for _, part in self._ghostParts do
-		part.Transparency = transparency
+	-- Both halves only act on an actual change. This runs every frame the cursor moves, and a ghost is
+	-- a whole model of parts -- so a verdict that hasn't flipped shouldn't cost a write per part.
+	if shown ~= self._ghostShown then
+		self._ghostShown = shown
 
-		if color then
-			part.Color = color
+		for _, entry in self._ghostParts do
+			entry.Part.Transparency = if shown then entry.Transparency else 1
+		end
+
+		if self._ghostHighlight then
+			self._ghostHighlight.Enabled = shown
+		end
+	end
+
+	if valid ~= self._ghostValid then
+		self._ghostValid = valid
+
+		if self._ghostHighlight then
+			local color = if valid then VALID_COLOR else INVALID_COLOR
+
+			self._ghostHighlight.FillColor = color
+			self._ghostHighlight.OutlineColor = color
 		end
 	end
 end
 
--- Follows the cursor: raycast the owned floors, snap to the cell the footprint would sit on, and
--- record it for _tryPlace. Only how the ghost looks is eased -- the cell it reports is exact, so what
--- gets sent is never a frame behind what was shown.
+-- The ray the ghost is aimed down. On a desktop that's the cursor; a phone hasn't got one, so it's a
+-- fixed spot in front of the player instead -- they aim by walking and turning, which also means the
+-- ghost is always somewhere they could stand rather than across the base from them.
+--
+-- The touch ray points straight down rather than forward, so where the ghost lands doesn't shift with
+-- how the camera happens to be tilted, and so it comes down onto the floor through the same
+-- owned-plots filter the cursor ray already goes through. Facing off the edge of a plot simply misses,
+-- which the caller already reads as nowhere to put it.
+function BuildController:_getAimRay(): Ray?
+	if not UserInputService.TouchEnabled then
+		local mouse = self._mouse
+		return mouse and mouse.UnitRay
+	end
+
+	local character = LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+
+	-- Between dying and respawning there's nobody to aim from.
+	if not root then
+		return nil
+	end
+
+	local origin = root.Position
+		+ root.CFrame.LookVector * TOUCH_AIM_DISTANCE
+		+ Vector3.new(0, TOUCH_AIM_HEIGHT, 0)
+
+	return Ray.new(origin, Vector3.new(0, -1, 0))
+end
+
+-- Follows whatever is being aimed at: raycast the owned floors, snap to the cell the footprint would
+-- sit on, and record it for _tryPlace. Only how the ghost looks is eased -- the cell it reports is
+-- exact, so what gets sent is never a frame behind what was shown.
 function BuildController:_updateGhost(deltaTime: number)
 	local ghost = self._ghost
-	local mouse = self._mouse
-	if not (ghost and mouse) then
+	local ray = self:_getAimRay()
+	if not (ghost and ray) then
 		return
 	end
 
-	local ray = mouse.UnitRay
 	local result = workspace:Raycast(ray.Origin, ray.Direction * RAY_LENGTH, self._raycastParams)
 
 	-- Off every plot they own, so there's nothing to snap to.
 	if not result then
 		self._valid = false
-		self:_paintGhost(1)
+		self:_paintGhost(false)
 		return
 	end
 
@@ -292,7 +432,7 @@ function BuildController:_updateGhost(deltaTime: number)
 
 	if not plotId then
 		self._valid = false
-		self:_paintGhost(1)
+		self:_paintGhost(false)
 		return
 	end
 
@@ -333,18 +473,111 @@ function BuildController:_updateGhost(deltaTime: number)
 	end
 
 	ghost:PivotTo(self._ghostCFrame)
-	self:_paintGhost(GHOST_TRANSPARENCY, if valid then VALID_COLOR else INVALID_COLOR)
+	self:_paintGhost(true, valid)
 end
 
--- Follows the cursor with the demolish tool up: outlines whichever of the player's structures is
--- under it, and remembers its uid for _tryRemove.
-function BuildController:_updateRemoveTarget()
-	local mouse = self._mouse
-	if not mouse then
-		return
+-- The pool the calm pass is drawn from, made once per equip. Fixed in size rather than one highlight
+-- per structure, because Roblox renders a limited number of them at a time -- see the budget above.
+function BuildController:_createPickupHighlights(): { Highlight }
+	local highlights = table.create(PICKUP_HIGHLIGHT_BUDGET)
+
+	for _ = 1, PICKUP_HIGHLIGHT_BUDGET do
+		local highlight = Instance.new("Highlight")
+		highlight.DepthMode = Enum.HighlightDepthMode.Occluded
+		highlight.FillColor = PICKUP_COLOR
+		highlight.OutlineColor = PICKUP_COLOR
+		highlight.FillTransparency = PICKUP_FILL_TRANSPARENCY
+		highlight.OutlineTransparency = PICKUP_OUTLINE_TRANSPARENCY
+		highlight.Enabled = false
+		highlight.Parent = self._highlightHolder
+
+		table.insert(highlights, self._placementCleaner:Add(highlight))
 	end
 
-	local ray = mouse.UnitRay
+	return highlights
+end
+
+-- Hands the pool to the structures nearest the camera, which is what keeps the outlines on the part of
+-- the base the player is actually looking at once there are more structures than highlights to go
+-- round. Walked rather than cached: it runs a few times a second against a few dozen models, and
+-- caching would mean invalidating on every placement, pickup and camera move for no measurable gain.
+function BuildController:_refreshPickupHighlights()
+	local origin = workspace.CurrentCamera.CFrame.Position
+	local models = {}
+
+	for _, model in self._structureFolder:GetChildren() do
+		local uid = model:GetAttribute(Structures.UID_ATTRIBUTE)
+
+		-- The hovered and armed ones wear their own highlights instead. Two Highlights sharing an adornee
+		-- is undefined -- Roblox renders one of them and there's no saying which -- so the calm pass has
+		-- to leave those two be rather than layer over them.
+		if uid and uid ~= self._armedUid and uid ~= self._hoverUid then
+			table.insert(models, model)
+		end
+	end
+
+	-- Only worth ordering when there are more structures than highlights; below that every one gets an
+	-- outline whatever order they come out in.
+	if #models > PICKUP_HIGHLIGHT_BUDGET then
+		local distances = {}
+		for _, model in models do
+			distances[model] = (model:GetPivot().Position - origin).Magnitude
+		end
+
+		table.sort(models, function(a, b)
+			return distances[a] < distances[b]
+		end)
+	end
+
+	-- Disabled rather than merely unadorned past the end of the list, so a spare doesn't sit in Roblox's
+	-- limited pool of active highlights while showing nothing.
+	for index, highlight in self._pickupHighlights do
+		local model = models[index]
+
+		highlight.Adornee = model
+		highlight.Enabled = model ~= nil
+	end
+end
+
+-- Turns off the own outlines of whichever structures this tool is painting, and puts back the ones it
+-- no longer is. A structure's own Highlight and ours would otherwise fight over the adornee -- Roblox
+-- renders one of them and there's no saying which -- and a griller with a cooked skewer on it is
+-- breathing gold exactly when you'd want to take it down. So without this, hover and the red confirm
+-- would both be a coin toss against the very structures they matter most on.
+--
+-- Recomputed from scratch on every change rather than patched: there are at most two of them, and the
+-- alternative is remembering which of the pair each suppressed highlight belonged to.
+function BuildController:_refreshSuppressedHighlights()
+	for _, highlight in self._suppressedHighlights do
+		highlight.Enabled = true
+	end
+	table.clear(self._suppressedHighlights)
+
+	local painted = {}
+	if self._armedHighlight.Adornee then
+		table.insert(painted, self._armedHighlight.Adornee)
+	end
+	if self._hoverHighlight.Adornee then
+		table.insert(painted, self._hoverHighlight.Adornee)
+	end
+
+	for _, model in painted do
+		for _, descendant in model:GetDescendants() do
+			if descendant:IsA("Highlight") and descendant.Enabled then
+				descendant.Enabled = false
+				table.insert(self._suppressedHighlights, descendant)
+			end
+		end
+	end
+end
+
+-- Whichever of the player's structures is under the cursor, and its uid.
+--
+-- Both come back nil when the cursor is off the base, and also for a structure that's just gone down
+-- whose uid hasn't replicated yet: there'd be nothing to send for it, so marking it would promise a
+-- click that couldn't be honoured.
+function BuildController:_getStructureUnderCursor(): (Model?, string?)
+	local ray = self._mouse.UnitRay
 	local result = workspace:Raycast(ray.Origin, ray.Direction * RAY_LENGTH, self._raycastParams)
 
 	-- The ray lands on some part deep inside a structure, so climb to the structure itself. Climbing to
@@ -357,9 +590,67 @@ function BuildController:_updateRemoveTarget()
 	end
 
 	local uid = model and model:GetAttribute(Structures.UID_ATTRIBUTE)
+	if not uid then
+		return nil, nil
+	end
 
-	self._removeUid = uid
-	self._removeHighlight.Adornee = if uid then model else nil
+	return model, uid
+end
+
+-- Follows the cursor: warms whichever structure is under it, so what a click would pick is visible
+-- before one is spent finding out. The armed structure is deliberately left out -- it's already been
+-- picked and is wearing red, and pointing at it again says nothing new.
+function BuildController:_updateHoverTarget()
+	local model, uid = self:_getStructureUnderCursor()
+
+	if uid == self._armedUid then
+		model, uid = nil, nil
+	end
+
+	-- Runs every frame, and both refreshes below are real work -- so a cursor that hasn't left the
+	-- structure it was on shouldn't cost anything.
+	if uid == self._hoverUid then
+		return
+	end
+
+	self._hoverUid = uid
+	self._hoverHighlight.Adornee = model
+	self._hoverHighlight.Enabled = model ~= nil
+
+	self:_refreshSuppressedHighlights()
+	self:_refreshPickupHighlights()
+end
+
+-- Picks the structure a second click would take back, or drops the pick when given nothing. Passing
+-- the model as well as its uid rather than looking it up: the caller has just raycast it, and the uid
+-- is what crosses the wire while the model is what gets outlined.
+function BuildController:_armPickup(model: Model?, uid: string?)
+	if self._armedUid == uid then
+		return
+	end
+
+	self._armedUid = uid
+	self._armedHighlight.Adornee = model
+	self._armedHighlight.Enabled = model ~= nil
+
+	-- Red takes the structure off the hover pass. Two of our own outlines on one adornee would fight
+	-- exactly the way a structure's own does, and having just been clicked it's plainly the one meant.
+	if self._hoverUid == uid then
+		self._hoverUid = nil
+		self._hoverHighlight.Adornee = nil
+		self._hoverHighlight.Enabled = false
+	end
+
+	if model then
+		NotificationController:NotifyNormal({
+			Text = "Click again to pick it up",
+		})
+	end
+
+	-- Straight away rather than at the next tick, so the structure just picked leaves the other two
+	-- passes (or the one just dropped rejoins them) in the same frame as the click.
+	self:_refreshSuppressedHighlights()
+	self:_refreshPickupHighlights()
 end
 
 -- Sends the cell under the cursor to be built on. Refused placements come back as nothing happening,
@@ -385,9 +676,27 @@ function BuildController:_tryPlace()
 	)
 end
 
--- Takes down whichever structure is under the cursor.
-function BuildController:_tryRemove()
-	if not self._removeUid then
+-- The pickup tool's click. The first one on a structure picks it, the second one on the same structure
+-- sends it, and a click on anything else -- another structure, the ground, the sky -- moves or drops
+-- the pick. So nothing is ever taken back by a click that wasn't aimed at it twice.
+function BuildController:_tryPickup()
+	-- Nothing to point with, so the tool was equipped before the player had a base to point at.
+	if not self._mouse then
+		return
+	end
+
+	-- Raycast afresh rather than reading what the hover loop last saw. On a touch device the tap that
+	-- gets here and the frame that moves the cursor to it aren't ordered against each other, so a
+	-- remembered target could be one tap behind -- and this is the click that takes something down.
+	local model, uid = self:_getStructureUnderCursor()
+
+	if uid ~= self._armedUid then
+		self:_armPickup(model, uid)
+		return
+	end
+
+	-- Nothing under the cursor and nothing picked, so the click was at empty ground twice over.
+	if not uid then
 		return
 	end
 
@@ -397,7 +706,8 @@ function BuildController:_tryRemove()
 	end
 	self._lastPlaceTime = now
 
-	self.RemoveStructureEvent:FireServer(self._removeUid)
+	self.RemoveStructureEvent:FireServer(uid)
+	self:_armPickup(nil, nil)
 end
 
 -- Raises the ghost and starts it following the cursor. Everything it sets up hangs off the placement
@@ -420,10 +730,7 @@ function BuildController:_warnIfUnplaceable(structure: Structures.Structure)
 		local countX, countZ = GridUtil.GetDimensions(floor, Structures.CELL_SIZE)
 
 		-- Either way round, since the player can turn it a quarter-turn to fit the other way.
-		if
-			(footprintX <= countX and footprintZ <= countZ)
-			or (footprintZ <= countX and footprintX <= countZ)
-		then
+		if (footprintX <= countX and footprintZ <= countZ) or (footprintZ <= countX and footprintX <= countZ) then
 			return
 		end
 
@@ -432,6 +739,154 @@ function BuildController:_warnIfUnplaceable(structure: Structures.Structure)
 				.. `{countX}x{countZ} ({Structures.CELL_SIZE} studs each), so it can't fit`
 		)
 	end
+end
+
+-- The guide frame, or nil if the place file hasn't got one. Re-resolved rather than kept, because a
+-- ScreenGui with ResetOnSpawn left on is rebuilt with every character -- so a reference taken once
+-- would be pointing at a destroyed frame from the first respawn onwards.
+function BuildController:_getGuide(): Frame?
+	if self._guide and self._guide.Parent then
+		return self._guide
+	end
+
+	self._guide = self.UI and self.UI:FindFirstChild(GUIDE_FRAME_NAME)
+
+	return self._guide
+end
+
+-- One entry of the guide, by name.
+function BuildController:_getGuideScale(entryName: string): UIScale?
+	local guide = self:_getGuide()
+	local entry = guide and guide:FindFirstChild(entryName)
+
+	return entry and entry:FindFirstChildOfClass("UIScale")
+end
+
+-- Squashes one entry of the guide while its input is held, and lets it back out on release. Reads as a
+-- button being pressed because it's the same spring UIController puts on every other button.
+function BuildController:_pressGuideEntry(entryName: string, pressed: boolean)
+	local uiScale = self:_getGuideScale(entryName)
+
+	-- No guide up: either the place file hasn't got one, or this is a phone, or the tool was put away
+	-- mid-press. Nothing to squash either way.
+	if not uiScale then
+		return
+	end
+
+	Spr.target(uiScale, GUIDE_DAMPING, GUIDE_FREQUENCY, {
+		Scale = if pressed then GUIDE_PRESS_SCALE else GUIDE_NORMAL_SCALE,
+	})
+end
+
+-- Puts the guide up for the length of a placement, or takes it down.
+function BuildController:_showGuide(shown: boolean)
+	local guide = self:_getGuide()
+	if not guide then
+		return
+	end
+
+	-- Desktop only. A phone gets the touch buttons instead, and its "cursor" is wherever a finger last
+	-- landed -- so a hint chasing it would sit under the player's own thumb. Forced down rather than
+	-- left alone, since the frame may well be authored visible in the place file.
+	if UserInputService.TouchEnabled then
+		shown = false
+	end
+
+	-- Both entries go back to full size as the guide goes *up* rather than as it comes down. A spring
+	-- left running on a hidden frame would still be settling if the player swapped tools quickly, so
+	-- resetting on the way in is what makes the guide crisp however it was last put away. Stopped
+	-- before it's written, since a live spring would otherwise carry on over the value.
+	if shown then
+		for _, entryName in { GUIDE_PLACE_ENTRY, GUIDE_ROTATE_ENTRY } do
+			local uiScale = self:_getGuideScale(entryName)
+
+			if uiScale then
+				Spr.stop(uiScale, "Scale")
+				uiScale.Scale = GUIDE_NORMAL_SCALE
+			end
+		end
+	end
+
+	guide.Visible = shown
+
+	-- Dropped so the next placement starts on the cursor rather than gliding in from wherever the last
+	-- one was left.
+	self._guidePosition = nil
+end
+
+-- Glides the guide to the cursor. Eased rather than pinned so it trails the pointer slightly and
+-- settles, which reads as something following the mouse rather than something stuck to it.
+function BuildController:_updateGuide(deltaTime: number)
+	local guide = self:_getGuide()
+	if not guide or not guide.Visible then
+		return
+	end
+
+	local mouse = UserInputService:GetMouseLocation()
+
+	-- GetMouseLocation is measured from below the topbar, and so is a ScreenGui's own origin -- unless
+	-- it ignores the inset, in which case it measures from the very top and the inset has to go back
+	-- on. Read off the gui rather than assumed, since that's a property of the place file.
+	local target = if self.UI.IgnoreGuiInset then mouse + GuiService:GetGuiInset() else mouse
+
+	-- The first frame snaps outright, and math.exp keeps the glide the same speed whatever the
+	-- framerate -- the same easing the ghost uses over the grid.
+	if self._guidePosition then
+		self._guidePosition = self._guidePosition:Lerp(target, 1 - math.exp(-GUIDE_FOLLOW_SPEED * deltaTime))
+	else
+		self._guidePosition = target
+	end
+
+	-- Position only: the anchor point is authored, and it's what decides where the frame sits relative
+	-- to the pointer.
+	guide.Position = UDim2.fromOffset(self._guidePosition.X, self._guidePosition.Y)
+end
+
+-- Binds placing and rotating for as long as the ghost is up, and puts an on-screen button behind each
+-- on a touch device -- which is the whole point, since rotation is otherwise a key a phone hasn't got.
+-- Bound per placement rather than once, so the buttons are on screen exactly while there's something
+-- to aim.
+--
+-- Place is bound to no key at all: on a desktop it's the tool's own click that commits, and on a phone
+-- it's the button. Rotate takes the key as well, so one handler serves both rather than a keyboard
+-- path and a touch path that can drift apart.
+function BuildController:_bindPlacementActions()
+	ContextActionUtility = ContextActionUtility or require(Modules.ContextActionUtlity)
+
+	-- The touch buttons report the press, the drag and the release alike, so without this a tap would
+	-- count twice and a rotate would turn half a circle.
+	local function onPlace(_actionName: string, inputState: Enum.UserInputState)
+		if inputState == Enum.UserInputState.Begin then
+			self:_tryPlace()
+		end
+	end
+
+	-- Rotation carries across placements until the tool is put away, so laying out a row of things all
+	-- facing the same way is one press rather than one per copy.
+	--
+	-- The release is worth listening for even though nothing turns on it: it's what lets the hint on
+	-- screen come back out of its press, so holding the key holds the button down.
+	local function onRotate(_actionName: string, inputState: Enum.UserInputState)
+		if inputState == Enum.UserInputState.Begin then
+			self._rotation = (self._rotation + 1) % 4
+			self:_pressGuideEntry(GUIDE_ROTATE_ENTRY, true)
+		elseif inputState == Enum.UserInputState.End then
+			self:_pressGuideEntry(GUIDE_ROTATE_ENTRY, false)
+		end
+	end
+
+	-- Place first, so it takes the slot nearest the jump button: it's the action being aimed at, and
+	-- rotate is the one you reach past it for.
+	ContextActionUtility:BindAction(PLACE_ACTION, onPlace, true)
+	ContextActionUtility:SetTitle(PLACE_ACTION, "Place")
+
+	ContextActionUtility:BindAction(ROTATE_ACTION, onRotate, true, ROTATE_KEY)
+	ContextActionUtility:SetTitle(ROTATE_ACTION, "Rotate")
+
+	self._placementCleaner:Add(function()
+		ContextActionUtility:UnbindAction(PLACE_ACTION)
+		ContextActionUtility:UnbindAction(ROTATE_ACTION)
+	end)
 end
 
 -- Deliberately doesn't re-read which plots are owned: _floors is kept current by the listeners in
@@ -457,19 +912,26 @@ function BuildController:_enterPlacement(structure: Structures.Structure, mouse:
 
 	self._placementCleaner:Connect(RunService.RenderStepped, function(deltaTime: number)
 		self:_updateGhost(deltaTime)
+		self:_updateGuide(deltaTime)
 	end)
 
-	-- Rotation carries across placements until the tool is put away, so laying out a row of things all
-	-- facing the same way is one keypress rather than one per copy.
-	self._placementCleaner:Connect(UserInputService.InputBegan, function(input: InputObject, gameProcessed: boolean)
-		if not gameProcessed and input.KeyCode == ROTATE_KEY then
-			self._rotation = (self._rotation + 1) % 4
-		end
+	self:_bindPlacementActions()
+
+	-- Only for building: the pickup tool has nothing to rotate and its click picks rather than places,
+	-- so _enterPickup deliberately leaves the guide down.
+	self:_showGuide(true)
+
+	-- Registered rather than called from _exitPlacement, so the guide goes down with everything else
+	-- driving the ghost -- including when the tool is destroyed out from under it.
+	self._placementCleaner:Add(function()
+		self:_showGuide(false)
 	end)
 end
 
--- Starts the demolish tool following the cursor, pointed at the structures rather than the floors.
-function BuildController:_enterRemoval(mouse: Mouse)
+-- Raises the calm pass over everything on the base that can be taken back, and stands ready for the
+-- clicks. Everything it sets up hangs off the placement cleaner, so putting the tool away puts the
+-- base back exactly as it was -- including any outlines a pick had turned off.
+function BuildController:_enterPickup(mouse: Mouse)
 	self:_exitPlacement()
 
 	local base = self:_getBase()
@@ -484,24 +946,62 @@ function BuildController:_enterRemoval(mouse: Mouse)
 	raycastParams.FilterType = Enum.RaycastFilterType.Include
 	raycastParams.FilterDescendantsInstances = { folder }
 
-	local highlight = Instance.new("Highlight")
-	highlight.FillColor = REMOVE_COLOR
-	highlight.OutlineColor = REMOVE_COLOR
-	highlight.FillTransparency = REMOVE_FILL_TRANSPARENCY
-	highlight.OutlineTransparency = 0
-	highlight.Parent = self._highlightHolder
+	-- Occluded like the calm pass, since what's under the cursor is by definition something the player
+	-- can see.
+	local hoverHighlight = Instance.new("Highlight")
+	hoverHighlight.DepthMode = Enum.HighlightDepthMode.Occluded
+	hoverHighlight.FillColor = HOVER_COLOR
+	hoverHighlight.OutlineColor = HOVER_COLOR
+	hoverHighlight.FillTransparency = HOVER_FILL_TRANSPARENCY
+	hoverHighlight.OutlineTransparency = HOVER_OUTLINE_TRANSPARENCY
+	hoverHighlight.Enabled = false
+	hoverHighlight.Parent = self._highlightHolder
+
+	local armedHighlight = Instance.new("Highlight")
+	armedHighlight.FillColor = ARMED_COLOR
+	armedHighlight.OutlineColor = ARMED_COLOR
+	armedHighlight.FillTransparency = ARMED_FILL_TRANSPARENCY
+	armedHighlight.OutlineTransparency = ARMED_OUTLINE_TRANSPARENCY
+	armedHighlight.Enabled = false
+	armedHighlight.Parent = self._highlightHolder
 
 	self._mouse = mouse
 	self._raycastParams = raycastParams
 	self._structureFolder = folder
-	self._removeHighlight = self._placementCleaner:Add(highlight)
+	self._suppressedHighlights = {}
+	self._hoverHighlight = self._placementCleaner:Add(hoverHighlight)
+	self._armedHighlight = self._placementCleaner:Add(armedHighlight)
+	self._pickupHighlights = self:_createPickupHighlights()
 
-	self._placementCleaner:Connect(RunService.RenderStepped, function()
-		self:_updateRemoveTarget()
+	-- Registered rather than called from _exitPlacement, so a structure's own outlines come back with
+	-- everything else -- including when the tool is destroyed out from under a pick.
+	self._placementCleaner:Add(function()
+		for _, highlight in self._suppressedHighlights do
+			highlight.Enabled = true
+		end
+	end)
+
+	self:_refreshPickupHighlights()
+
+	-- Hover is chased every frame, the way the ghost chases the cursor -- it's answering "what am I
+	-- pointing at", so a frame of lag reads as the outline sticking. Which structures are nearest the
+	-- camera can't meaningfully change that fast and costs a walk of the whole base to work out, so the
+	-- calm pass underneath it is throttled instead.
+	local sinceRefresh = 0
+
+	self._placementCleaner:Connect(RunService.RenderStepped, function(deltaTime: number)
+		self:_updateHoverTarget()
+
+		sinceRefresh += deltaTime
+
+		if sinceRefresh >= PICKUP_REFRESH_INTERVAL then
+			sinceRefresh = 0
+			self:_refreshPickupHighlights()
+		end
 	end)
 end
 
--- Drops the ghost (or the demolish outline) and everything driving it.
+-- Drops the ghost (or the pickup outlines) and everything driving it.
 function BuildController:_exitPlacement()
 	self._placementCleaner:Clean()
 
@@ -510,6 +1010,9 @@ function BuildController:_exitPlacement()
 	self._mouse = nil
 	self._ghost = nil
 	self._ghostParts = nil
+	self._ghostHighlight = nil
+	self._ghostShown = nil
+	self._ghostValid = nil
 	self._rotation = 0
 	self._raycastParams = nil
 	self._ghostCFrame = nil
@@ -518,16 +1021,20 @@ function BuildController:_exitPlacement()
 	self._targetCellZ = nil
 	self._valid = false
 	self._structureFolder = nil
-	self._removeUid = nil
-	self._removeHighlight = nil
+	self._hoverUid = nil
+	self._hoverHighlight = nil
+	self._armedUid = nil
+	self._armedHighlight = nil
+	self._pickupHighlights = nil
+	self._suppressedHighlights = nil
 end
 
 -- Hooks one build tool, so equipping it starts placement and using it commits. Anything else in the
 -- backpack -- sticks, ingredients, crates -- isn't ours and is left alone.
 function BuildController:_hookTool(tool: Tool)
-	local isRemover = tool:GetAttribute(REMOVE_TOOL_ATTRIBUTE) == true
+	local isPickup = tool:GetAttribute(PICKUP_TOOL_ATTRIBUTE) == true
 
-	if not isRemover and not tool:HasTag(STRUCTURE_TOOL_TAG) then
+	if not isPickup and not tool:HasTag(STRUCTURE_TOOL_TAG) then
 		return
 	end
 
@@ -537,13 +1044,13 @@ function BuildController:_hookTool(tool: Tool)
 	self._hookedTools[tool] = true
 
 	-- Which structure this tool places, resolved once: a tool is built for one kind and never changes
-	-- kind, only how many of it are left. Nil for the demolish tool, and for a tool naming a structure
+	-- kind, only how many of it are left. Nil for the pickup tool, and for a tool naming a structure
 	-- the config dropped for want of a model -- which leaves it inert in the hand rather than erroring.
 	local structure = Structures.GetStructureFromId(tool:GetAttribute(STRUCTURE_TOOL_ATTRIBUTE))
 
 	self._characterCleaner:Connect(tool.Equipped, function(mouse: Mouse)
-		if isRemover then
-			self:_enterRemoval(mouse)
+		if isPickup then
+			self:_enterPickup(mouse)
 		elseif structure then
 			self:_enterPlacement(structure, mouse)
 		else
@@ -571,10 +1078,20 @@ function BuildController:_hookTool(tool: Tool)
 	end)
 
 	self._characterCleaner:Connect(tool.Activated, function()
-		if isRemover then
-			self:_tryRemove()
+		if isPickup then
+			self:_tryPickup()
 		else
 			self:_tryPlace()
+			self:_pressGuideEntry(GUIDE_PLACE_ENTRY, true)
+		end
+	end)
+
+	-- The release half of the click, purely so the hint on screen comes back out of its press. Taken
+	-- off the tool rather than by binding the mouse button through ContextActionService, which would
+	-- swallow clicks game-wide for as long as a build tool was in hand.
+	self._characterCleaner:Connect(tool.Deactivated, function()
+		if not isPickup then
+			self:_pressGuideEntry(GUIDE_PLACE_ENTRY, false)
 		end
 	end)
 end
@@ -614,6 +1131,15 @@ function BuildController:OnInit()
 	self._characterCleaner = self._cleaner:Construct(Trove)
 	self._placementCleaner = self._cleaner:Construct(Trove)
 	self._hookedTools = {}
+
+	-- Waited on with a timeout rather than indefinitely: a missing guide should cost the player their
+	-- on-screen hint and nothing else, where an open-ended wait would hold this whole controller --
+	-- and so building itself -- on a piece of UI that's only ever decoration.
+	self.UI = LocalPlayer.PlayerGui:WaitForChild(GUIDE_GUI_NAME, GUIDE_TIMEOUT)
+
+	if not self.UI then
+		warn(`[Build] PlayerGui.{GUIDE_GUI_NAME} is missing, so there's no on-screen build guide`)
+	end
 end
 
 function BuildController:OnStart()

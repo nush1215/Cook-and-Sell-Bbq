@@ -188,7 +188,7 @@ function GrillerManager:_renderGrills(player: Player)
 
 		if record then
 			local model = StickManager:BuildPlacedStickModel(record)
-			local attachment = slot:FindFirstChild("StickAttachment")
+			local attachment = slot:FindFirstChild("StickAttachment", true)
 
 			-- The griller's parts come off its template in the place file, so a missing attachment is a
 			-- real failure case.
@@ -197,7 +197,17 @@ function GrillerManager:_renderGrills(player: Player)
 				-- name and only animates it while this cook is the one running.
 				model.Name = "Skewer"
 				model:SetAttribute("CookStartedAt", if cooking then record.CookStartedAt else nil)
-				model:PivotTo(attachment.WorldCFrame)
+
+				-- Seated off where the griller belongs rather than where it currently is. A structure
+				-- built this session is left PLACE_DROP_HEIGHT above its cell here on the server -- only
+				-- the client springs it down onto it (LayoutStand, off the same SlotCFrame) -- so the
+				-- attachment's world pose is that far out, and a skewer pivoted straight onto it hangs in
+				-- the air over the grill on every client. Taking the attachment's pose in model space and
+				-- re-seating it on the settled pivot carries it down with the griller.
+				local pivot = slot:GetPivot()
+				local settled = slot:GetAttribute("SlotCFrame") or pivot
+				model:PivotTo(settled * pivot:Inverse() * attachment.WorldCFrame)
+
 				model.Parent = slot
 				skewers[uid] = model
 			elseif model then

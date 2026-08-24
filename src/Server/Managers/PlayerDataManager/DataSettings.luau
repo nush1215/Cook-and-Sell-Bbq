@@ -35,7 +35,7 @@ return {
 		Structures = {}, -- [uid] = { Type, PlotId, CellX, CellZ, Rotation }
 		-- Structures the player owns but hasn't put down yet, held as a stacking tool each. A structure
 		-- is only ever in one of the two places: counted here, or standing on a plot above. Placing one
-		-- spends it from here and demolishing it puts it back, so nothing is lost to a bad spot.
+		-- spends it from here and picking it back up puts it back, so nothing is lost to a bad spot.
 		--
 		-- Seeded with one of each because there's nowhere to buy them yet -- a new player needs a griller
 		-- and a stand to have a game at all. Once a shop exists this goes back to empty and the shop

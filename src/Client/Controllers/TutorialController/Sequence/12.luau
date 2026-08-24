@@ -33,10 +33,10 @@ return function(self)
 			-- stops one, and left alone it would be lit through the raw band for something the player is
 			-- being held back from doing.
 			-- Every prompt on the attachment rather than the first one found: the body carries the Robux
-			-- skip through a cook as well as the place/take, and a beat teaching the timing shouldn't be
+			-- skip through a cook as well as the place, and a beat teaching the timing shouldn't be
 			-- offering to sell its way out of the thing it's teaching.
 			local prompts = { knob:FindFirstChildWhichIsA("ProximityPrompt") }
-			for _, child in slot.GrillPromptAttachment:GetChildren() do
+			for _, child in slot:FindFirstChild("GrillAttachment", true):GetChildren() do
 				if child:IsA("ProximityPrompt") then
 					table.insert(prompts, child)
 				end

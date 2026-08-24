@@ -84,6 +84,16 @@ local HOTBAR_SLOTS_VR: number = 6
 local HOTBAR_SLOTS_MINI: number = 6 -- Mobile gets 6 slots instead of default 3 it had before
 local HOTBAR_SLOTS_WIDTH_CUTOFF: number = 1024 -- Anything smaller is MINI
 
+-- A tool wearing this tag claims the same hotbar slot every time it's handed over, pushing whatever
+-- was there along instead of taking the next free slot (see OnChildAdded). For a tool the player is
+-- given rather than earns -- the pickup hammer -- so it's in the same place every life and muscle
+-- memory carries across respawns.
+--
+-- The slot is fixed rather than following the tool around: a player who drags it elsewhere with the
+-- inventory open keeps it there for that life, and the next spawn puts it back.
+local PINNED_TOOL_TAG: string = "PinnedTool"
+local PINNED_TOOL_SLOT: number = 1
+
 local INVENTORY_ROWS_FULL: number = 4
 local INVENTORY_ROWS_VR: number = 3
 local INVENTORY_ROWS_MINI: number = 2
@@ -222,7 +232,6 @@ local NumberOfInventoryRows: number = IsVR and INVENTORY_ROWS_VR
 	or (IS_PHONE and INVENTORY_ROWS_MINI or INVENTORY_ROWS_FULL) -- How many rows in the popped-up inventory
 local BackpackPanel = nil
 local lastEquippedSlot: any = nil
-local LassoSlotPreference: number? = 1 -- Hotbar slot the lasso defaults to; nil once the player moves it out of the hotbar
 
 local function EvaluateBackpackPanelVisibility(enabled: boolean): boolean
 	return enabled and inventoryIcon.enabled and BackpackEnabled and VRService.VREnabled
@@ -527,10 +536,6 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 
 		SlotsByTool[tool] = self
 		LowestEmptySlot = FindLowestEmpty()
-
-		if tool:IsA("Tool") and tool:HasTag("LassoTool") then
-			LassoSlotPreference = if self.Index <= NumberOfHotbarSlots then self.Index else nil
-		end
 	end
 
 	-- Empty the slot of any tool data
@@ -1104,12 +1109,14 @@ local function OnChildAdded(child: Instance): () -- To Character or Backpack
 	if slot then
 		slot:UpdateEquipView()
 	else -- New! Put into lowest hotbar slot or new inventory slot
-		if tool:IsA("Tool") and tool:HasTag("LassoTool") and LassoSlotPreference then
-			slot = Slots[LassoSlotPreference]
+		if tool:IsA("Tool") and tool:HasTag(PINNED_TOOL_TAG) then
+			slot = Slots[PINNED_TOOL_SLOT] -- Always exists; every hotbar slot is made up front
 			local displacedTool: any = slot.Tool
 			slot:Clear()
 			slot:Fill(tool)
 
+			-- Whatever was in the pinned slot moves along rather than being dropped. Unequipped if it was
+			-- in hand, since the slot it was equipped from now belongs to something else.
 			if displacedTool then
 				local displacedSlot: any = LowestEmptySlot or MakeSlot(UIGridFrame)
 				displacedSlot:Fill(displacedTool)

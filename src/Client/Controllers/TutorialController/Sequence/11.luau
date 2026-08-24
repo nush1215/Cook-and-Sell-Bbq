@@ -9,11 +9,12 @@ local BEAM_HIDE_DISTANCE = 12
 return function(self)
 	local slot = self:GetStructure("Grillers")
 
-	-- The grill prompt's attachment rather than the slot: it marks where the player has to stand to place
-	-- or take, and the model is wide enough that its centre reads as near from places nothing on it is in
-	-- reach. The knob beats measure from the knob for the same reason -- each beat's "near" is wherever
-	-- the thing it's asking for can be reached from.
-	local promptAttachment = slot.GrillPromptAttachment
+	-- The place prompt's attachment rather than the slot: it marks where the player has to stand to place,
+	-- and the model is wide enough that its centre reads as near from places nothing on it is in reach.
+	-- The knob beats measure from the knob for the same reason -- each beat's "near" is wherever the thing
+	-- it's asking for can be reached from. Found the whole way down, since it sits on GrillModel's
+	-- Base part rather than on the griller itself.
+	local promptAttachment = slot:FindFirstChild("GrillAttachment", true)
 
 	local highlight = self:CreateHighlight(slot)
 	local beam = self:CreateBeam(promptAttachment, BEAM_HIDE_DISTANCE)

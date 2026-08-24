@@ -10,7 +10,23 @@ local Trove = require(Packages.Trove)
 -- Constants
 local TWEEN_INFO = TweenInfo.new(0.5)
 
---
+--[[
+	PromptSubjectHighlight -- outlines whatever a ProximityPrompt is attached to for as long as that
+	prompt is on screen, so the thing being offered is obvious rather than having to be picked out from
+	behind the label.
+
+	Tag an instance that holds a prompt somewhere beneath it. Unlike BreathingHighlight this says
+	"you're in range of this" rather than "you can act on this" -- the prompt's own visibility is the
+	whole condition, so nothing here reads eligibility.
+
+	Attributes (optional):
+		HighlightColor (Color3) default white -- the outline's colour, read live, so an instance whose
+		                                         prompt changes meaning can recolour without being
+		                                         untagged and retagged. Only the outline takes it: the
+		                                         fill stays fully transparent here.
+
+	Don't put this and BreathingHighlight on the same instance -- see the note there.
+]]
 local PromptSubjectHighlight = Component.new({
 	Tag = script.Name,
 })
@@ -42,6 +58,18 @@ function PromptSubjectHighlight:Start()
 	highlight.Enabled = false
 	highlight.Parent = subject
 	self._cleaner:Add(highlight)
+
+	-- Left at Roblox's default when the attribute isn't set, so an instance that never asked for a
+	-- colour outlines the way it always has.
+	local function applyColor()
+		local color = subject:GetAttribute("HighlightColor")
+		if color then
+			highlight.OutlineColor = color
+		end
+	end
+
+	applyColor()
+	self._cleaner:Connect(subject:GetAttributeChangedSignal("HighlightColor"), applyColor)
 
 	-- Only one fade may be active at a time. We cancel/disconnect the previous
 	-- one before starting the next so fade-in and fade-out can't fight.

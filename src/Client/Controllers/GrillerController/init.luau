@@ -22,10 +22,10 @@ local LocalPlayer = Players.LocalPlayer
 -- not one model's id, so a second kind of griller renders through this controller with nothing changed.
 local GRILLER_CATEGORY = "Grillers"
 
--- The children a Grill has to have to do anything. They come off the structure's template, so they're
+-- The parts a Grill has to have to do anything. They come off the structure's template, so they're
 -- always there -- but a placed griller replicates in mid-session rather than existing from place-load,
 -- so they're waited on rather than assumed (see _addGrill).
-local REQUIRED_CHILDREN = { "GrillModel", "StickAttachment" }
+local REQUIRED_DESCENDANTS = { "GrillModel", "StickAttachment", "GrillAttachment" }
 local CHILD_TIMEOUT = 10
 
 --[[
@@ -40,6 +40,21 @@ local CHILD_TIMEOUT = 10
     found off the Griller tag: one appearing mid-session is picked up the same way as one that was
     already down when the client started, and the OwnerUserId attribute on it is what says whose it is.
 ]]
+
+-- Waits for a named descendant of a griller, the way WaitForChild waits for a child. The two
+-- attachments sit on GrillModel's Base part rather than on the griller itself, and WaitForChild only
+-- looks one level down, so these are polled out against the same timeout instead.
+local function waitForDescendant(model: Instance, name: string, timeout: number): Instance?
+	local deadline = os.clock() + timeout
+	local found = model:FindFirstChild(name, true)
+
+	while not found and os.clock() < deadline do
+		task.wait()
+		found = model:FindFirstChild(name, true)
+	end
+
+	return found
+end
 
 --
 local GrillerController = {
@@ -62,8 +77,8 @@ function GrillerController:_addGrill(model: Instance)
 	-- The server builds the griller complete before it tags it, and Roblox replicates a newly-parented
 	-- model's descendants together, so this is belt-and-braces -- but a Grill built without them is
 	-- dead for good rather than merely late, which is worth waiting to rule out.
-	for _, name in REQUIRED_CHILDREN do
-		if not model:WaitForChild(name, CHILD_TIMEOUT) then
+	for _, name in REQUIRED_DESCENDANTS do
+		if not waitForDescendant(model, name, CHILD_TIMEOUT) then
 			warn(`[Griller] {model.Name} has no {name}, it won't render`)
 			return
 		end
@@ -125,9 +140,9 @@ function GrillerController:RefreshInteractions()
 end
 
 -- Holds every grill's take off, so a skewer that's been put down stays put. Gates the eligibility the
--- class already computes rather than reaching in and disabling prompts, because taking is offered from
--- two attachments and one of those prompts is built and torn down as eligibility changes -- so anything
--- holding captured instances would race its creation and have nothing to hand back to.
+-- class already computes rather than reaching in and disabling prompts, because the take prompt rides on
+-- the skewer model -- which the server rebuilds on every record write, taking the prompt with it -- so
+-- anything holding a captured instance would be handing back to one that's already gone.
 --
 -- Set by the tutorial across the beat between placing a BBQ and lighting it: the stove is the only thing
 -- being asked for there, and a prompt offering to undo the step they just finished is the one other
