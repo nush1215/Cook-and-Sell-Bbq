@@ -236,7 +236,11 @@ function NotificationController:NotifyNormal(data: NotificationData)
 			notificationData.Instance.Title.Text = renderNotificationText(data, 0, notificationData.Count)
 		end
 
-		SoundController:PlaySound(data.Sound or "Notify")
+		-- Limited: notifications routinely arrive together -- both shops restock on the same second, grill
+		-- slots finish together -- and the network layer batches a frame's worth into one dispatch, so
+		-- without this the same chime plays N times stacked on itself. Only ever collapses an identical
+		-- sound inside PlaySound's 0.05s window, which is never something anyone wanted to hear twice.
+		SoundController:PlaySound(data.Sound or "Notify", nil, nil, true)
 
 		local retrigger = getNormalEffect(data.Effect).Retrigger
 		if retrigger then
@@ -295,7 +299,8 @@ function NotificationController:NotifyNormal(data: NotificationData)
 		playCountAnimation(notificationData, data)
 	end
 
-	SoundController:PlaySound(data.Sound or "Notify")
+	-- Limited for the same reason as the retrigger path above: one chime per batch of notifications.
+	SoundController:PlaySound(data.Sound or "Notify", nil, nil, true)
 
 	-- Timer loop
 	task.spawn(function()

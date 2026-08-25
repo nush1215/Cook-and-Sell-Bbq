@@ -12,10 +12,12 @@ return function(self)
 	local stand = standsFolder["1"]
 
 	-- The result is only buyable once the cycle has had time to play out -- the same window the server
-	-- gates the claim on -- so until then there's nothing to point at yet.
+	-- gates the claim on -- so until then there's nothing to point at yet. How long that is comes off
+	-- the stand alongside the stamp, since it's a level rather than a constant now.
 	local function hasSettled(): boolean
 		local rolledAt = stand:GetAttribute("RolledAt")
-		return rolledAt ~= nil and (workspace:GetServerTimeNow() - rolledAt) >= Rolling.GetRollDuration()
+		local duration = Rolling.GetRollDuration(stand:GetAttribute("RollSpeedLevel"))
+		return rolledAt ~= nil and (workspace:GetServerTimeNow() - rolledAt) >= duration
 	end
 
 	-- The rolled model is parented alongside the stands rather than under one, and is named for the

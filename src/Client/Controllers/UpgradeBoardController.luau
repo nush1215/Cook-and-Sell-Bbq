@@ -67,8 +67,14 @@ function UpgradeBoardController:_refreshSection(frame: Frame, unlock: BaseUnlock
 	-- Gate on Limit, not #Costs: RollingStands keeps costs dense past its cap.
 	local isMax = level >= unlock.Limit
 
-	frame.Title.Text = `{unlock.Name} ({level})`
-	frame.Level.Text = if isMax then `Max ({unlock.Limit})` else `{level}>{level + 1}`
+	-- A group whose level is a count of something reads as the number; one that tunes a stat reads as
+	-- what the stat becomes ("1.7s"), since the number on its own says nothing to the player.
+	local formatLevel = unlock.FormatLevel or tostring
+
+	frame.Title.Text = `{unlock.Name} ({formatLevel(level)})`
+	frame.Level.Text = if isMax
+		then `Max ({formatLevel(unlock.Limit)})`
+		else `{formatLevel(level)}>{formatLevel(level + 1)}`
 	frame.Buttons.Visible = not isMax
 
 	if isMax then
@@ -219,6 +225,7 @@ function UpgradeBoardController:_setupBase()
 
 	self._sections = {
 		{ frame = clone.IngredientRolls, unlock = BaseUnlocks.GetUnlockFromId("RollingStands") },
+		{ frame = clone.RollSpeed, unlock = BaseUnlocks.GetUnlockFromId("RollSpeed") },
 	}
 
 	for _, section in self._sections do

@@ -10,6 +10,7 @@ local Crates = require(script.Parent.Crates)
 local StarterPack = require(script.Parent.StarterPack)
 local BuxPacks = require(script.Parent.BuxPacks)
 local Ingredients = require(script.Parent.Ingredients)
+local Structures = require(script.Parent.Structures)
 
 --
 export type Product = {
@@ -152,6 +153,29 @@ for tier, productId in Ingredients.RobuxProductIds do
 	})
 end
 
+-- Structure Robux products, one per structure a dev product was made for (see Structures.RobuxProductId).
+-- The product's Id IS the structure's Id, which is what lets the grant resolve a receipt back to a
+-- structure without carrying anything on the product -- and what the Grill & Stand Shop's RobuxPurchase
+-- button prompts with. A structure still on the placeholder id of 0 is skipped, so its button stays hidden.
+--
+-- No Callback: GrillStandShopManager already listens on ShopManager.PlayerPurchased and grants off the
+-- structure id (see GrantStructureFromProduct), so one here would hand over a second copy.
+for _, structure in Structures.Data do
+	if not structure.RobuxProductId or structure.RobuxProductId == 0 then
+		continue
+	end
+
+	table.insert(Products.Data, {
+		Id = structure.Id,
+		Name = structure.Name,
+		Type = "Core",
+		Description = `Instantly get a {structure.Name}`,
+		PurchaseOnce = false,
+		Icon = structure.Icon,
+		ProductId = structure.RobuxProductId,
+	})
+end
+
 -- The starter pack, if a dev product has been made for it yet. PurchaseOnce is what stops a second
 -- buy server-side and what the shop card reads to pull itself the moment it's taken; the offer also
 -- times out, which the card handles off the player's StarterPackStart stamp.
@@ -242,6 +266,24 @@ table.insert(Products.Data, {
 		-- Lazy require to avoid pulling StickShopManager's dependency graph at module load.
 		local StickShopManager = require(ServerScriptService.Server.Managers.StickShopManager)
 		StickShopManager:RestockShop(player)
+	end,
+})
+
+table.insert(Products.Data, {
+	Id = "GrillStandShopRestock",
+	Name = "Grill & Stand Shop Restock",
+	Type = "Core",
+	Description = "Restock the Grill & Stand Shop for everyone in the server",
+	PurchaseOnce = false,
+	ProductId = 3709814926,
+	Callback = function(player: Player)
+		if RunService:IsClient() then
+			return
+		end
+
+		-- Lazy require to avoid pulling GrillStandShopManager's dependency graph at module load.
+		local GrillStandShopManager = require(ServerScriptService.Server.Managers.GrillStandShopManager)
+		GrillStandShopManager:RestockShop(player)
 	end,
 })
 

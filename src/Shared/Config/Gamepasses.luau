@@ -21,15 +21,6 @@ Gamepasses.Data = {
 		Name = "x2 Bux",
 		PassId = 1952486659,
 	},
-	-- Currently perk-less. It used to unlock a sixth griller slot that sat past the Griller unlock's
-	-- Limit, but grillers are freely-placed structures now (see Config.Structures) and there's no ladder
-	-- for a slot to sit past. Kept rather than removed: the pass is live and its owners still carry this
-	-- Id as a tag, so whatever the new golden grill turns out to be can hang off the same ownership.
-	{
-		Id = "GoldenGrill",
-		Name = "Golden Grill",
-		PassId = 1949530357,
-	},
 } :: { Gamepass }
 
 table.freeze(Gamepasses.Data)

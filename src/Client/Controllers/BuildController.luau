@@ -83,11 +83,14 @@ local PICKUP_REFRESH_INTERVAL = 0.2
 local RAY_LENGTH = 1000
 local ROTATE_KEY = Enum.KeyCode.R
 
--- Where a touch player's ghost sits, there being no cursor to point with: this far ahead of them, and
--- aimed at from this far above so the ray comes down onto the floor rather than into their own back.
--- Distance wants tuning on a real device -- too close and the character's own body hides the ghost,
--- too far and it's hard to tell which cell it's on.
-local TOUCH_AIM_DISTANCE = 8
+-- Where a touch player's ghost sits, there being no cursor to point with. Clearance is the ground left
+-- between the player and the structure's *near edge* rather than its middle -- half the structure's
+-- own depth is added on top, so the gap looks the same whatever is being placed and however it's been
+-- turned. A character is about two studs across, so this leaves roughly three studs of visible floor.
+--
+-- Height is how far above that spot the ray starts, so it comes down onto the floor rather than into
+-- the player's own back.
+local TOUCH_AIM_CLEARANCE = 5
 local TOUCH_AIM_HEIGHT = 12
 
 -- The two actions a player drives placement with. Both are bound through ContextActionUtility, which
@@ -379,9 +382,39 @@ function BuildController:_paintGhost(shown: boolean, valid: boolean?)
 	end
 end
 
+-- How far ahead of a touch player the ghost sits: enough ground to see past their own body, plus half
+-- of however deep the structure is toward them. So the gap to its near edge is the same for a griller
+-- as for something twice the size, and turning a long structure end-on pushes it out to match.
+--
+-- The depth is the standard extent of a box along an arbitrary direction -- each side weighted by how
+-- squarely the player is facing down it. Measured against the plot's own axes rather than the world's,
+-- since a structure's sides run along the grid it snaps to and that grid can be turned (see GridUtil).
+-- Any owned floor answers for that: the plots of one base share its orientation, so which one is read
+-- doesn't matter, only which way the grid runs -- and taking it from _floors rather than from a
+-- raycast is what stops this needing the very ray it's being used to aim.
+-- @param look The way the player is facing, flattened and normalised
+function BuildController:_getTouchAimDistance(look: Vector3): number
+	local structure = self._structure
+	if not structure then
+		return TOUCH_AIM_CLEARANCE
+	end
+
+	local sizeAlongX, sizeAlongZ = Structures.GetSize(structure, self._rotation)
+
+	-- No floor known yet, on the frame before a base has been handed over: the world's own axes are the
+	-- only sensible guess, and they're right for any base that hasn't been turned.
+	local floor = next(self._floors)
+	local right = if floor then floor.CFrame.RightVector else Vector3.xAxis
+	local forward = if floor then floor.CFrame.LookVector else Vector3.zAxis
+
+	local depth = math.abs(look:Dot(right)) * sizeAlongX + math.abs(look:Dot(forward)) * sizeAlongZ
+
+	return TOUCH_AIM_CLEARANCE + depth / 2
+end
+
 -- The ray the ghost is aimed down. On a desktop that's the cursor; a phone hasn't got one, so it's a
--- fixed spot in front of the player instead -- they aim by walking and turning, which also means the
--- ghost is always somewhere they could stand rather than across the base from them.
+-- spot in front of the player instead -- they aim by walking and turning, which also means the ghost
+-- is always somewhere they could stand rather than across the base from them.
 --
 -- The touch ray points straight down rather than forward, so where the ghost lands doesn't shift with
 -- how the camera happens to be tilted, and so it comes down onto the floor through the same
@@ -401,8 +434,13 @@ function BuildController:_getAimRay(): Ray?
 		return nil
 	end
 
+	-- Flattened, because both the offset below and the depth it's measured against are horizontal --
+	-- a root part tipped back in a seat would otherwise pull the spot in toward the player.
+	local look = root.CFrame.LookVector * Vector3.new(1, 0, 1)
+	look = if look.Magnitude > 0 then look.Unit else root.CFrame.LookVector
+
 	local origin = root.Position
-		+ root.CFrame.LookVector * TOUCH_AIM_DISTANCE
+		+ look * self:_getTouchAimDistance(look)
 		+ Vector3.new(0, TOUCH_AIM_HEIGHT, 0)
 
 	return Ray.new(origin, Vector3.new(0, -1, 0))
@@ -1080,10 +1118,21 @@ function BuildController:_hookTool(tool: Tool)
 	self._characterCleaner:Connect(tool.Activated, function()
 		if isPickup then
 			self:_tryPickup()
-		else
-			self:_tryPlace()
-			self:_pressGuideEntry(GUIDE_PLACE_ENTRY, true)
+			return
 		end
+
+		-- A tap fires this as well as a click, and on a phone that's *any* tap -- including the ones
+		-- only meant to swing the camera round while lining the ghost up. So placing belongs to the
+		-- Place button alone there, and looking around can't land a structure by accident.
+		--
+		-- Picking up above is deliberately not gated the same way: that tool has no button, and tapping
+		-- the thing you want back is how it's meant to be used.
+		if UserInputService.TouchEnabled then
+			return
+		end
+
+		self:_tryPlace()
+		self:_pressGuideEntry(GUIDE_PLACE_ENTRY, true)
 	end)
 
 	-- The release half of the click, purely so the hint on screen comes back out of its press. Taken

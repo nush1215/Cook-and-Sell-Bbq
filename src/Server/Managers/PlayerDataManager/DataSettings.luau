@@ -7,8 +7,8 @@ return {
 		-- Core Game
 		Unlocks = {
 			SauceDispenser = 0, -- the Sauce Dispenser
-			SkewerStand = 1,
 			RollingStands = 1, -- The gambling thing
+			RollSpeed = 1, -- how long one pull takes; level 1 is the slowest (see Config.Rolling)
 		},
 
 		-- Which plots on their base the player has bought, keyed by the plot's name in the base's Plots
@@ -57,8 +57,11 @@ return {
 		-- What the player's last pull landed on each stand and hasn't bought yet. A roll is held until
 		-- it's claimed -- there's no expiry, so someone can go and earn the currency for an expensive
 		-- one and come back to it, a rejoin included. RolledAt is workspace:GetServerTimeNow(), and the
-		-- claim is gated on the roll animation having had time to play out.
-		PendingRolls = {}, -- [standId] = { IngredientId, RolledAt }
+		-- claim is gated on the roll animation having had time to play out. SpeedLevel is the
+		-- Unlocks.RollSpeed the pull was made at, which is how long that window is -- stamped on the roll
+		-- rather than read live, so a level bought while a pull is in the air can't move the goalposts
+		-- under the animation every client is already playing.
+		PendingRolls = {}, -- [standId] = { IngredientId, RolledAt, SpeedLevel }
 
 		-- Index
 		-- [ingredientId] = lifetime number obtained; the key's presence marks it discovered
@@ -77,10 +80,10 @@ return {
 		-- Sauce is a Sauces id, applied at a dispenser once it's cooked and likewise permanent -- so it only
 		-- ever appears on FilledSticks and SkewerStand records, never on a stick stand or griller.
 		-- Mutation is a Mutations id and permanent too, but it's the grill's doing rather than the
-		-- player's. Nothing stamps one today -- the grill that did was the Golden Grill's slot, which went
-		-- with the unlock ladder -- so it only appears on skewers made before that, and on whatever the
-		-- new golden grill ends up being. It multiplies what the skewer sells for and puts its particles
-		-- on it.
+		-- player's: it's stamped when a cook settles, off the structure it settled on (the Golden Grill is
+		-- the one that carries one), so a BBQ is only ever mutated by the grill it was actually cooked on.
+		-- A raw pull never gets one, for the same reason it carries neither of the two above. It multiplies
+		-- what the skewer sells for and puts its particles on it.
 		Sticks = {}, -- [stickId] = amount owned
 		-- [structureUid] = { StickId, Ingredients = { ingredientId }, Cooked? } placed on that stand
 		StickStands = {},
@@ -124,6 +127,12 @@ return {
 		-- counted in (the shop's global stock re-rolls each window off that same seed); a stale Seed
 		-- means the window rolled over, so Bought is treated as empty and reset on the next purchase.
 		StickShop = { Seed = 0, Bought = {} }, -- Bought = [stickId] = amount bought this window
+
+		-- Grill & Stand Shop
+		-- The same per-window ledger as StickShop above, for the shop that sells structures. Its own
+		-- Seed rather than a shared one: the two shops run separate clocks and either can be re-rolled
+		-- on its own by its restock product, so a window that rolled over on one hasn't on the other.
+		GrillStandShop = { Seed = 0, Bought = {} }, -- Bought = [structureId] = amount bought this window
 
 		-- Sell Stall
 		-- workspace:GetServerTimeNow() the last rich customer was sent to the stall at. The cooldown

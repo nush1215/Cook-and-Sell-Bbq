@@ -127,6 +127,18 @@ function GrillerManager:OwnsGrillerStructure(data, uid: string): boolean
 	return structure ~= nil and Structures.IsCategory(structure.Type, GRILLER_CATEGORY)
 end
 
+-- The mutation the griller at `uid` stamps onto a cook that settles on it, or nil for a plain grill.
+-- Read off the structure the cook actually happened on rather than off the skewer's record, which is
+-- what keeps a BBQ only ever mutated by the grill it was cooked on (see Config.Mutations).
+-- The structure may be gone: a bought cook skip can land minutes after its prompt went up, and the
+-- grill can have been picked up in between.
+function GrillerManager:GetGrillerMutation(data, uid: string): string?
+	local placed = data.Structures[uid]
+	local structure = placed and Structures.GetStructureFromId(placed.Type)
+
+	return structure and structure.Mutation
+end
+
 -- Mirrors a griller's record onto its replicated attributes. The client reads these to drive both its
 -- owner prompt/knob and the cook animation it renders (spin, raw -> cooked colour, stove), so
 -- CookStartedAt / CookTime let it play out deterministically and CookIngredients tells it what each
@@ -521,6 +533,9 @@ function GrillerManager:GrantSkipCookFromProduct(player: Player)
 		-- Cleared rather than carried across: the skip takes the cook past the raw band, and clearing that
 		-- band is what consumes a bank, exactly as a stop past it does.
 		CookProgress = nil,
+		-- Stamped the same way a cook stopped by hand is, off the grill it settled on. Unconditional
+		-- where the stop has a raw case to rule out, since a skip always lands past the raw band.
+		Mutation = self:GetGrillerMutation(data, uid),
 	})
 
 	-- Counted like any other cook, so SkewersCooked still comes to the sum of CookStateCounts. The elapsed
@@ -607,9 +622,12 @@ function GrillerManager:StopCooking(player: Player, uid: string)
 		-- means the same thing on whatever grill the cook is picked back up on. Being raw is what bounds it
 		-- under RAW_END, and any cook that got past that band consumes the bank by clearing it.
 		CookProgress = if raw then elapsed / record.CookTime else nil,
-		-- Mutation is deliberately absent: nothing stamps one today. It used to be read off the grill
-		-- rather than the record, so a skewer was only ever mutated by the grill it was actually cooked
-		-- on -- whatever the new golden grill turns out to be should keep that rule.
+		-- Off the grill it cooked on rather than anything on the record, so a BBQ is only ever mutated by
+		-- the grill it was actually cooked on. Nil on a raw pull alongside the two above, and for the same
+		-- reason plus one: a raw skewer is meant to be indistinguishable from one that was never lit, and
+		-- stamping one would let a player light a Golden Grill for a second, pull it raw, and then finish
+		-- the cook on a plain grill still carrying the multiplier.
+		Mutation = if raw then nil else self:GetGrillerMutation(data, uid),
 	})
 
 	self._stopping[player] = nil

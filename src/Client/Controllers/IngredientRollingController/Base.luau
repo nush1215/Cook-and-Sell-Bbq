@@ -77,6 +77,24 @@ function Base.new(model: Model)
 	leverSpring.Damper = 0.3
 	leverSpring.Speed = 15
 
+	local leverRestCFrame = leverHandle:GetPivot()
+
+	-- Every sound a roll makes comes off this one part rather than off the stands, so a pull reads as one
+	-- machine in one place. The stands slide as the grid reflows and whichever one reaches a step first is
+	-- the one that plays that step's tick, so emitting from them panned the roll somewhere new every pull
+	-- -- and the sting, which follows the rarest landing, jumped again on the reveal. The lever's rest
+	-- pose is the one point on the setup that doesn't move.
+	local soundEmitter = Instance.new("Part")
+	soundEmitter.Name = "RollSoundEmitter"
+	soundEmitter.Anchored = true
+	soundEmitter.CanCollide = false
+	soundEmitter.CanQuery = false
+	soundEmitter.CanTouch = false
+	soundEmitter.Transparency = 1
+	soundEmitter.Size = Vector3.one
+	soundEmitter.CFrame = leverRestCFrame
+	soundEmitter.Parent = rollingFolder
+
 	--
 	local self = setmetatable({
 		--
@@ -87,7 +105,8 @@ function Base.new(model: Model)
 		_lever = lever,
 		_leverHandle = leverHandle,
 		_leverSpring = leverSpring,
-		_leverRestCFrame = leverHandle:GetPivot(),
+		_leverRestCFrame = leverRestCFrame,
+		_soundEmitter = soundEmitter,
 
 		-- The pull the lever last swung for, so a bank of stands all picking up the same roll swings it
 		-- once between them rather than once each.
@@ -107,6 +126,8 @@ function Base.new(model: Model)
 		_standCleaner = cleaner:Construct(Trove),
 		_promptCleaner = cleaner:Construct(Trove),
 	}, Base)
+
+	cleaner:Add(soundEmitter)
 
 	-- The lever breathes instead of carrying PromptSubjectHighlight: both would put a Highlight on the
 	-- same adornee, which renders one of them at random. The breathe covers what that tag did and reads
@@ -145,6 +166,12 @@ end
 -- This base's id, which is the name of its model in workspace.Base.
 function Base:GetId(): string
 	return self._id
+end
+
+-- The fixed point this base's rolling sounds play from. See the emitter in Base.new for why they don't
+-- come off the stands themselves.
+function Base:GetSoundEmitter(): BasePart
+	return self._soundEmitter
 end
 
 -- Whether the local player is the one who owns this base, and so the one who gets its prompts.
@@ -319,15 +346,18 @@ function Base:RollIngredients()
 	CameraController:ShakeCustom(1, 5, 0.15, 0.3)
 
 	IngredientRollingController = IngredientRollingController or require(script.Parent)
-	local rolledAt = IngredientRollingController:RequestRoll()
+	local rolledAt, duration = IngredientRollingController:RequestRoll()
 
 	if rolledAt then
 		-- Wait the roll out on the server's own clock before looking at the stands: what they landed on
 		-- arrives on their attributes, which can still be in flight here, and a stand that hasn't been
 		-- told yet reads as not rolling -- which would re-arm the lever a whole roll early. Past that,
-		-- wait on the stands themselves, since PlayRoll takes the roll duration *plus* its own cloning
-		-- overhead and a stand that's still cycling silently ignores the next roll.
-		local finishesAt = rolledAt + RollingConfig.GetRollDuration()
+		-- wait on the stands themselves, since PlayRoll can take the roll duration *plus* its own
+		-- cloning overhead and a stand that's still cycling silently ignores the next roll.
+		--
+		-- The length is the server's own, sent back with the pull: how fast a roll runs is a level now,
+		-- and this has to be the window the claim is gated on rather than one worked out here.
+		local finishesAt = rolledAt + duration
 
 		repeat
 			task.wait()

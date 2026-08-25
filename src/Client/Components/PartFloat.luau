@@ -84,7 +84,6 @@ function PartFloat:Start()
 	self.spinCFrame = CFrame.identity
 
 	local canHover = part:GetAttribute("CanHover")
-	print(canHover)
 	if canHover == nil then
 		canHover = true
 	end

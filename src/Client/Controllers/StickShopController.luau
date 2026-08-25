@@ -343,7 +343,7 @@ function StickShopController:_buildRows()
 		-- The boost clause is dropped rather than written as "+0%" on the tiers that don't have one, so a
 		-- plain stick reads as plain instead of advertising nothing.
 		local ingredientWord = stick.Capacity == 1 and "Ingredient" or "Ingredients"
-		local description = `Hold <font color="{CAPACITY_COLOR}">{stick.Capacity}x {ingredientWord}</font>`
+		local description = `Holds <font color="{CAPACITY_COLOR}">{stick.Capacity} {ingredientWord}</font>`
 		if stick.ValueBoost > 0 then
 			description ..= ` & <font color="{BOOST_COLOR}">+{stick.ValueBoost}%</font> Value`
 		end

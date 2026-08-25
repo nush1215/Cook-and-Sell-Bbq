@@ -115,6 +115,11 @@ end
 -- is centred. A Ghost group keeps its model in place and needs nothing cached.
 function Base:_cacheUnlocks()
 	for _, unlock in BaseUnlocks.Data do
+		-- A Stat group has nothing in the world -- no Path to walk and nothing to pull out of it.
+		if unlock.LockStyle == "Stat" then
+			continue
+		end
+
 		local folder = self._model
 		for _, segment in unlock.Path do
 			folder = folder:FindFirstChild(segment)

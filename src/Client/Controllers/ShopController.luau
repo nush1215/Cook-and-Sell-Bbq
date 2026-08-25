@@ -276,10 +276,13 @@ function ShopController:_bindGiftButton(button: GuiButton, productId: string)
 	end, true)
 end
 
--- Binds the gamepass cards. Each is named for the pass it sells, the same way a crate's bundle frames
--- are named for their product, so a card is wired by authoring it under the right name and nothing
--- here needs editing. Gamepasses go into the same price pass as everything else -- GetPrice resolves
--- an id against both configs -- so a card only has to be named right and hold a Purchase button.
+-- Binds the cards in the Gamepass category. Each is named for what it sells, the same way a crate's
+-- bundle frames are named for their product, so a card is wired by authoring it under the right name
+-- and nothing here needs editing. Both configs are searched despite the category's name: a permanent
+-- perk reads as a pass to a player whether it's sold as one or not, and the Golden Grill is a dev
+-- product sitting on this shelf for exactly that reason. Everything here goes into the same price pass
+-- as the rest of the shop -- GetPrice resolves an id against both configs -- so a card only has to be
+-- named right and hold a Purchase button.
 -- @param container The Gamepass category frame
 function ShopController:_setupGamepasses(container: Instance)
 	for _, card in container:GetChildren() do
@@ -287,18 +290,24 @@ function ShopController:_setupGamepasses(container: Instance)
 			continue
 		end
 
-		local gamepass = Gamepasses.GetGamepassFromId(card.Name)
-		if not gamepass then
-			warn(`Shop has a gamepass card named {card.Name}, which isn't a gamepass`)
+		local product = Products.GetProductFromId(card.Name)
+		local gamepass = if product then nil else Gamepasses.GetGamepassFromId(card.Name)
+
+		if not product and not gamepass then
+			warn(`Shop has a card named {card.Name} in the Gamepass category, which isn't a product or a gamepass`)
 			continue
 		end
 
 		if not card.Purchase:FindFirstChild("Title") then
-			warn(`The {gamepass.Id} gamepass card has no Title label, so it can't show a price`)
+			warn(`The {card.Name} card has no Title label, so it can't show a price`)
 		end
 
 		UIController:BindButtonClick(card.Purchase, function()
-			self:PromptGamepassPurchaseFromId(gamepass.Id)
+			if product then
+				self:PromptProductPurchaseFromId(card.Name)
+			else
+				self:PromptGamepassPurchaseFromId(card.Name)
+			end
 		end, true)
 
 		table.insert(self._purchaseFrames, card)

@@ -15,14 +15,29 @@ export type Structure = {
 	Id: string, -- unique, and the name of the model under Assets.Structures[Category] it's cloned from.
 	-- This is what player data stores as a structure's Type.
 	Name: string, -- how it reads to the player
-	Category: string, -- the folder under Assets.Structures, and the CollectionService tag placed copies wear
-	Cost: number, -- what one costs to buy. Not charged for putting one down: a structure is paid for
-	-- once, when it's bought, and moves freely between the inventory and the base after that. Nothing
-	-- reads this yet -- it's what a structure shop will price off once there is one.
+	Category: string, -- the folder under Assets.Structures, and the CollectionService tag placed copies wear.
+	-- Also what the Grill & Stand Shop's category tabs filter its rows by.
+	Cost: number, -- what one costs to buy at the Grill & Stand Shop. Not charged for putting one down: a
+	-- structure is paid for once, when it's bought, and moves freely between the inventory and the base
+	-- after that.
+	Description: string, -- the line the shop row shows under the name
+	Icon: string, -- rbxassetid for this structure's shop icon
+	TextColor: Color3, -- colour for this structure's name label in UI
+	StrokeColor: Color3, -- the label's stroke, a darker shade of the text colour
+	Rarity: string, -- rarity word shown in the shop, keyed into Shared.Colors for its tint
+	Restockable: boolean, -- shows in the shop and is eligible for the timed restock roll
+	RestockChance: number?, -- percent 0-100 the shop rolls to stock this structure each window (nil if not restockable)
+	RestockAmount: NumberRange?, -- how many units a successful roll stocks, min..max (nil if not restockable)
+	RobuxProductId: number?, -- Robux dev-product asset id; buying it grants this structure (0 = not sold for Robux yet)
+	Mutation: string?, -- a Mutations id this structure stamps onto whatever finishes cooking on it, nil
+	-- for a plain one. Kept here rather than in Mutations so a mutating grill is one config entry, and
+	-- so the stamp is read off the structure the cook actually happened on (see GrillerManager).
 	Footprint: Footprint?, -- grid cells occupied; derived from the model's size when absent
 	Model: Model, -- not authored below, back-filled from Assets.Structures
 	FootprintX: number, -- not authored below, resolved once at load (see the back-fill loop)
 	FootprintZ: number,
+	SizeX: number, -- likewise; the template's real dimensions in studs, where the footprint above is
+	SizeZ: number, -- the same thing rounded to whole cells
 }
 
 -- A structure as player data holds it: which kind, and where on which plot it sits.
@@ -64,6 +79,10 @@ local Structures = {}
     the client actually sends and the server actually validates -- so data holds exactly what was
     checked, occupancy comes back losslessly on a rejoin, and which plot a structure needs unlocked to
     exist is a lookup rather than something re-derived from a position.
+
+    Array order is the order the Grill & Stand Shop's rows appear in and, more importantly, the order
+    its stock roll draws through (see GrillStandShopManager). Every server rolls the same seed, so the
+    draw sequence has to be the same everywhere -- reordering this reorders what each server stocks.
 ]]
 Structures.Data = {
 	{
@@ -71,12 +90,46 @@ Structures.Data = {
 		Name = "Griller",
 		Category = "Grillers",
 		Cost = 2_500,
+		Description = "Cook the skewers you build into BBQ worth selling",
+		Icon = "",
+		TextColor = Color3.fromRGB(255, 120, 60),
+		StrokeColor = Color3.fromRGB(70, 30, 12),
+		Rarity = "Common",
+		Restockable = true,
+		RestockChance = 100,
+		RestockAmount = NumberRange.new(2, 4),
+		RobuxProductId = 0,
 	},
 	{
 		Id = "BaseStickStand",
 		Name = "Stick Stand",
 		Category = "StickStands",
 		Cost = 1_000,
+		Description = "Load a stick up with ingredients to make a skewer",
+		Icon = "",
+		TextColor = Color3.fromRGB(200, 150, 90),
+		StrokeColor = Color3.fromRGB(58, 43, 25),
+		Rarity = "Common",
+		Restockable = true,
+		RestockChance = 100,
+		RestockAmount = NumberRange.new(3, 5),
+		RobuxProductId = 0,
+	},
+	{
+		Id = "GoldenGrill",
+		Name = "Golden Grill",
+		Category = "Grillers",
+		-- Never charged: Restockable = false keeps it out of the shop's rows and out of
+		-- GrillStandShopManager:PurchaseStructure, so its dev product is the only way to get one.
+		Cost = 0,
+		Description = "Every BBQ cooked on it comes off Golden, worth 1.75x",
+		Icon = "",
+		TextColor = Color3.fromRGB(255, 205, 65),
+		StrokeColor = Color3.fromRGB(90, 66, 10),
+		Rarity = "Legendary",
+		Restockable = false,
+		RobuxProductId = 3709828724,
+		Mutation = "Golden",
 	},
 }
 
@@ -140,14 +193,21 @@ for index = #Structures.Data, 1, -1 do
 
 	structure.Model = model
 
+	-- The template's real dimensions, kept alongside the footprint below rather than only being used to
+	-- derive it. The footprint is what gets reserved on the grid and is rounded to whole cells; this is
+	-- what the thing actually looks like, which is what anything measuring it against the world rather
+	-- than against the grid wants. A structure built from something with no size falls back to a cell.
+	local size = getModelSize(model)
+
+	structure.SizeX = if size then size.X else Structures.CELL_SIZE
+	structure.SizeZ = if size then size.Z else Structures.CELL_SIZE
+
 	local authored = structure.Footprint
 	if authored then
 		structure.FootprintX, structure.FootprintZ = authored.X, authored.Z
 	else
-		local size = getModelSize(model)
-
-		structure.FootprintX = if size then math.max(1, math.round(size.X / Structures.CELL_SIZE)) else 1
-		structure.FootprintZ = if size then math.max(1, math.round(size.Z / Structures.CELL_SIZE)) else 1
+		structure.FootprintX = math.max(1, math.round(structure.SizeX / Structures.CELL_SIZE))
+		structure.FootprintZ = math.max(1, math.round(structure.SizeZ / Structures.CELL_SIZE))
 	end
 end
 
@@ -163,6 +223,21 @@ function Structures.GetStructureFromId(id: string): Structure?
 	return nil
 end
 
+-- The structures the Grill & Stand Shop can stock and sell, in config order. Filters out the ones
+-- flagged Restockable = false, so the server's stock roll and the client's rows share one source of
+-- truth about what's for sale. Config order is the roll's draw sequence -- see the note on Structures.Data.
+function Structures.GetRestockableStructures(): { Structure }
+	local restockable = {}
+
+	for _, structure in Structures.Data do
+		if structure.Restockable then
+			table.insert(restockable, structure)
+		end
+	end
+
+	return restockable
+end
+
 -- Whether a structure type is a kind of thing -- a griller, a stick stand. What the managers key off,
 -- since they own a category rather than one model of it, and an id off a remote can be anything.
 function Structures.IsCategory(typeId: string, category: string): boolean
@@ -174,6 +249,13 @@ end
 -- A quarter-turn swaps the two.
 function Structures.GetFootprint(structure: Structure, rotation: number): (number, number)
 	return GridUtil.RotateFootprint(structure.FootprintX, structure.FootprintZ, rotation)
+end
+
+-- The structure's real size in studs, turned with it -- the studs counterpart to GetFootprint above,
+-- and going through the same swap so there's one idea of what a quarter-turn does to a pair of axes.
+-- For measuring a structure against the world; the footprint is for measuring it against the grid.
+function Structures.GetSize(structure: Structure, rotation: number): (number, number)
+	return GridUtil.RotateFootprint(structure.SizeX, structure.SizeZ, rotation)
 end
 
 -- Whether two blocks of cells on the same plot share any cell. Plain integer AABB overlap: this is

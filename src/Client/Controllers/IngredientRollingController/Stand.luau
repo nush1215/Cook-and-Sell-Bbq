@@ -93,16 +93,16 @@ end
 local tickPlaying = {} -- [baseId] = true while this frame's tick has been played
 
 -- Ticks for an ingredient appearing on a stand, once for however many of that base's stands are
--- cycling together. Played on the stand that got there first so it still emits from the bank -- the
--- sound is 3D, and parenting it to the SFX group instead would strand it with no position to roll off
--- from.
-local function playRollTick(baseId: string, standBase: BasePart)
+-- cycling together. Emitted from the base's own fixed point rather than from whichever stand got there
+-- first, so the roll doesn't pan somewhere new every pull -- it stays 3D, so a neighbour's pull still
+-- rolls off from their base rather than sounding like it's on top of you.
+local function playRollTick(baseId: string, emitter: BasePart)
 	if tickPlaying[baseId] then
 		return
 	end
 
 	tickPlaying[baseId] = true
-	SoundController:PlaySound("NewShow", standBase)
+	SoundController:PlaySound("NewShow", emitter)
 
 	-- Deferred rather than timed: every stand resuming from its task.wait this frame runs before
 	-- deferred threads do, so the flag is still up for all of them and drops in time for the next step.
@@ -111,29 +111,26 @@ local function playRollTick(baseId: string, standBase: BasePart)
 	end)
 end
 
--- The sting each base's bank has earned this frame and the stand to play it from, held until the
+-- The sting each base's bank has earned this frame and the point to play it from, held until the
 -- flush below.
-local pendingLanding = {} -- [baseId] = { IsCool: boolean, Base: BasePart }
+local pendingLanding = {} -- [baseId] = { IsCool: boolean, Emitter: BasePart }
 
 -- Stings the landed result, once for the bank however many stands land together -- they all land on
 -- the same frame, so without this a four-stand base would stack the same sting four deep. The rarest
--- landing of the frame is the one that plays, from its own stand: a rare is what the pull is for, and
--- it shouldn't be reduced to a common's chirp because a neighbour landed one at the same moment.
-local function playLandingSound(baseId: string, ingredient: Ingredients.Ingredient, standBase: BasePart)
+-- landing of the frame is the one that plays: a rare is what the pull is for, and it shouldn't be
+-- reduced to a common's chirp because a neighbour landed one at the same moment.
+local function playLandingSound(baseId: string, ingredient: Ingredients.Ingredient, emitter: BasePart)
 	local isCool = (table.find(Ingredients.Tiers, ingredient.Tier) :: number) >= COOL_TIER_INDEX
 	local banked = pendingLanding[baseId]
 
-	-- A landing already banked for this frame is upgraded by a cool one, never added to.
+	-- A landing already banked for this frame is upgraded by a cool one, never added to. Only the tier
+	-- moves -- every stand of the bank stings from the same point, so there's nothing to re-aim.
 	if banked then
-		if isCool and not banked.IsCool then
-			banked.IsCool = true
-			banked.Base = standBase
-		end
-
+		banked.IsCool = banked.IsCool or isCool
 		return
 	end
 
-	pendingLanding[baseId] = { IsCool = isCool, Base = standBase }
+	pendingLanding[baseId] = { IsCool = isCool, Emitter = emitter }
 
 	-- Held rather than played on the spot, so the whole bank has landed before anything sounds: every
 	-- stand resuming from its task.wait this frame runs before deferred threads do. Playing on the
@@ -143,7 +140,7 @@ local function playLandingSound(baseId: string, ingredient: Ingredients.Ingredie
 		local landing = pendingLanding[baseId]
 		pendingLanding[baseId] = nil
 
-		SoundController:PlaySound(if landing.IsCool then "ShowCool" else "ShowNormal", landing.Base)
+		SoundController:PlaySound(if landing.IsCool then "ShowCool" else "ShowNormal", landing.Emitter)
 	end)
 end
 
@@ -242,9 +239,9 @@ function Stand.new(model: Model, owningBase: any)
 		_promptCleaner = cleaner:Construct(Trove),
 	}, Stand)
 
-	-- Read together on either changing rather than one handler each: they're written together and only
-	-- mean anything together, so acting on half of them would pick the wrong animation.
-	for _, attribute in { "RolledIngredient", "RolledAt" } do
+	-- Read together on any of them changing rather than one handler each: they're written together and
+	-- only mean anything together, so acting on some of them would pick the wrong animation.
+	for _, attribute in { "RolledIngredient", "RolledAt", "RollSpeedLevel" } do
 		cleaner:Connect(model:GetAttributeChangedSignal(attribute), function()
 			self:Sync()
 		end)
@@ -343,10 +340,16 @@ end
 
 -- Cycles random ingredients on the stand before landing on the one the server rolled, then puts
 -- its billboard and purchase prompt up. Yields for the length of the animation.
-function Stand:PlayRoll(ingredientId: string)
+-- @param speedLevel the base owner's Unlocks.RollSpeed, off the stand's own attribute rather than
+-- player data -- a visitor can't read the owner's levels, and cycling at their own would land the
+-- roll outside the window the server gates the claim on. The whole cycle is squeezed by it, so a
+-- fast roll is the same steps played quicker rather than fewer of them.
+function Stand:PlayRoll(ingredientId: string, speedLevel: number?)
 	if self._rolling then
 		return
 	end
+
+	local speedScale = RollingConfig.GetSpeedScale(speedLevel)
 
 	-- Recapture the board's rest offset from the live parts: the server-driven layout may have slid
 	-- this stand into its slot and scaled it up to 1 since it was constructed, so the resting
@@ -395,12 +398,12 @@ function Stand:PlayRoll(ingredientId: string)
 	introModel:PivotTo(self._base.CFrame)
 	self:_setSilhouette(introModel)
 	introModel.Parent = self._model.Parent
-	playRollTick(self._baseId, self._base)
+	playRollTick(self._baseId, self._owningBase:GetSoundEmitter())
 
 	Spr.target(introModel, 0.725, 2.2, { Pivot = self:_getLandingCFrame(), Scale = CYCLE_SCALE })
 	self._rollingModel, self._rollingDamping, self._rollingFrequency = introModel, 0.725, 2.2
 
-	task.wait(RollingConfig.INTRO_DURATION)
+	task.wait(RollingConfig.INTRO_DURATION * speedScale)
 
 	-- Every model a roll spawns is stopped before it's destroyed: spr keeps stepping a destroyed
 	-- instance until its spring sleeps, and a Pivot spring on some rotations never does.
@@ -415,8 +418,10 @@ function Stand:PlayRoll(ingredientId: string)
 	self._rollingModel = nil
 
 	-- Cycle: swap in a random ingredient each step, waiting longer every time so it decelerates
-	-- onto the real one on the final step.
-	local waitTime = RollingConfig.CYCLE_INITIAL_WAIT
+	-- onto the real one on the final step. Every wait is squeezed by the speed level, so the whole
+	-- cycle lands on RollingConfig.GetRollDuration(speedLevel) -- which is the window the server
+	-- gates the claim on.
+	local waitTime = RollingConfig.CYCLE_INITIAL_WAIT * speedScale
 	local currentModel
 
 	for step = RollingConfig.CYCLE_STEPS, 1, -1 do
@@ -439,9 +444,9 @@ function Stand:PlayRoll(ingredientId: string)
 		-- The final step lands the real ingredient and gets its own sting below, so it doesn't tick
 		-- as well -- the two would fire on the same frame and mush together.
 		if isFinalStep then
-			playLandingSound(self._baseId, ingredient, self._base)
+			playLandingSound(self._baseId, ingredient, self._owningBase:GetSoundEmitter())
 		else
-			playRollTick(self._baseId, self._base)
+			playRollTick(self._baseId, self._owningBase:GetSoundEmitter())
 		end
 
 		if currentModel then
@@ -469,7 +474,10 @@ function Stand:PlayRoll(ingredientId: string)
 			return
 		end
 
-		waitTime = math.min(waitTime + RollingConfig.CYCLE_WAIT_INCREMENT, RollingConfig.CYCLE_MAX_WAIT)
+		waitTime = math.min(
+			waitTime + RollingConfig.CYCLE_WAIT_INCREMENT * speedScale,
+			RollingConfig.CYCLE_MAX_WAIT * speedScale
+		)
 	end
 
 	self._currentModel = currentModel
@@ -660,7 +668,7 @@ function Stand:Sync()
 
 	task.spawn(function()
 		local played, err = pcall(function()
-			self:PlayRoll(ingredientId)
+			self:PlayRoll(ingredientId, self._model:GetAttribute("RollSpeedLevel"))
 		end)
 
 		-- A stand that throws mid-roll would stay flagged as rolling and deadlock the lever's wait, so

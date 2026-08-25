@@ -27,11 +27,10 @@ local Mutations = {}
     the same way a sauce's is. Every ingredient on a mutated BBQ wears the mutation's particles, so
     it's obvious on sight on the grill, in hand, on the sell stand and in a customer's hand alike.
 
-    Nothing stamps a mutation today. The one thing that did was the Golden Grill -- a gamepass slot on
-    the Griller unlock ladder -- and that ladder went when grillers became freely-placed structures.
-    Golden is kept because skewers made before then still carry it, and because the pass is still live
-    and wants a perk again: whatever the new golden grill is should stamp off the grill rather than the
-    record, so a BBQ is only ever mutated by the grill it was actually cooked on.
+    What stamps one is the grill itself, not anything the player did with the skewer: a structure
+    carrying a Mutation (see Config.Structures) hands it to whatever finishes cooking on it, so a BBQ is
+    only ever mutated by the grill it was actually cooked on. The Golden Grill is the one that does --
+    a Robux-only griller, so Golden is what a mutation costs rather than something the game hands out.
 ]]
 Mutations.Data = {
 	{

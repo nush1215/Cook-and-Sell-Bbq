@@ -17,11 +17,22 @@ local Codes = {}
 Codes.Data = {
 	{
 		Code = "RELEASE",
-		OnClaimMessage = "Enjoy a Wooden Stick, Tomato, and Zucchini on the house! 😋",
+		OnClaimMessage = "Enjoy a Wooden Stick, Tomato, and Zucchini on the House! 😋",
 		Callback = function(player: Player)
 			StickManager:GrantStick(player, "WoodenStick")
 			IngredientManager:GrantIngredient(player, "Tomato")
 			IngredientManager:GrantIngredient(player, "Zucchini")
+		end,
+	},
+
+	{
+		Code = "yummyummybbq",
+		OnClaimMessage = "Shhhhh dont tell anybody 🤫",
+		Callback = function(player: Player)
+			StickManager:GrantStick(player, "BambooStick")
+			IngredientManager:GrantIngredient(player, "Tomato")
+			IngredientManager:GrantIngredient(player, "Jalapeno")
+			IngredientManager:GrantIngredient(player, "Chicken")
 		end,
 	},
 }

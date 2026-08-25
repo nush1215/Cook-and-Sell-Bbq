@@ -69,11 +69,14 @@ function IngredientRollingManager:WritePendingRollsToBase(player: Player, pendin
 	for _, standModel in workspace.Base[baseId].Rolling.Stands:GetChildren() do
 		local roll = pending[standModel.Name]
 
-		-- Set on the one instance so the pair replicates together: the client reads both to tell a roll
-		-- it should animate from one it should just land, and a stand handed only half of them would
-		-- pick the wrong one.
+		-- Set on the one instance so the three replicate together: the client reads them to tell a roll
+		-- it should animate from one it should just land, and how fast to cycle it, and a stand handed
+		-- only some of them would pick the wrong one. The speed level rides along here rather than off
+		-- the owner's data for the same reason as the rest -- data reaches only its owner, and a visitor
+		-- cycling at their own speed would land the roll somewhere the server won't let it be bought.
 		standModel:SetAttribute("RolledIngredient", roll and roll.IngredientId)
 		standModel:SetAttribute("RolledAt", roll and roll.RolledAt)
+		standModel:SetAttribute("RollSpeedLevel", roll and roll.SpeedLevel)
 	end
 end
 
@@ -91,10 +94,11 @@ end
 
 -- Rolls one weighted-random ingredient per active stand and stores them as pending claims in player
 -- data, so a pull nobody bought from is still on the stands when they come back.
--- Returns the server time the pull landed on, which the caller waits out before re-arming its lever,
--- or nil if the player is invalid or still in the roll debounce. What each stand rolled goes out on
--- the stand attributes instead, so every client gets it rather than only the puller.
-function IngredientRollingManager:RollIngredientsForPlayer(player: Player): number?
+-- Returns the server time the pull landed on and how long it runs for, which the caller waits out
+-- before re-arming its lever, or nil if the player is invalid or still in the roll debounce. What each
+-- stand rolled goes out on the stand attributes instead, so every client gets it rather than only the
+-- puller.
+function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (number?, number?)
 	if not validatePlayer(player) then
 		return nil
 	end
@@ -104,18 +108,27 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): numb
 		return nil
 	end
 
+	-- Raised before the read below rather than after it, since that read yields and a lever spammed
+	-- across the yield would otherwise get several pulls through. How long it's held for depends on
+	-- their roll speed, so the release is scheduled once the read has landed -- and the failed-read
+	-- path has to drop it by hand, or a bad read would strand the player unable to roll ever again.
 	self._inCooldown[player] = true
-	task.delay(RollingConfig.GetRollDuration(), function()
-		self._inCooldown[player] = nil
-	end)
 
-	-- How many stands they've unlocked is how many ingredients one pull rolls. Read after the
-	-- debounce so a failed read can't be spammed, and before the timestamp below so the wait can't
-	-- eat into the window PurchaseIngredientFromStand gates the claim on.
+	-- How many stands they've unlocked is how many ingredients one pull rolls, and how fast they roll
+	-- is the other level on here. Read before the timestamp below so the wait can't eat into the window
+	-- PurchaseIngredientFromStand gates the claim on.
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
+		self._inCooldown[player] = nil
 		return nil
 	end
+
+	local speedLevel = data.Unlocks.RollSpeed
+	local duration = RollingConfig.GetRollDuration(speedLevel)
+
+	task.delay(duration, function()
+		self._inCooldown[player] = nil
+	end)
 
 	-- Build the weighted pool from the shared ingredient config. Weight is the reciprocal of each
 	-- ingredient's authored "1 in X", and the config corrects the label to what that weight really rolls
@@ -149,6 +162,7 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): numb
 		pending[standId] = {
 			IngredientId = ingredientId,
 			RolledAt = rolledAt,
+			SpeedLevel = speedLevel,
 		}
 	end
 
@@ -161,7 +175,7 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): numb
 		self.OnIngredientRolled:Fire(player, standId, roll.IngredientId)
 	end
 
-	return rolledAt
+	return rolledAt, duration
 end
 
 -- Pins what the player's next pull lands on their first stand, replacing that one weighted draw. Fired off
@@ -225,8 +239,11 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 		return false
 	end
 
-	-- Time gate: a rolled ingredient can only be claimed once the animation window has passed
-	if (workspace:GetServerTimeNow() - roll.RolledAt) < RollingConfig.GetRollDuration() then
+	-- Time gate: a rolled ingredient can only be claimed once the animation window has passed. Measured
+	-- at the speed the pull was made at rather than the player's speed now, so it's the same window
+	-- every client is animating -- and a roll saved before RollSpeed existed carries no level, which
+	-- reads as the slowest rung and is long past it anyway.
+	if (workspace:GetServerTimeNow() - roll.RolledAt) < RollingConfig.GetRollDuration(roll.SpeedLevel) then
 		self._purchasing[player] = nil
 		NotificationManager:NotifyNormal(player, {
 			Text = "Wait for the roll to finish!",

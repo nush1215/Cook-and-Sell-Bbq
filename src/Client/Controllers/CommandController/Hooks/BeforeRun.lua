@@ -6,7 +6,7 @@ return function(registry)
 		local userId = context.Executor.UserId
 		local player = Players:GetPlayerByUserId(userId)
 
-		local playerRank = player:GetRankInGroupAsync(424552416)
+		local playerRank = player:GetRankInGroupAsync(984015744)
 		if playerRank < 254 then
 			return "You are not allowed to run this command sonion"
 		end

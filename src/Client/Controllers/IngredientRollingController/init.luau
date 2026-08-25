@@ -55,12 +55,13 @@ local IngredientRollingController = {
 	_characterCleaner = nil,
 }
 
--- Asks the server for a roll, and hands back the server time the pull it stamped landed on -- or nil
--- if it turned the pull down, which is what tells the lever to re-arm rather than wait one out. What
--- each stand rolled doesn't come back this way: it goes onto the stands' attributes, so every client
--- gets it rather than only the puller.
-function IngredientRollingController:RequestRoll(): number?
-	local success, rolledAt = pcall(function()
+-- Asks the server for a roll, and hands back the server time the pull it stamped landed on and how
+-- long that pull runs for -- or nil if it turned the pull down, which is what tells the lever to
+-- re-arm rather than wait one out. The duration is the server's rather than something worked out
+-- here, since it's what the claim is gated on. What each stand rolled doesn't come back this way: it
+-- goes onto the stands' attributes, so every client gets it rather than only the puller.
+function IngredientRollingController:RequestRoll(): (number?, number?)
+	local success, rolledAt, duration = pcall(function()
 		return self.RequestRollFunction:Invoke()
 	end)
 
@@ -69,7 +70,7 @@ function IngredientRollingController:RequestRoll(): number?
 		return nil
 	end
 
-	return rolledAt
+	return rolledAt, duration
 end
 
 -- Asks the server to buy the ingredient currently sitting on a stand.

@@ -1,5 +1,8 @@
+-- Config
+local Rolling = require(script.Parent.Rolling)
+
 --
-type LockStyle = "Layout" | "Ghost"
+type LockStyle = "Layout" | "Ghost" | "Stat"
 
 export type LayoutSpec = {
 	MaxPerRow: number, -- copies per row before wrapping to the next; a "row" is just MaxPerRow high
@@ -10,14 +13,18 @@ export type Unlock = {
 	Id: string, -- also the key under Unlocks in player data
 	Name: string, -- how it reads to the player, on the upgrade board and in the purchase notification
 	Sound: string, -- the UI sound the purchase notification plays
-	Path: { string }, -- folder, from a base model down, holding the single authored template
+	Path: { string }?, -- folder, from a base model down, holding the single authored template. Absent
+	-- on a Stat entry, which has nothing in the world to point at.
 	LockStyle: LockStyle, -- Layout: template cloned into a centered grid. Ghost: faded, left in place.
+	-- Stat: nothing rendered at all -- the level is read by whatever system it tunes.
 	Layout: LayoutSpec?, -- present only on Layout entries
 	Limit: number, -- highest level this can reach; caps render, purchase, and (for rolling) the roll
 	Costs: { number }, -- Costs[n] is what level n costs to own; kept dense to at least Limit
 	RobuxProductIds: { [number]: number }?, -- Robux dev-product id per level, keyed by the level it
 	-- buys (level 1 is free, so these start at 2). Products.luau generates one product per entry; a
 	-- level with no entry has no Robux option and its button stays hidden.
+	FormatLevel: ((level: number) -> string)?, -- how a level reads on the upgrade board. Defaults to
+	-- the bare number, which is right for a group whose level *is* a count of something.
 }
 
 --
@@ -70,6 +77,43 @@ BaseUnlocks.Data = {
 		Costs = { 0, 1_500, 12_500, 50_000, 250_000, 750_000 },
 		-- Level 6 has no product made for it yet, so that last step is currency-only.
 		RobuxProductIds = { [2] = 3709025046, [3] = 3709025081, [4] = 3709025105, [5] = 3709025123 },
+	},
+	{
+		Id = "RollSpeed",
+		Name = "Roll Speed",
+		Sound = "Upgrade",
+		LockStyle = "Stat",
+		-- One rung per entry in Rolling.LEVEL_DURATIONS, which is what the level is read against.
+		Limit = #Rolling.LEVEL_DURATIONS,
+		-- Level 1 is granted by the data template, so its 0 is only here to hold the array dense.
+		Costs = {
+			0,
+			1_000,
+			1_600,
+			2_600,
+			4_200,
+			6_800,
+			11_000,
+			17_500,
+			28_000,
+			45_000,
+			72_000,
+			115_000,
+			185_000,
+			295_000,
+			470_000,
+			750_000,
+			1_200_000,
+			1_900_000,
+			3_000_000,
+			4_800_000,
+			7_500_000,
+		},
+		-- No products made for this yet, so every step is currency-only and the Robux button stays hidden.
+		-- Reads as what it does rather than as a count: "Roll Speed (1.7s)".
+		FormatLevel = function(level: number): string
+			return string.format("%.1fs", Rolling.GetRollDuration(level))
+		end,
 	},
 	-- Sauce dispensers are postponed to a future update and their models are out of the workspace, so
 	-- the unlock is out of the list too -- otherwise every base warns about the missing path and the
