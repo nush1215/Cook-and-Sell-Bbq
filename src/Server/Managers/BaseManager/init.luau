@@ -337,20 +337,19 @@ function BaseManager:RefreshBaseStructuresForPlayer(player: Player)
 	base:RenderStructures(data.Structures, true)
 end
 
--- Puts one of the structures the player owns down on the given cell of the given plot. Nothing here
+-- Puts one of the structures the player owns down on the given cell of their base. Nothing here
 -- touches the world: the data write renders it through the listener AssignBaseToPlayer set up.
 --
 -- Spends from their inventory rather than their balance -- a structure is paid for once, when it's
 -- bought, and moves between the backpack and the base freely after that (see BuildManager).
 --
 -- Every argument comes off a remote, so none of it is trusted: the type has to name a structure they
--- actually own, the plot has to be ground they own, and the cells have to be free and on the floor.
--- Only the cells are stored, which is exactly what was checked -- so a build can never come back on a
--- rejoin somewhere it wouldn't have been allowed to go.
+-- actually own, and every cell of the block has to be free and on a plot they've bought. Only the
+-- cells are stored, which is exactly what was checked -- so a build can never come back on a rejoin
+-- somewhere it wouldn't have been allowed to go.
 function BaseManager:PlaceStructureOnBase(
 	player: Player,
 	structureType: string,
-	plotId: string,
 	cellX: number,
 	cellZ: number,
 	rotation: number
@@ -390,7 +389,7 @@ function BaseManager:PlaceStructureOnBase(
 	rotation = math.floor(rotation) % 4
 	local footprintX, footprintZ = Structures.GetFootprint(structure, rotation)
 
-	if not base:IsBlockFree(plotId, cellX, cellZ, footprintX, footprintZ, data.Structures, data.Plots) then
+	if not base:IsBlockFree(cellX, cellZ, footprintX, footprintZ, data.Structures, data.Plots) then
 		self._purchasing[player] = nil
 		return false
 	end
@@ -403,7 +402,6 @@ function BaseManager:PlaceStructureOnBase(
 
 	PlayerDataManager:SetPlayerDataKey(player, { "Structures", uid }, {
 		Type = structureType,
-		PlotId = plotId,
 		CellX = cellX,
 		CellZ = cellZ,
 		Rotation = rotation,

@@ -29,8 +29,12 @@ local Mutations = {}
 
     What stamps one is the grill itself, not anything the player did with the skewer: a structure
     carrying a Mutation (see Config.Structures) hands it to whatever finishes cooking on it, so a BBQ is
-    only ever mutated by the grill it was actually cooked on. The Golden Grill is the one that does --
-    a Robux-only griller, so Golden is what a mutation costs rather than something the game hands out.
+    only ever mutated by the grill it was actually cooked on. Two grills do, and they're deliberately
+    opposite ends of the same idea: the Golden Grill is Robux-only and stamps Golden every single time,
+    so Golden is what a mutation costs; the Electric Grill is bought with money for its speed and throws
+    a Shocked one only now and then (Structures.MutationChance), so Shocked is what a mutation happens
+    to be worth. The guaranteed one is worth more than the occasional one, which is what keeps the
+    Robux grill the better buy for anyone who wants mutations rather than throughput.
 ]]
 Mutations.Data = {
 	{
@@ -39,6 +43,17 @@ Mutations.Data = {
 		Multiplier = 1.75,
 		Color = Color3.fromRGB(255, 205, 65),
 		DialogueVariant = "Golden",
+	},
+	{
+		Id = "Shocked",
+		Name = "Shocked",
+		-- Under Golden's, and it has to stay there: this one comes off a grill bought with money at a
+		-- chance, where Golden comes off one bought with Robux every time.
+		Multiplier = 1.5,
+		Color = Color3.fromRGB(120, 205, 255),
+		-- No DialogueVariant, so a customer reacts to how well it was cooked instead (see
+		-- StickModel.GetDialogueVariant). Golden's exists because NpcDialogue was written a set of
+		-- Golden lines; giving Shocked its own is adding those lines and this field, and nothing else.
 	},
 }
 

@@ -45,10 +45,11 @@ local TAKE_SOUND = "Take"
     the server moved just fine.
 
     Structures are the free-form half of that. Rather than a level on a ladder, each one is a model
-    the player put on a particular cell of a particular plot (see Config.Structures), so the base is
-    the thing that turns those cells back into world poses -- one grid per plot, off the plot's own
-    Floor part, which is what makes a plot they haven't bought unbuildable ground rather than a
-    special case anywhere.
+    the player put on a particular cell of the base (see Config.Structures), so the base is the thing
+    that turns those cells back into world poses. One lattice runs across the whole base, measured off
+    the starting plot's Floor, and the plots the player owns say which of its cells they may build on
+    (see Shared.GridUtil) -- so a plot they haven't bought is ground missing from that set rather than
+    a special case anywhere, and a structure may straddle the seam between two they have.
 ]]
 
 --
@@ -86,8 +87,9 @@ function Base.new(model: Model)
 		_storage = storage,
 		_layouts = {}, -- [unlockId] = { Template, Home, Center, Step: Vector2, Spec, Count, Clones }  (Layout)
 		-- [plotId] = { Model, Sign, Floor } -- the sign parks in _storage while the plot isn't buyable,
-		-- and Floor is the part its build grid is measured off. The starting cell is in here too: it has
-		-- no sign and is never bought, but it's ground the player can build on like any other.
+		-- and Floor is the part saying which cells of the base's grid this plot covers. The starting cell
+		-- is in here too: it has no sign and is never bought, but it's ground the player can build on like
+		-- any other -- and its floor is what the whole grid is measured off (see GetGround).
 		_plots = {},
 
 		_structureFolder = structureFolder,
@@ -173,7 +175,9 @@ end
 --
 -- The starting cell is cached alongside the buyable plots. It's never bought and wears no sign, so
 -- most of the plot render skips it -- but it's ground the player owns from the moment they're handed
--- the base, and building doesn't care which of the two a plot is.
+-- the base, and building doesn't care which of the two a plot is. Its floor matters twice over: it's
+-- ground like any other plot's, and it's what the base's whole grid is measured off -- so a base
+-- without one can't be built on at all.
 function Base:_cachePlots()
 	local folder = self._model:FindFirstChild(Plots.FOLDER_NAME)
 
@@ -208,7 +212,7 @@ function Base:_cachePlots()
 			warn(`[Base] {self._model.Name} plot {plotModel.Name} has no {Plots.SIGN_NAME}, it can't be bought`)
 		end
 
-		-- Where the plot's build grid is measured from. Searched rather than indexed, so a floor tucked
+		-- The cells of the base's grid this plot covers. Searched rather than indexed, so a floor tucked
 		-- inside the plot's own structure still counts. A plot without one is simply not buildable
 		-- ground, which is the same warn-and-carry-on as everything else read off the place file here.
 		local floor = plotModel:FindFirstChild(Plots.FLOOR_NAME, true)
@@ -226,6 +230,15 @@ function Base:_cachePlots()
 			Sign = sign,
 			Floor = floor,
 		}
+	end
+
+	-- Said once rather than at every placement and every render: without it there's no grid to measure,
+	-- so nothing can go down and nothing already down can be put back.
+	if not self:GetPlotFloor(Plots.START) then
+		warn(
+			`[Base] {self._model.Name} has no {Plots.START} {Plots.FLOOR_NAME}, `
+				.. `so its grid can't be measured and nothing can be built on it`
+		)
 	end
 end
 
@@ -364,37 +377,71 @@ function Base:GetPlotFloor(plotId: string): BasePart?
 	return plot and plot.Floor
 end
 
--- Where a structure standing on this cell of this plot actually sits in the world. Cells are turned
+-- The cells of this base the given plots may be built on: one lattice across the whole base, and the
+-- floors of the plots they own saying which of it is theirs. Two plots that touch hand off to each
+-- other cell for cell, so the seam between them is buildable ground like any other.
+--
+-- Worked out per call rather than cached off a render, because this is what the authoritative check
+-- reads -- a cached one could answer for an unlock state the placement has already moved past, and
+-- it's a handful of rectangles either way.
+--
+-- @param plots The player's data.Plots
+function Base:GetGround(plots: { [string]: boolean }): GridUtil.Ground?
+	local startFloor = self:GetPlotFloor(Plots.START)
+	if not startFloor then
+		return nil
+	end
+
+	local floors = {}
+
+	for plotId, plot in self._plots do
+		if plot.Floor and Plots.IsOwned(plotId, plots) then
+			table.insert(floors, plot.Floor)
+		end
+	end
+
+	return GridUtil.BuildGround(startFloor, floors, Structures.CELL_SIZE)
+end
+
+-- Where a structure standing on this cell of the base actually sits in the world. Cells are turned
 -- back into poses here rather than being stored as one, because a player is handed whichever base
 -- happens to be free -- the same cell on another base is the right spot on that base, while a saved
 -- pose would rebuild in mid-air.
 function Base:GetCellPose(
 	structure: Structures.Structure,
-	plotId: string,
 	cellX: number,
 	cellZ: number,
 	rotation: number
 ): CFrame?
-	local floor = self:GetPlotFloor(plotId)
-	if not floor then
+	local startFloor = self:GetPlotFloor(Plots.START)
+	if not startFloor then
 		return nil
 	end
 
 	local footprintX, footprintZ = Structures.GetFootprint(structure, rotation)
-	local surface = GridUtil.CellToSurfaceCFrame(floor, cellX, cellZ, footprintX, footprintZ, Structures.CELL_SIZE)
+	local surface = GridUtil.CellToSurfaceCFrame(
+		GridUtil.GetOrigin(startFloor),
+		cellX,
+		cellZ,
+		footprintX,
+		footprintZ,
+		Structures.CELL_SIZE
+	)
 
 	return Structures.GetPlacementPivot(structure.Model, surface, rotation)
 end
 
--- Whether a structure of this footprint can stand on this block of cells: the plot is ground the
--- player owns, the whole block is on that plot's floor, and nothing they've already built is in the
--- way. This is the authoritative check -- the client runs the same test to colour its ghost, but only
--- this one decides.
+-- Whether a structure of this footprint can stand on this block of cells: every cell of it is on
+-- ground the player owns, and nothing they've already built is in the way. This is the authoritative
+-- check -- the client runs the same test to colour its ghost, but only this one decides.
+--
+-- Ownership is the bounds test rather than a check beside it: the ground is built from the plots they
+-- own, so a block reaching onto one they haven't bought fails on the cells nothing covers, and a block
+-- spanning two they have passes on the cells each of them covers.
 --
 -- @param structures The player's data.Structures, which is the whole of their build
 -- @param plots The player's data.Plots
 function Base:IsBlockFree(
-	plotId: string,
 	cellX: number,
 	cellZ: number,
 	footprintX: number,
@@ -402,21 +449,14 @@ function Base:IsBlockFree(
 	structures: { [string]: Structures.PlacedStructure },
 	plots: { [string]: boolean }
 ): boolean
-	if not Plots.IsOwned(plotId, plots) then
-		return false
-	end
+	local ground = self:GetGround(plots)
 
-	local floor = self:GetPlotFloor(plotId)
-	if not floor then
-		return false
-	end
-
-	if not GridUtil.IsBlockInBounds(floor, cellX, cellZ, footprintX, footprintZ, Structures.CELL_SIZE) then
+	if not ground or not GridUtil.IsBlockOnGround(ground, cellX, cellZ, footprintX, footprintZ) then
 		return false
 	end
 
 	for _, placed in structures do
-		if Structures.Overlaps(placed, plotId, cellX, cellZ, footprintX, footprintZ) then
+		if Structures.Overlaps(placed, cellX, cellZ, footprintX, footprintZ) then
 			return false
 		end
 	end
@@ -437,12 +477,13 @@ function Base:BuildStructure(uid: string, placed: Structures.PlacedStructure, an
 		return nil
 	end
 
-	local pose = self:GetCellPose(structure, placed.PlotId, placed.CellX, placed.CellZ, placed.Rotation)
+	local pose = self:GetCellPose(structure, placed.CellX, placed.CellZ, placed.Rotation)
 
-	-- Nowhere to put it: the plot it was built on has no floor any more, or isn't in the place file at
-	-- all. Left in data rather than dropped, so re-laying out a base doesn't destroy anyone's build.
+	-- Nowhere to put it: the base has no starting floor to measure its grid off, so there are no cells
+	-- to stand on. Left in data rather than dropped, so re-laying out a base doesn't destroy anyone's
+	-- build.
 	if not pose then
-		warn(`[Base] {self._model.Name} can't build {placed.Type} on plot {placed.PlotId}, which has no floor`)
+		warn(`[Base] {self._model.Name} can't build {placed.Type}, it has no {Plots.START} {Plots.FLOOR_NAME}`)
 		return nil
 	end
 
@@ -454,9 +495,13 @@ function Base:BuildStructure(uid: string, placed: Structures.PlacedStructure, an
 	model:SetAttribute(Structures.UID_ATTRIBUTE, uid)
 	model:SetAttribute(Structures.OWNER_ATTRIBUTE, self._owner.UserId)
 
+	-- Which griller (or stand) this is, where the tag below only says which kind. For the things that
+	-- differ between two models of the same kind rather than between kinds -- the Electric Grill's cook
+	-- effect, for one -- since the model's own name is the uid and says nothing about what it is.
+	model:SetAttribute(Structures.TYPE_ATTRIBUTE, placed.Type)
+
 	-- The cells it claimed, so a client can tell a free spot from a taken one. On the model rather than
 	-- read from data, because data only reaches its owner and the ghost has to be right on every client.
-	model:SetAttribute(Structures.PLOT_ATTRIBUTE, placed.PlotId)
 	model:SetAttribute(Structures.CELL_X_ATTRIBUTE, placed.CellX)
 	model:SetAttribute(Structures.CELL_Z_ATTRIBUTE, placed.CellZ)
 	model:SetAttribute(Structures.FOOTPRINT_X_ATTRIBUTE, footprintX)
@@ -520,7 +565,7 @@ function Base:RenderStructures(structures: { [string]: Structures.PlacedStructur
 
 		local structure = Structures.GetStructureFromId(placed.Type)
 		local pose = structure
-			and self:GetCellPose(structure, placed.PlotId, placed.CellX, placed.CellZ, placed.Rotation)
+			and self:GetCellPose(structure, placed.CellX, placed.CellZ, placed.Rotation)
 
 		if not pose then
 			continue
@@ -530,7 +575,6 @@ function Base:RenderStructures(structures: { [string]: Structures.PlacedStructur
 		-- where it belongs and the client's spring target, so writing it is what makes a move slide.
 		if model:GetAttribute("SlotCFrame") ~= pose then
 			model:SetAttribute("SlotCFrame", pose)
-			model:SetAttribute(Structures.PLOT_ATTRIBUTE, placed.PlotId)
 			model:SetAttribute(Structures.CELL_X_ATTRIBUTE, placed.CellX)
 			model:SetAttribute(Structures.CELL_Z_ATTRIBUTE, placed.CellZ)
 			model:PivotTo(pose)

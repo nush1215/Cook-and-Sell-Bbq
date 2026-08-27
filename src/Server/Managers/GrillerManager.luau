@@ -10,6 +10,7 @@ local Signal = require(Packages.Signal)
 -- Shared
 local Shared = ReplicatedStorage.Shared
 local Network = require(Shared.Network)
+local RandomUtil = require(Shared.RandomUtil)
 local Ingredients = require(Shared.Config.Ingredients)
 local CookStates = require(Shared.Config.CookStates)
 local Structures = require(Shared.Config.Structures)
@@ -127,16 +128,35 @@ function GrillerManager:OwnsGrillerStructure(data, uid: string): boolean
 	return structure ~= nil and Structures.IsCategory(structure.Type, GRILLER_CATEGORY)
 end
 
--- The mutation the griller at `uid` stamps onto a cook that settles on it, or nil for a plain grill.
--- Read off the structure the cook actually happened on rather than off the skewer's record, which is
--- what keeps a BBQ only ever mutated by the grill it was cooked on (see Config.Mutations).
+-- The config entry for the griller at `uid`, or nil if it's gone. Everything a cook takes from the
+-- grill rather than from the skewer -- how fast it cooks, how steadily it holds that rate, what it
+-- stamps on the result -- is read through here, off the grill the cook actually happened on rather
+-- than off the skewer's record. That's what keeps a BBQ only ever shaped by the grill it was on.
+--
 -- The structure may be gone: a bought cook skip can land minutes after its prompt went up, and the
 -- grill can have been picked up in between.
-function GrillerManager:GetGrillerMutation(data, uid: string): string?
+-- `data` is the caller's already-read player data, since every caller has read it to act anyway.
+function GrillerManager:GetGrillerStructure(data, uid: string): Structures.Structure?
 	local placed = data.Structures[uid]
-	local structure = placed and Structures.GetStructureFromId(placed.Type)
 
-	return structure and structure.Mutation
+	return placed and Structures.GetStructureFromId(placed.Type)
+end
+
+-- The mutation the griller at `uid` stamps onto a cook that settles on it, or nil for a plain grill --
+-- and nil for a chance grill whose roll missed. A grill with no MutationChance stamps every time (the
+-- Golden Grill, which is bought for exactly that); one with a chance rolls here, as the cook settles,
+-- so the roll is the server's and lands once rather than being something a client can see coming.
+function GrillerManager:GetGrillerMutation(data, uid: string): string?
+	local structure = self:GetGrillerStructure(data, uid)
+	if not structure or not structure.Mutation then
+		return nil
+	end
+
+	if structure.MutationChance and not RandomUtil.RollChance(structure.MutationChance) then
+		return nil
+	end
+
+	return structure.Mutation
 end
 
 -- Mirrors a griller's record onto its replicated attributes. The client reads these to drive both its
@@ -145,7 +165,8 @@ end
 -- part cooks toward. CookWindowStretch goes with them for the same reason: it bends the bar, so a client
 -- that didn't have it would draw a different cook to the one the stop resolves against. CookProgress
 -- rides along for the same reason -- a resumed cook starts part-way up the bar, and a client without it
--- would draw one starting at zero. A nil record clears the griller.
+-- would draw one starting at zero -- and so do the two instability fields, which bend it a second way.
+-- A nil record clears the griller.
 function GrillerManager:_writeSlotAttributes(slot: Instance, record)
 	slot:SetAttribute("PlacedStickId", if record then record.StickId else nil)
 	slot:SetAttribute("Cooking", if record and record.Cooking then true else nil)
@@ -154,6 +175,8 @@ function GrillerManager:_writeSlotAttributes(slot: Instance, record)
 	slot:SetAttribute("CookTime", if record then record.CookTime else nil)
 	slot:SetAttribute("CookWindowStretch", if record then record.CookWindowStretch else nil)
 	slot:SetAttribute("CookProgress", if record then record.CookProgress else nil)
+	slot:SetAttribute("CookInstability", if record then record.CookInstability else nil)
+	slot:SetAttribute("CookInstabilityPhase", if record then record.CookInstabilityPhase else nil)
 	slot:SetAttribute("CookIngredients", if record then table.concat(record.Ingredients, ",") else nil)
 end
 
@@ -400,7 +423,16 @@ function GrillerManager:StartCooking(player: Player, uid: string)
 	-- the rest of the bar being the window and the run past it. The burn past the end of the bar isn't
 	-- scaled by any of this -- it's wall-clock seconds in the config, so every skewer gives the same
 	-- window to notice.
-	local cookTime = Ingredients.GetTotalCookTime(record.Ingredients) / CookStates.RAW_END
+	--
+	-- A fast grill divides that whole bar rather than any one band of it, which is what makes speed a
+	-- trade instead of a free upgrade: the skewer is done sooner, but the perfect window is that many
+	-- times shorter in real seconds too. The burn stays where it is for the reason just given, so the
+	-- time to notice a filled bar is the same on every grill however fast it got there.
+	local structure = self:GetGrillerStructure(data, uid)
+
+	local cookTime = Ingredients.GetTotalCookTime(record.Ingredients)
+		/ CookStates.RAW_END
+		/ (structure and structure.CookSpeed or 1)
 	if cookTime <= 0 then
 		self._starting[player] = nil
 		return
@@ -422,8 +454,22 @@ function GrillerManager:StartCooking(player: Player, uid: string)
 		CookTime = cookTime,
 		CookWindowStretch = self._cookWindowStretch[player],
 		CookProgress = record.CookProgress,
-		-- Mutation is deliberately absent: nothing stamps one today, and a record reaching here couldn't
-		-- be carrying one anyway -- a mutated skewer is cooked, and a cooked one was refused above.
+		-- Stamped off the grill the stove was lit on, alongside CookTime and the stretch and for the same
+		-- reason: the run has to bend the same way from its first frame to its last, so a rejoin picks up
+		-- the bar that was left and a config retuned under a running cook doesn't move it.
+		--
+		-- The phase is rolled per cook rather than fixed, which is what stops the surges from landing on
+		-- the same places on the bar every time and turning the grill into one lottery per recipe. Rolled
+		-- here and replicated rather than derived from CookStartedAt on each client: it's a gameplay curve,
+		-- and hanging it off the low bits of a timestamp would quietly reshape it the day anything about
+		-- how that stamp is taken ever changes.
+		CookInstability = structure and structure.CookInstability,
+		CookInstabilityPhase = if structure and structure.CookInstability
+			then RandomUtil.GetRandomFromMinMax(0, 2 * math.pi)
+			else nil,
+		-- Mutation is deliberately absent: nothing stamps one at the light, and a record reaching here
+		-- couldn't be carrying one anyway -- a mutated skewer is cooked, and a cooked one was refused
+		-- above. It's stamped when the cook settles, off the grill it settled on.
 	})
 
 	self._starting[player] = nil
@@ -596,12 +642,15 @@ function GrillerManager:StopCooking(player: Player, uid: string)
 	-- Warped after the ping compensation above, not before: that correction is in real seconds off a real
 	-- clock, and it's the corrected moment that has to be read against the bar the player was watching.
 	-- CookProgress goes in with it, so a resumed cook is read against the whole bar it's been through
-	-- rather than only this leg of it.
+	-- rather than only this leg of it, and the instability pair so an unstable grill settles on the bar
+	-- that was actually drawn rather than the steady one underneath it.
 	local elapsed = CookStates.GetBarElapsed(
 		stoppedAt - record.CookStartedAt,
 		record.CookTime,
 		record.CookWindowStretch,
-		record.CookProgress
+		record.CookProgress,
+		record.CookInstability,
+		record.CookInstabilityPhase
 	)
 
 	local state = CookStates.GetStateFromCook(elapsed, record.CookTime)

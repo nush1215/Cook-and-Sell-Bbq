@@ -83,6 +83,14 @@ local PICKUP_REFRESH_INTERVAL = 0.2
 local RAY_LENGTH = 1000
 local ROTATE_KEY = Enum.KeyCode.R
 
+-- Which way round a structure's model is built, in quarter-turns from -Z, so a ghost raised facing the
+-- player faces them with its front rather than with its side or its back. Zero, because everything under
+-- Assets.Structures is authored to Roblox's own convention: a structure's face is -Z, the way its pivot
+-- looks. This is the one thing about a structure the code below can't measure for itself -- the models
+-- live in the place file and nothing in them says which side is the front -- so a template that comes up
+-- backwards, or a quarter-turn out, is this number turned rather than the maths rewritten.
+local FACING_FRONT_OFFSET = 0
+
 -- Where a touch player's ghost sits, there being no cursor to point with. Clearance is the ground left
 -- between the player and the structure's *near edge* rather than its middle -- half the structure's
 -- own depth is added on top, so the gap looks the same whatever is being placed and however it's been
@@ -107,6 +115,11 @@ local GUIDE_FRAME_NAME = "PCGuide"
 local GUIDE_PLACE_ENTRY = "Place"
 local GUIDE_ROTATE_ENTRY = "Rotate"
 local GUIDE_TIMEOUT = 10
+
+-- Stands in for the guide while there's nowhere to put anything. Its own frame beside the guide rather
+-- than an entry inside it, so it's laid out and styled on its own terms -- and so it can go up on a
+-- phone, which never sees the guide.
+local INVALID_FRAME_NAME = "Invalid"
 
 -- Lifted from UIController's own button springs, so holding a key presses its hint exactly the way
 -- clicking presses a button anywhere else in the game, rather than in a second, nearly-identical way.
@@ -136,13 +149,14 @@ local BACKPACK_TIMEOUT = 10
 
     Nothing here is authoritative. Every check this makes, the server makes again off its own copy of
     the player's build (see BaseManager:PlaceStructureOnBase); the point of making them here at all is
-    that the player can see the answer before they pay for it. What crosses the wire is a plot and two
-    integers, never a position -- so there's nothing in the message for a hacked client to bend that
-    the server doesn't work out for itself.
+    that the player can see the answer before they pay for it. What crosses the wire is two integers,
+    never a position -- so there's nothing in the message for a hacked client to bend that the server
+    doesn't work out for itself.
 
     Which ground is buildable is the plots the player owns, and it changes under them: buying a plot
     clears it and it becomes buildable in the same moment, without re-equipping. That's what the data
-    listener is for.
+    listener is for. The plots they own are read as one region rather than one grid each (see
+    Shared.GridUtil), so a structure can straddle the seam between two of them like any other spot.
 
     The pickup tool is the other half of that, and works by pointing rather than dragging. Equipping it
     outlines every structure on the base as something that can be taken back; the one under the cursor
@@ -157,7 +171,8 @@ local BuildController = {
 	PlaceStructureEvent = Network.Event("PlaceStructure"),
 	RemoveStructureEvent = Network.Event("RemoveStructure"),
 
-	_floors = {}, -- [BasePart] = plotId, every plot the player owns and so can build on
+	_floors = {}, -- the floor of every plot the player owns, which is what the ghost's ray is aimed at
+	_ground = nil, -- GridUtil.Ground?, the cells those floors add up to; nil before a base is handed over
 	_lastPlaceTime = 0,
 }
 
@@ -173,10 +188,14 @@ function BuildController:_getBase(): Model?
 	return baseFolder and baseFolder:FindFirstChild(baseId) :: Model?
 end
 
--- Re-reads which of the base's plots the player owns, and so where they may build. Every owned plot
--- is its own grid, measured off its own floor -- so this is both the raycast target list and the map
--- back from whichever floor was hit to the plot it belongs to.
-function BuildController:_refreshFloors()
+-- Re-reads which of the base's plots the player owns, and so where they may build. The floors are
+-- both the raycast target list -- aiming at one is what makes a spot a candidate at all -- and what
+-- the buildable region is built from: one grid across the whole base, with the owned plots' floors
+-- saying which of its cells count. Two plots that touch hand off cell for cell, so a structure can sit
+-- across the seam between them.
+function BuildController:_refreshGround()
+	self._ground = nil
+
 	local base = self:_getBase()
 
 	if not base then
@@ -199,6 +218,7 @@ function BuildController:_refreshFloors()
 	table.clear(self._floors)
 
 	local owned = 0
+	local startFloor: BasePart? = nil
 
 	for _, plotModel in folder:GetChildren() do
 		if not Plots.IsOwned(plotModel.Name, unlocked) then
@@ -222,12 +242,29 @@ function BuildController:_refreshFloors()
 			continue
 		end
 
-		self._floors[floor] = plotModel.Name
+		table.insert(self._floors, floor)
+
+		if plotModel.Name == Plots.START then
+			startFloor = floor
+		end
 	end
 
 	if owned == 0 then
 		warn(`[Build] {base.Name} has no plot named {Plots.START}, so the player owns no ground to build on`)
+		return
 	end
+
+	-- The starting plot's floor anchors the whole base's grid, so without it there are no cells to snap
+	-- to even where the player does own ground.
+	if not startFloor then
+		warn(
+			`[Build] {base.Name} has no {Plots.START} {Plots.FLOOR_NAME}, `
+				.. `so its grid can't be measured and nothing can be built on it`
+		)
+		return
+	end
+
+	self._ground = GridUtil.BuildGround(startFloor, self._floors, Structures.CELL_SIZE)
 end
 
 -- Points the active placement's raycast at the floors the player currently owns. Called again when
@@ -237,16 +274,14 @@ function BuildController:_refreshRaycastParams()
 		return
 	end
 
-	local floors = {}
-	for floor in self._floors do
-		table.insert(floors, floor)
-	end
-
-	self._raycastParams.FilterDescendantsInstances = floors
+	self._raycastParams.FilterDescendantsInstances = self._floors
 end
 
--- Whether the block of cells under the cursor is clear of everything already built on that plot. The
+-- Whether the block of cells under the cursor is clear of everything already built on the base. The
 -- same integer overlap the server runs, so the two agree about what's free.
+--
+-- Every structure on a base is measured in the same cells whichever plot it stands over, so one met
+-- across a seam is in the way like any other.
 --
 -- The cells each standing structure claimed are read off the models rather than player data, because
 -- the models are what every client can see -- data only ever reaches its owner, and the ghost has to
@@ -256,7 +291,6 @@ end
 -- nothing, and a build is a few dozen models at most. Caching it would mean invalidating on every
 -- placement, removal and base handover for no measurable gain.
 function BuildController:_isBlockFreeLocally(
-	plotId: string,
 	cellX: number,
 	cellZ: number,
 	footprintX: number,
@@ -269,10 +303,6 @@ function BuildController:_isBlockFreeLocally(
 	end
 
 	for _, model in folder:GetChildren() do
-		if model:GetAttribute(Structures.PLOT_ATTRIBUTE) ~= plotId then
-			continue
-		end
-
 		local placedX = model:GetAttribute(Structures.CELL_X_ATTRIBUTE)
 		local placedZ = model:GetAttribute(Structures.CELL_Z_ATTRIBUTE)
 
@@ -368,6 +398,10 @@ function BuildController:_paintGhost(shown: boolean, valid: boolean?)
 		if self._ghostHighlight then
 			self._ghostHighlight.Enabled = shown
 		end
+
+		-- The guide reads off the ghost rather than off the verdict: a red ghost is still a placement
+		-- being offered and refused, while no ghost at all means there's nothing to act on.
+		self:_setGuideAimed(shown)
 	end
 
 	if valid ~= self._ghostValid then
@@ -387,11 +421,10 @@ end
 -- as for something twice the size, and turning a long structure end-on pushes it out to match.
 --
 -- The depth is the standard extent of a box along an arbitrary direction -- each side weighted by how
--- squarely the player is facing down it. Measured against the plot's own axes rather than the world's,
+-- squarely the player is facing down it. Measured against the grid's own axes rather than the world's,
 -- since a structure's sides run along the grid it snaps to and that grid can be turned (see GridUtil).
--- Any owned floor answers for that: the plots of one base share its orientation, so which one is read
--- doesn't matter, only which way the grid runs -- and taking it from _floors rather than from a
--- raycast is what stops this needing the very ray it's being used to aim.
+-- Read off the grid rather than off a raycast, which is what stops this needing the very ray it's
+-- being used to aim.
 -- @param look The way the player is facing, flattened and normalised
 function BuildController:_getTouchAimDistance(look: Vector3): number
 	local structure = self._structure
@@ -401,11 +434,11 @@ function BuildController:_getTouchAimDistance(look: Vector3): number
 
 	local sizeAlongX, sizeAlongZ = Structures.GetSize(structure, self._rotation)
 
-	-- No floor known yet, on the frame before a base has been handed over: the world's own axes are the
+	-- No grid known yet, on the frame before a base has been handed over: the world's own axes are the
 	-- only sensible guess, and they're right for any base that hasn't been turned.
-	local floor = next(self._floors)
-	local right = if floor then floor.CFrame.RightVector else Vector3.xAxis
-	local forward = if floor then floor.CFrame.LookVector else Vector3.zAxis
+	local ground = self._ground
+	local right = if ground then ground.Origin.RightVector else Vector3.xAxis
+	local forward = if ground then ground.Origin.LookVector else Vector3.zAxis
 
 	local depth = math.abs(look:Dot(right)) * sizeAlongX + math.abs(look:Dot(forward)) * sizeAlongZ
 
@@ -439,11 +472,40 @@ function BuildController:_getAimRay(): Ray?
 	local look = root.CFrame.LookVector * Vector3.new(1, 0, 1)
 	look = if look.Magnitude > 0 then look.Unit else root.CFrame.LookVector
 
-	local origin = root.Position
-		+ look * self:_getTouchAimDistance(look)
-		+ Vector3.new(0, TOUCH_AIM_HEIGHT, 0)
+	local origin = root.Position + look * self:_getTouchAimDistance(look) + Vector3.new(0, TOUCH_AIM_HEIGHT, 0)
 
 	return Ray.new(origin, Vector3.new(0, -1, 0))
+end
+
+-- Which quarter-turn stands the structure's front toward the player, out of the four the grid allows.
+--
+-- Measured from the spot to the player rather than from the way they're facing: on a desktop the cursor
+-- can be well off to one side of that, and it's where the structure is going that decides which way
+-- "toward them" is. On a phone the two come out the same anyway -- the ghost's spot is a fixed distance
+-- straight in front of them -- so this reads as "turn back to face the player" there for free.
+--
+-- Taken in the grid's own frame, since a rotation index is quarter-turns of that grid and a base can be
+-- turned (see GridUtil): the placed structure's sides run along the grid's axes, which is why the angle
+-- to the player only has to be rounded to the nearest quarter to name the turn. Backed off by however
+-- the model is built (see FACING_FRONT_OFFSET), which is what makes the answer the front rather than a
+-- LookVector. Nothing is flattened or normalised on the way -- an angle doesn't care how long the vector
+-- is, and reading only X and Z is itself what keeps the turn horizontal.
+-- @param ground The grid the turn is measured in -- the quarter-turns are its axes, not the world's
+-- @param spot Where on the base the ghost has landed
+function BuildController:_getFacingRotation(ground: GridUtil.Ground, spot: Vector3): number
+	local character = LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+
+	-- Between dying and respawning there's nobody to face, so it's left however it was.
+	if not root then
+		return self._rotation
+	end
+
+	local toPlayer = ground.Origin:VectorToObjectSpace(root.Position - spot)
+
+	-- Rounded rather than tied, so a spot sitting exactly on a diagonal settles on one of the two turns
+	-- that are equally square to the player instead of flickering between them.
+	return (math.round(math.atan2(-toPlayer.X, -toPlayer.Z) / (math.pi / 2)) - FACING_FRONT_OFFSET) % 4
 end
 
 -- Follows whatever is being aimed at: raycast the owned floors, snap to the cell the footprint would
@@ -457,49 +519,59 @@ function BuildController:_updateGhost(deltaTime: number)
 	end
 
 	local result = workspace:Raycast(ray.Origin, ray.Direction * RAY_LENGTH, self._raycastParams)
+	local ground = self._ground
 
-	-- Off every plot they own, so there's nothing to snap to.
-	if not result then
+	-- Off every plot they own -- or on a base with no grid to measure at all -- so there's nothing to
+	-- snap to.
+	if not (result and ground) then
 		self._valid = false
 		self:_paintGhost(false)
 		return
 	end
 
-	local floor = result.Instance
-	local plotId = self._floors[floor]
-
-	if not plotId then
-		self._valid = false
-		self:_paintGhost(false)
-		return
+	-- Turned to face the player the first time the ghost finds a spot, and left alone from then on -- a
+	-- turn the player has made since is theirs, and rotation carries across placements besides. Done here
+	-- rather than in _enterPlacement because it needs the spot the ghost is going to, which doesn't exist
+	-- until something has been aimed at. That first frame is also the one that snaps rather than glides
+	-- (see the easing below), so the ghost comes up already facing them instead of spinning round to it:
+	-- _ghostCFrame being nil is both the test for that frame and the reason the test works.
+	--
+	-- Ahead of the footprint rather than after it, so everything this frame measures off the rotation --
+	-- which cells are taken, where the block centres, where the ghost stands -- measures off the one it's
+	-- actually going to be.
+	if not self._ghostCFrame then
+		self._rotation = self:_getFacingRotation(ground, result.Position)
 	end
 
 	local structure = self._structure
 	local footprintX, footprintZ = Structures.GetFootprint(structure, self._rotation)
-	local countX, countZ = GridUtil.GetDimensions(floor, Structures.CELL_SIZE)
 	local cellX, cellZ =
-		GridUtil.WorldToCenteredAnchor(floor, result.Position, footprintX, footprintZ, Structures.CELL_SIZE)
+		GridUtil.WorldToCenteredAnchor(ground.Origin, result.Position, footprintX, footprintZ, Structures.CELL_SIZE)
 
-	-- Pull the anchor back inside the plot so the whole footprint stays on it, rather than letting it
-	-- hang off the edge and simply read as invalid. Something bigger than the plot can't fit either
-	-- way, so it's left under the cursor to be refused.
-	local maxAnchorX, maxAnchorZ = countX - footprintX, countZ - footprintZ
-	if maxAnchorX >= 0 then
-		cellX = math.clamp(cellX, 0, maxAnchorX)
+	-- Pull the anchor back inside the base so the whole footprint stays on it, rather than letting it
+	-- hang off the outer edge and simply read as invalid. Something bigger than the base can't fit
+	-- either way, so it's left under the cursor to be refused.
+	--
+	-- Clamped into the box the owned plots add up to rather than into the plots themselves: over the
+	-- notch of an L-shaped base that leaves the ghost where the player is actually pointing and lets it
+	-- read red, instead of jumping it somewhere they weren't.
+	local maxAnchorX, maxAnchorZ = ground.MaxX - footprintX, ground.MaxZ - footprintZ
+	if maxAnchorX >= ground.MinX then
+		cellX = math.clamp(cellX, ground.MinX, maxAnchorX)
 	end
-	if maxAnchorZ >= 0 then
-		cellZ = math.clamp(cellZ, 0, maxAnchorZ)
+	if maxAnchorZ >= ground.MinZ then
+		cellZ = math.clamp(cellZ, ground.MinZ, maxAnchorZ)
 	end
 
-	local valid = GridUtil.IsBlockInBounds(floor, cellX, cellZ, footprintX, footprintZ, Structures.CELL_SIZE)
-		and self:_isBlockFreeLocally(plotId, cellX, cellZ, footprintX, footprintZ)
+	local valid = GridUtil.IsBlockOnGround(ground, cellX, cellZ, footprintX, footprintZ)
+		and self:_isBlockFreeLocally(cellX, cellZ, footprintX, footprintZ)
 
-	self._targetPlotId = plotId
 	self._targetCellX = cellX
 	self._targetCellZ = cellZ
 	self._valid = valid
 
-	local surface = GridUtil.CellToSurfaceCFrame(floor, cellX, cellZ, footprintX, footprintZ, Structures.CELL_SIZE)
+	local surface =
+		GridUtil.CellToSurfaceCFrame(ground.Origin, cellX, cellZ, footprintX, footprintZ, Structures.CELL_SIZE)
 	local target = Structures.GetPlacementPivot(ghost, surface, self._rotation)
 
 	-- Eased toward the snapped spot, so dragging glides. The first frame snaps outright, and math.exp
@@ -620,7 +692,7 @@ function BuildController:_getStructureUnderCursor(): (Model?, string?)
 
 	-- The ray lands on some part deep inside a structure, so climb to the structure itself. Climbing to
 	-- the folder's own child rather than to the nearest Model: a structure has models inside it (a
-	-- griller's GrillModel, for one), and the nearest one up is one of those rather than the thing that
+	-- griller's Grill, for one), and the nearest one up is one of those rather than the thing that
 	-- was built.
 	local model = result and result.Instance
 	while model and model.Parent ~= self._structureFolder do
@@ -705,13 +777,7 @@ function BuildController:_tryPlace()
 	end
 	self._lastPlaceTime = now
 
-	self.PlaceStructureEvent:FireServer(
-		self._structure.Id,
-		self._targetPlotId,
-		self._targetCellX,
-		self._targetCellZ,
-		self._rotation
-	)
+	self.PlaceStructureEvent:FireServer(self._structure.Id, self._targetCellX, self._targetCellZ, self._rotation)
 end
 
 -- The pickup tool's click. The first one on a structure picks it, the second one on the same structure
@@ -754,29 +820,31 @@ end
 -- that case is silent and indistinguishable from bad aim: the ghost just reads red wherever it's put,
 -- because the block never fits inside the grid however it's positioned.
 --
--- Almost always a setup problem rather than a game state -- a plot floor too small for the thing being
--- put on it, or Structures.CELL_SIZE set coarser than the floors were built for.
+-- Measured against everything they own at once rather than plot by plot, since a structure too big for
+-- one plot is perfectly placeable across two of them.
+--
+-- Almost always a setup problem rather than a game state -- a base too small for the thing being put
+-- on it, or Structures.CELL_SIZE set coarser than the floors were built for.
 function BuildController:_warnIfUnplaceable(structure: Structures.Structure)
-	if not next(self._floors) then
+	local ground = self._ground
+
+	if not ground then
 		warn(`[Build] no {Plots.FLOOR_NAME} to build on -- see the warnings above`)
 		return
 	end
 
 	local footprintX, footprintZ = Structures.GetFootprint(structure, 0)
+	local countX, countZ = ground.MaxX - ground.MinX, ground.MaxZ - ground.MinZ
 
-	for floor, plotId in self._floors do
-		local countX, countZ = GridUtil.GetDimensions(floor, Structures.CELL_SIZE)
-
-		-- Either way round, since the player can turn it a quarter-turn to fit the other way.
-		if (footprintX <= countX and footprintZ <= countZ) or (footprintZ <= countX and footprintX <= countZ) then
-			return
-		end
-
-		warn(
-			`[Build] {structure.Name} is {footprintX}x{footprintZ} cells and plot {plotId} is only `
-				.. `{countX}x{countZ} ({Structures.CELL_SIZE} studs each), so it can't fit`
-		)
+	-- Either way round, since the player can turn it a quarter-turn to fit the other way.
+	if (footprintX <= countX and footprintZ <= countZ) or (footprintZ <= countX and footprintX <= countZ) then
+		return
 	end
+
+	warn(
+		`[Build] {structure.Name} is {footprintX}x{footprintZ} cells and the ground the player owns is only `
+			.. `{countX}x{countZ} ({Structures.CELL_SIZE} studs each), so it can't fit`
+	)
 end
 
 -- The guide frame, or nil if the place file hasn't got one. Re-resolved rather than kept, because a
@@ -792,12 +860,58 @@ function BuildController:_getGuide(): Frame?
 	return self._guide
 end
 
+-- The invalid badge, or nil if the place file hasn't got one. Re-resolved for the same reason the
+-- guide is: it lives under a ScreenGui the engine may have rebuilt since it was last looked up.
+function BuildController:_getInvalid(): GuiObject?
+	if self._invalid and self._invalid.Parent then
+		return self._invalid
+	end
+
+	self._invalid = self.UI and self.UI:FindFirstChild(INVALID_FRAME_NAME)
+
+	return self._invalid
+end
+
 -- One entry of the guide, by name.
 function BuildController:_getGuideScale(entryName: string): UIScale?
 	local guide = self:_getGuide()
 	local entry = guide and guide:FindFirstChild(entryName)
 
 	return entry and entry:FindFirstChildOfClass("UIScale")
+end
+
+-- Puts up whichever of the two the player should be looking at. Nothing is up outside a placement; while
+-- one is running, it's the guide if the ghost has found a spot and the invalid badge if it hasn't --
+-- exactly one at a time, since a list of keys to press and "you can't put it there" don't both apply.
+--
+-- Desktop only, both of them: a phone gets the touch buttons instead, and its "cursor" is wherever a
+-- finger last landed -- so either of these, chasing it, would sit under the player's own thumb.
+function BuildController:_refreshGuide()
+	local placing = self._guidePlacing and not UserInputService.TouchEnabled
+	local guide = self:_getGuide()
+	local invalid = self:_getInvalid()
+
+	if guide then
+		guide.Visible = placing and self._guideAimed
+	end
+
+	if invalid then
+		invalid.Visible = placing and not self._guideAimed
+	end
+
+	-- Dropped once neither is up, so the next placement starts on the cursor rather than gliding in
+	-- from wherever the last one was left. Kept across the swap between the two, on the other hand:
+	-- they take turns at the same spot, so the one taking over should already be standing there.
+	if not placing then
+		self._guidePosition = nil
+	end
+end
+
+-- Whether the ghost has somewhere to sit this frame, which is what decides between the two frames above.
+function BuildController:_setGuideAimed(aimed: boolean)
+	self._guideAimed = aimed
+
+	self:_refreshGuide()
 end
 
 -- Squashes one entry of the guide while its input is held, and lets it back out on release. Reads as a
@@ -816,21 +930,11 @@ function BuildController:_pressGuideEntry(entryName: string, pressed: boolean)
 	})
 end
 
--- Puts the guide up for the length of a placement, or takes it down.
+-- Hands the guide and the invalid badge over to the placement for its length, or takes both back. Both
+-- are forced down on the way out rather than left alone, since either may well be authored visible in
+-- the place file.
 function BuildController:_showGuide(shown: boolean)
-	local guide = self:_getGuide()
-	if not guide then
-		return
-	end
-
-	-- Desktop only. A phone gets the touch buttons instead, and its "cursor" is wherever a finger last
-	-- landed -- so a hint chasing it would sit under the player's own thumb. Forced down rather than
-	-- left alone, since the frame may well be authored visible in the place file.
-	if UserInputService.TouchEnabled then
-		shown = false
-	end
-
-	-- Both entries go back to full size as the guide goes *up* rather than as it comes down. A spring
+	-- Every entry goes back to full size as the guide goes *up* rather than as it comes down. A spring
 	-- left running on a hidden frame would still be settling if the player swapped tools quickly, so
 	-- resetting on the way in is what makes the guide crisp however it was last put away. Stopped
 	-- before it's written, since a live spring would otherwise carry on over the value.
@@ -845,18 +949,28 @@ function BuildController:_showGuide(shown: boolean)
 		end
 	end
 
-	guide.Visible = shown
+	self._guidePlacing = shown
 
-	-- Dropped so the next placement starts on the cursor rather than gliding in from wherever the last
-	-- one was left.
-	self._guidePosition = nil
+	-- Nothing has been aimed at yet this placement, so it opens on the badge and swaps to the guide on
+	-- the first frame that finds a cell.
+	self._guideAimed = false
+
+	self:_refreshGuide()
 end
 
 -- Glides the guide to the cursor. Eased rather than pinned so it trails the pointer slightly and
 -- settles, which reads as something following the mouse rather than something stuck to it.
+--
+-- Whichever of the two is up gets moved, off one shared position: they never share the screen, so the
+-- swap between them happens in place rather than the one arriving having to catch up.
 function BuildController:_updateGuide(deltaTime: number)
-	local guide = self:_getGuide()
-	if not guide or not guide.Visible then
+	local frame = self:_getGuide()
+
+	if not (frame and frame.Visible) then
+		frame = self:_getInvalid()
+	end
+
+	if not (frame and frame.Visible) then
 		return
 	end
 
@@ -865,7 +979,7 @@ function BuildController:_updateGuide(deltaTime: number)
 	-- GetMouseLocation is measured from below the topbar, and so is a ScreenGui's own origin -- unless
 	-- it ignores the inset, in which case it measures from the very top and the inset has to go back
 	-- on. Read off the gui rather than assumed, since that's a property of the place file.
-	local target = if self.UI.IgnoreGuiInset then mouse + GuiService:GetGuiInset() else mouse
+	local target = if self.UI.IgnoreGuiInset then mouse else mouse + GuiService:GetGuiInset()
 
 	-- The first frame snaps outright, and math.exp keeps the glide the same speed whatever the
 	-- framerate -- the same easing the ghost uses over the grid.
@@ -877,7 +991,7 @@ function BuildController:_updateGuide(deltaTime: number)
 
 	-- Position only: the anchor point is authored, and it's what decides where the frame sits relative
 	-- to the pointer.
-	guide.Position = UDim2.fromOffset(self._guidePosition.X, self._guidePosition.Y)
+	frame.Position = UDim2.fromOffset(self._guidePosition.X, self._guidePosition.Y)
 end
 
 -- Binds placing and rotating for as long as the ghost is up, and puts an on-screen button behind each
@@ -900,7 +1014,8 @@ function BuildController:_bindPlacementActions()
 	end
 
 	-- Rotation carries across placements until the tool is put away, so laying out a row of things all
-	-- facing the same way is one press rather than one per copy.
+	-- facing the same way is one press rather than one per copy. It starts wherever the ghost came up
+	-- facing (see _getFacingRotation), so the common case is no press at all.
 	--
 	-- The release is worth listening for even though nothing turns on it: it's what lets the hint on
 	-- screen come back out of its press, so holding the key holds the button down.
@@ -1054,7 +1169,6 @@ function BuildController:_exitPlacement()
 	self._rotation = 0
 	self._raycastParams = nil
 	self._ghostCFrame = nil
-	self._targetPlotId = nil
 	self._targetCellX = nil
 	self._targetCellZ = nil
 	self._valid = false
@@ -1219,17 +1333,17 @@ function BuildController:OnStart()
 	--
 	-- Listening yields on the replica, so keep it off the start thread.
 	self._cleaner:Connect(LocalPlayer:GetAttributeChangedSignal("BaseId"), function()
-		self:_refreshFloors()
+		self:_refreshGround()
 		self:_refreshRaycastParams()
 	end)
 
 	task.spawn(function()
 		self._cleaner:Add(PlayerDataController:ListenForChange("Plots", function()
-			self:_refreshFloors()
+			self:_refreshGround()
 			self:_refreshRaycastParams()
 		end))
 
-		self:_refreshFloors()
+		self:_refreshGround()
 		self:_refreshRaycastParams()
 	end)
 end

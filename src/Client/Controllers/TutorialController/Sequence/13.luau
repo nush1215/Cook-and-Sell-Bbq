@@ -19,9 +19,10 @@ return function(self)
 
 	local highlight = self:CreateHighlight(knob)
 
-	-- How far along the 0-1 bar the cook is, read the same way the griller itself derives it -- the warp
-	-- included, since the tutorial's own cook is the one carrying a widened window, and reading it off
-	-- the raw clock would hand the prompts back while the bar still showed raw.
+	-- How far along the 0-1 bar the cook is, read the same way the griller itself derives it -- both warps
+	-- included, since the tutorial's own cook is the one carrying a widened window, and the grill it's
+	-- being run on is whichever griller the player owns, which can be an unstable one. Reading it off the
+	-- raw clock would hand the prompts back while the bar still showed raw.
 	local function cookProgress(): number
 		local startedAt = slot:GetAttribute("CookStartedAt")
 		local cookTime = slot:GetAttribute("CookTime")
@@ -33,7 +34,9 @@ return function(self)
 			workspace:GetServerTimeNow() - startedAt,
 			cookTime,
 			slot:GetAttribute("CookWindowStretch"),
-			slot:GetAttribute("CookProgress")
+			slot:GetAttribute("CookProgress"),
+			slot:GetAttribute("CookInstability"),
+			slot:GetAttribute("CookInstabilityPhase")
 		)
 
 		return elapsed / cookTime

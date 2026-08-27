@@ -86,6 +86,17 @@ function CameraController:SetBackToDefault()
 	Camera.CameraType = Enum.CameraType.Custom
 end
 
+-- Turns the camera to look along a horizontal direction, keeping its current pitch
+-- @param lookDirection The world-space direction the camera should face
+-- @remarks Does not take control of the camera: the default camera re-derives its orientation from
+-- the live Camera.CFrame each frame, so it picks this up and keeps following the character as normal
+function CameraController:AlignCameraYawTo(lookDirection: Vector3)
+	local pitch = Camera.CFrame:ToEulerAnglesYXZ()
+	local yaw = math.atan2(-lookDirection.X, -lookDirection.Z)
+
+	Camera.CFrame = CFrame.new(Camera.CFrame.Position) * CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
+end
+
 -- Shakes the camera using a preset
 -- @param presetName The name of the preset to use
 function CameraController:ShakePreset(presetName: string)

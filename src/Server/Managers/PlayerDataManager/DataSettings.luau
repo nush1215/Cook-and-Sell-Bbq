@@ -20,27 +20,34 @@ return {
 
 		-- Everything the player has built on their base, keyed by a uid minted at placement
 		-- (HttpService:GenerateGUID(false), the same as a FilledStick's). Type is a Config.Structures id,
-		-- naming the Assets.Structures model it's cloned from. Where it sits is the plot it's on plus the
-		-- grid cell it starts at and how many quarter-turns it's been rotated -- relative rather than
-		-- absolute, because a player is handed whichever base is free and an absolute pose would rebuild
-		-- on the wrong one.
+		-- naming the Assets.Structures model it's cloned from. Where it sits is the grid cell it starts at
+		-- and how many quarter-turns it's been rotated -- relative rather than absolute, because a player
+		-- is handed whichever base is free and an absolute pose would rebuild on the wrong one.
+		--
+		-- The cell is the base's rather than any one plot's: a single lattice runs across the whole base,
+		-- measured off the starting plot's floor, and the plots below say which of its cells may be built
+		-- on (see Shared.GridUtil). So a structure standing over the seam between two plots is an
+		-- ordinary pair of numbers, and buying a plot opens up cells rather than starting a new grid.
 		--
 		-- Cells rather than a pose because that's exactly what the client sends and the server checks, so
 		-- what's saved is what was validated: the build comes back on a rejoin on the same cells with no
-		-- drift, and which plot has to be unlocked for a structure to exist is a lookup rather than
-		-- something worked out backwards from a position.
+		-- drift.
 		--
 		-- Grillers and StickStands below are keyed by these same uids: the structure is the thing, and
 		-- those are whatever is sitting on it.
-		Structures = {}, -- [uid] = { Type, PlotId, CellX, CellZ, Rotation }
+		Structures = {}, -- [uid] = { Type, CellX, CellZ, Rotation }
 		-- Structures the player owns but hasn't put down yet, held as a stacking tool each. A structure
 		-- is only ever in one of the two places: counted here, or standing on a plot above. Placing one
 		-- spends it from here and picking it back up puts it back, so nothing is lost to a bad spot.
 		--
-		-- Seeded with one of each because there's nowhere to buy them yet -- a new player needs a griller
-		-- and a stand to have a game at all. Once a shop exists this goes back to empty and the shop
-		-- calls BuildManager:GrantStructure instead.
-		OwnedStructures = { BaseGriller = 1, BaseStickStand = 1 }, -- [structureId] = amount owned
+		-- Seeded with one of each because a new player needs a griller and a stand to have a game at all,
+		-- and the Grill & Stand Shop is somewhere to spend money rather than somewhere to get started.
+		-- The griller is the bottom rung of the ladder on purpose (see Config.Structures): a new player
+		-- learns the timing on a grill that won't hold a steady rate, so the first thing money buys is an
+		-- Iron Grill that behaves. The ids have to be ones the config still has -- BuildManager's tool
+		-- reconcile silently skips one it doesn't, which hands the player nothing at all rather than
+		-- erroring.
+		OwnedStructures = { RustyGrill = 1, WoodenStickStand = 1 }, -- [structureId] = amount owned
 
 		-- Core Shop Stuff
 		StarterPackStart = 0,
@@ -97,6 +104,12 @@ return {
 		-- when to stop it, so a cook nobody comes back for still ends on schedule -- burnt -- even across a
 		-- rejoin. It may also carry CookWindowStretch, how many times longer this one cook's perfect window
 		-- runs (see CookStates.GetBarElapsed) -- stamped at the light and absent on every ordinary cook.
+		-- CookInstability and CookInstabilityPhase are the other pair that bends the same bar: how far the
+		-- grill's cook rate swings either side of 1, and where in that swing the stove happened to be lit.
+		-- Both come off the grill it was lit on (only the Rusty Grill has one today) and the phase is
+		-- rolled per cook, so no two cooks on it surge in the same places. Stamped at the light rather
+		-- than read at the stop for the same reason CookTime is: the bar has to bend the same way from its
+		-- first frame to its last, across a rejoin included.
 		Grillers = {},
 
 		-- Sauce Dispenser

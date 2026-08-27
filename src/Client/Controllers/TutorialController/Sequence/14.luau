@@ -10,7 +10,7 @@ return function(self)
 	-- seated inches from it, and the model is wide enough that its centre reads as near from places
 	-- nothing on it is in reach. The knob beats measure from the knob for the same reason -- each beat's
 	-- "near" is wherever the thing it's asking for can be reached from. Found the whole way down, since it
-	-- sits on GrillModel's Base part rather than on the griller itself.
+	-- sits on Grill.Main.Base rather than on the griller itself.
 	local promptAttachment = slot:FindFirstChild("GrillAttachment", true)
 
 	local highlight = self:CreateHighlight(slot)

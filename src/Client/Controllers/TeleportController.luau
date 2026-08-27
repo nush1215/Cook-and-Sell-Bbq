@@ -2,6 +2,7 @@
 local Players = game:GetService("Players")
 
 -- Controllers
+local CameraController = require(script.Parent.CameraController)
 local HudController
 
 -- Local Player
@@ -15,7 +16,8 @@ local SPAWN_HEIGHT_OFFSET = 5
 -- local character directly with no server round-trip.
 local TeleportController = {}
 
--- Pivots the local character onto a target part, sat SPAWN_HEIGHT_OFFSET studs above it.
+-- Pivots the local character onto a target part, sat SPAWN_HEIGHT_OFFSET studs above it, and swings
+-- the camera round to match so the player lands looking where the character faces.
 function TeleportController:_teleportToPart(targetPart: PVInstance)
 	-- No character to move while the player is mid-respawn.
 	local character = LocalPlayer.Character
@@ -23,7 +25,10 @@ function TeleportController:_teleportToPart(targetPart: PVInstance)
 		return
 	end
 
-	character:PivotTo(targetPart:GetPivot() * CFrame.new(0, SPAWN_HEIGHT_OFFSET, 0))
+	local destination = targetPart:GetPivot() * CFrame.new(0, SPAWN_HEIGHT_OFFSET, 0)
+	character:PivotTo(destination)
+
+	CameraController:AlignCameraYawTo(destination.LookVector)
 end
 
 function TeleportController:OnInit()

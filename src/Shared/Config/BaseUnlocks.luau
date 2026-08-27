@@ -22,7 +22,9 @@ export type Unlock = {
 	Costs: { number }, -- Costs[n] is what level n costs to own; kept dense to at least Limit
 	RobuxProductIds: { [number]: number }?, -- Robux dev-product id per level, keyed by the level it
 	-- buys (level 1 is free, so these start at 2). Products.luau generates one product per entry; a
-	-- level with no entry has no Robux option and its button stays hidden.
+	-- level with no entry has no Robux option and its button stays hidden. The same id may repeat
+	-- across neighbouring levels -- one product covering a band of them -- since a product only sets
+	-- the price and the server grants whatever the player's next level is.
 	FormatLevel: ((level: number) -> string)?, -- how a level reads on the upgrade board. Defaults to
 	-- the bare number, which is right for a group whose level *is* a count of something.
 }
@@ -109,7 +111,37 @@ BaseUnlocks.Data = {
 			4_800_000,
 			7_500_000,
 		},
-		-- No products made for this yet, so every step is currency-only and the Robux button stays hidden.
+		-- Ten products over the twenty buyable levels, so each one covers a band of two. Banded rather
+		-- than one per level so the Robux button never disappears part-way up the ladder, and the same
+		-- id can sit on both rungs safely because a product only sets the price -- the server grants
+		-- whatever the player's next level is (see Products.luau), so a receipt can't skip a level or
+		-- hand out one already owned.
+		--
+		-- The bands run cheapest-first against the Bux costs above, which roughly double every rung
+		-- while a tier's Robux price holds flat across its two. That's deliberate: the early levels are
+		-- priced to be worth taking at all, and the deal only gets better the further up someone is.
+		RobuxProductIds = {
+			[2] = 3710074572, -- Tier 1
+			[3] = 3710074572,
+			[4] = 3710074618, -- Tier 2
+			[5] = 3710074618,
+			[6] = 3710074629, -- Tier 3
+			[7] = 3710074629,
+			[8] = 3710074638, -- Tier 4
+			[9] = 3710074638,
+			[10] = 3710074651, -- Tier 5
+			[11] = 3710074651,
+			[12] = 3710074661, -- Tier 6
+			[13] = 3710074661,
+			[14] = 3710074681, -- Tier 7
+			[15] = 3710074681,
+			[16] = 3710074698, -- Tier 8
+			[17] = 3710074698,
+			[18] = 3710074718, -- Tier 9
+			[19] = 3710074718,
+			[20] = 3710074728, -- Tier 10
+			[21] = 3710074728,
+		},
 		-- Reads as what it does rather than as a count: "Roll Speed (1.7s)".
 		FormatLevel = function(level: number): string
 			return string.format("%.1fs", Rolling.GetRollDuration(level))

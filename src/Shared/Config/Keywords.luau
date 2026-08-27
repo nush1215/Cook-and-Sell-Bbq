@@ -28,6 +28,11 @@ local Keywords = {}
 -- has worked out that a stand is where a stick goes.
 local STICK_COLOR = Color3.fromRGB(222, 184, 135)
 
+-- The heat rather than the metal. A charcoal grill's own colour is a dark grey that would barely
+-- carry on the banner, and the fire is the half of it the player is being sent to work anyway.
+-- Shared with the shop that sells them, the same way the stick tan above covers the Stick Shop.
+local GRILLER_COLOR = Color3.fromRGB(255, 146, 40)
+
 -- Numbers, and the "[3]" that says a notification has fired three times. The game's existing emphasis
 -- gold -- the same #ffd400 that ShopManager, CodeManager and the daily reward already write by hand.
 Keywords.NUMBER = Color3.fromRGB(255, 212, 0)
@@ -47,17 +52,20 @@ Keywords.Colors = {
 	Sticks = STICK_COLOR,
 	["Stick Shop"] = STICK_COLOR,
 	["Stick Stand"] = STICK_COLOR,
+	["Stick Stands"] = STICK_COLOR,
 
 	-- Glazed and cooked, and kept clear of the griller's own colour: the two share a line more than once
 	-- ("Place your BBQ on the grill"), so they have to read as two things rather than one phrase.
 	BBQ = Color3.fromRGB(225, 122, 78),
 	BBQs = Color3.fromRGB(225, 122, 78),
 
-	-- The heat rather than the metal. A charcoal grill's own colour is a dark grey that would barely
-	-- carry on the banner, and the fire is the half of it the player is being sent to work anyway.
-	-- Only the noun: "grill" on its own is the verb ("You need a BBQ to grill!") and stays plain.
-	Griller = Color3.fromRGB(255, 146, 40),
-	Grillers = Color3.fromRGB(255, 146, 40),
+	-- Only the noun: "grill" on its own is the verb ("You need a BBQ to grill!") and stays plain. The
+	-- shop's whole name is safe to name where that bare word isn't, since nothing else in the game
+	-- reads "Grill & Stand Shop" -- and it takes the griller's colour rather than the stand's tan so
+	-- the two shops don't come out looking like one.
+	Griller = GRILLER_COLOR,
+	Grillers = GRILLER_COLOR,
+	["Grill & Stand Shop"] = GRILLER_COLOR,
 
 	-- The game's own gold, straight off the Highlights palette, where gold already means "there's money
 	-- in this" -- which is exactly what a customer is. Reused rather than mixed by hand so the word and

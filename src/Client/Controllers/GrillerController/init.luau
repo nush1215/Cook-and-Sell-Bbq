@@ -25,7 +25,7 @@ local GRILLER_CATEGORY = "Grillers"
 -- The parts a Grill has to have to do anything. They come off the structure's template, so they're
 -- always there -- but a placed griller replicates in mid-session rather than existing from place-load,
 -- so they're waited on rather than assumed (see _addGrill).
-local REQUIRED_DESCENDANTS = { "GrillModel", "StickAttachment", "GrillAttachment" }
+local REQUIRED_DESCENDANTS = { "Grill", "StickAttachment", "GrillAttachment" }
 local CHILD_TIMEOUT = 10
 
 --[[
@@ -42,8 +42,8 @@ local CHILD_TIMEOUT = 10
 ]]
 
 -- Waits for a named descendant of a griller, the way WaitForChild waits for a child. The two
--- attachments sit on GrillModel's Base part rather than on the griller itself, and WaitForChild only
--- looks one level down, so these are polled out against the same timeout instead.
+-- attachments sit on Grill.Main.Base rather than on the griller itself, and WaitForChild only looks
+-- one level down, so these are polled out against the same timeout instead.
 local function waitForDescendant(model: Instance, name: string, timeout: number): Instance?
 	local deadline = os.clock() + timeout
 	local found = model:FindFirstChild(name, true)

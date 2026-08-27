@@ -38,6 +38,21 @@ CookStates.PERFECT_END = 0.85
 -- charred skewer still reads as the ingredients it's made of rather than a flat black lump.
 CookStates.BURNT_STRENGTH = 0.65
 
+-- The most an unstable grill's cook rate is ever allowed to swing either side of 1 (see
+-- Structures.CookInstability and GetBarElapsed below). At exactly 1 the bar stalls dead at the bottom
+-- of every cycle; past it the bar runs BACKWARDS, which un-browns the food, walks the title back over
+-- a band it already crossed, and lets a stop settle a state the player watched go by. Held short of 1
+-- here, and clamped where it's read rather than where it's authored, so a config typo can't do any of
+-- that.
+CookStates.MAX_INSTABILITY = 0.9
+
+-- How long one surge-and-stall of an unstable grill aims to take. A target rather than the period a
+-- cook actually runs at: GetBarElapsed rounds the bar to a whole number of cycles, and it's the whole
+-- count that puts the bar back on exactly cookTime. Seconds rather than a fraction of the bar on
+-- purpose -- the lurch is a thing the player watches, so it should read the same on a short skewer as
+-- on a long one, where a fixed cycle count would flutter on one and crawl on the other.
+CookStates.INSTABILITY_PERIOD = 4
+
 export type CookState = {
 	Id: string, -- also the name of the UIGradient it lights on the cooking bar's title ("{Id}Gradient")
 	Name: string, -- how that title reads
@@ -229,25 +244,88 @@ end
 -- ingredient is about two seconds, and that's a hard first attempt on a touchscreen. Absent or 1, this
 -- is the identity function and every cook resolves exactly as it did before it existed.
 --
+-- An unstable grill bends the same timeline a second way: its rate swings either side of 1 the whole way
+-- up the bar, so the fill surges and stalls instead of creeping. Like the stretch, it leaves the second
+-- the bar fills exactly where it was -- the swing integrates out over a whole number of cycles -- so what
+-- it costs is the timing rather than the cook. The maths is written out at the warp itself below.
+--
 -- A cook resumed from an earlier pull enters the timeline part-way along rather than at zero, and that
--- offset is folded in here for the same reason the stretch is: this is the one place the server's stop
--- and the client's bar both derive from, so a call site can't forget it and leave the two disagreeing.
+-- offset is folded in here for the same reason both warps are: this is the one place the server's stop
+-- and the client's bar both derive from, so a call site can't forget one and leave the two disagreeing.
+-- Which is also why the new arguments are trailing and optional and yet every call site still passes
+-- them -- a caller that quietly skipped one would draw a bar the stop doesn't resolve against.
 -- @param elapsed: seconds since CookStartedAt
 -- @param cookTime: the whole bar in seconds, as stamped on the cook
 -- @param windowStretch: how many times longer the perfect window should run, or nil for untouched
 -- @param cookProgress: bar fraction banked by an earlier raw pull, or nil on a skewer lit from cold
+-- @param instability: how far this grill's cook rate swings either side of 1, or nil for a steady one
+-- @param instabilityPhase: where in that swing this cook was lit, in radians, as stamped on it
 function CookStates.GetBarElapsed(
 	elapsed: number,
 	cookTime: number,
 	windowStretch: number?,
-	cookProgress: number?
+	cookProgress: number?,
+	instability: number?,
+	instabilityPhase: number?
 ): number
-	-- Banked bar seconds added to real ones, which only lines up because a bank never reaches the window:
-	-- the stretch below is the identity function up to windowStart, so the two measure the same thing over
-	-- the stretch of timeline a bank can occupy. Clamped rather than trusted -- it comes back off saved
-	-- data, and a value past the window would let a relight open straight into the perfect band.
+	-- Banked bar seconds added to real ones, and added before either warp below rather than after. A
+	-- bank is a head start along the cook, not a position on this grill's bar: what both warps promise
+	-- is that the bar still fills on the second it always did, and they can only keep that promise if
+	-- the total they're handed is the one that has to reach cookTime. Added afterwards, a resumed cook
+	-- on an unstable grill would fill wherever its wobble happened to have got to instead.
+	--
+	-- The cost is small and worth naming: a bank measured off a wobbling bar is spent on the steady axis
+	-- underneath it, so a relight on an unstable grill opens up to instability * INSTABILITY_PERIOD / pi
+	-- seconds of cook away from where the skewer came off -- under a second at the tuned figures, and it
+	-- lands across a stove-off and a stove-on that rebuild the skewer and relight the coals from cold
+	-- anyway. Clamped rather than trusted -- it comes back off saved data, and a value past the window
+	-- would let a relight open straight into the perfect band.
 	elapsed += math.clamp(cookProgress or 0, 0, CookStates.RAW_END) * cookTime
 
+	-- An unstable grill's heat comes and goes, so its cook rate swings either side of 1 instead of
+	-- sitting on it: the bar surges, stalls and surges again, and the player has to watch it rather than
+	-- time it. The rate is a sinusoid, rate(t) = 1 + a * sin(w*t + phase), and what's applied here is
+	-- its integral -- closed form on purpose, so a client that joined halfway through a cook draws
+	-- exactly the bar one that watched the whole thing is drawing, with nothing accumulated per frame:
+	--
+	--     bar(t) = t + (a / w) * (cos(phase) - cos(w*t + phase)),   w = 2*pi*cycles / cookTime
+	--
+	-- Three things fall out of that shape, and all three are the point:
+	--
+	--  * It's strictly increasing for any a < 1, since that's just rate(t) > 0. The bar lurches but
+	--    never runs backwards, so the food can't un-brown and a stop can't settle a band the player
+	--    already watched go by. MAX_INSTABILITY is what holds it to that.
+	--  * cycles is a whole number, so the cosine comes back to where it started and bar(cookTime) is
+	--    exactly cookTime, whatever the phase. The bar fills on the very second it would have on a
+	--    steady grill: what an unstable one costs the player is the timing, not the cook.
+	--  * Past the bar it's the identity outright, which is required rather than tidy. Overtime is
+	--    wall-clock seconds by design (see Data above), so the burn has to run at real speed -- and
+	--    landing bar(cookTime) exactly on cookTime is what makes handing over to it seamless. The rate
+	--    does jump at that seam unless the phase happens to be zero, but there's nothing left to see it:
+	--    the fill is pinned full from there and only the seconds past it matter.
+	--
+	-- The phase is stamped per cook rather than fixed at zero, and that's the whole difficulty of the
+	-- thing: at a fixed phase the surges would land on the same places on the bar every single time, so
+	-- one recipe would always be surged through the window and another always stalled in it -- a lottery
+	-- drawn once per recipe rather than something to watch.
+	local amplitude = math.clamp(instability or 0, 0, CookStates.MAX_INSTABILITY)
+	if amplitude > 0 and elapsed > 0 and elapsed < cookTime then
+		-- Rounded to a whole count off a target length in seconds, and never below one: the whole count
+		-- is what puts the bar back on cookTime, and the shortest skewer should still get a lurch rather
+		-- than a straight line.
+		local cycles = math.max(1, math.round(cookTime / CookStates.INSTABILITY_PERIOD))
+		local frequency = 2 * math.pi * cycles / cookTime
+		local phase = instabilityPhase or 0
+
+		elapsed += (amplitude / frequency) * (math.cos(phase) - math.cos(frequency * elapsed + phase))
+	end
+
+	-- The stretch goes after the wobble rather than before it: it's written against the bar's own
+	-- landmarks -- windowStart below is a fraction of cookTime *on the bar* -- so it has to be handed
+	-- bar seconds, which is exactly what the wobble above produces. The other way round, the stretch's
+	-- own promise that the bar fills on the same second it always did would be bent again after it made
+	-- it. The two compose either way round only because the wobble is the identity past the bar, which
+	-- is what leaves the stretch's tail running at rate 1 and Overtime in real seconds.
 	local stretch = windowStretch or 1
 	local windowStart = CookStates.RAW_END * cookTime
 	if stretch <= 1 or elapsed <= windowStart then

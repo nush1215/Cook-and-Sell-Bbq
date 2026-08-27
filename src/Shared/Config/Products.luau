@@ -53,6 +53,11 @@ end
 -- Base-unlock Robux products, one per level a dev product was made for (see BaseUnlocks.RobuxProductIds).
 -- The tier only sets the price: every one of these buys the player's *next* level of that unlock, so a
 -- receipt that lands out of order can't skip a level or hand out one they already own.
+--
+-- Which is also what lets one id cover a band of levels (Roll Speed sells ten products across twenty
+-- levels): the entries are identical but for the price, so the one a receipt happens to resolve back to
+-- can't change what's granted. The name is kept off the level for the same reason -- it's what the
+-- purchase toast and the purchase log read, and a banded product has no single level to name.
 for _, unlock in BaseUnlocks.Data do
 	if not unlock.RobuxProductIds then
 		continue
@@ -61,7 +66,7 @@ for _, unlock in BaseUnlocks.Data do
 	for level, productId in unlock.RobuxProductIds do
 		table.insert(Products.Data, {
 			Id = BaseUnlocks.GetProductStringId(unlock.Id, level),
-			Name = `{unlock.Name} (Level {level})`,
+			Name = `{unlock.Name} Upgrade`,
 			Type = "Core",
 			PurchaseOnce = false,
 			ProductId = productId,

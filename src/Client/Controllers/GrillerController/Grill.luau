@@ -59,6 +59,9 @@ local SPIN_SPEED = math.rad(120) -- how fast the skewer turns while cooking, onc
 local SPIN_RAMP_TIME = 1 -- seconds the spin eases up to speed at the start, and back down in the wind-down after a finish
 local COOK_MATERIAL_PROGRESS = 0.8 -- how far through the raw -> cooked browning before the cooked material/variant shows
 local PARTICLE_CLEANUP_PADDING = 0.5 -- extra seconds after the longest particle lifetime before the emitters are dropped
+-- The cook effect a griller with no folder of its own under Assets.Particles.Cooking falls back on --
+-- the plain sizzle every grill but the Electric one shows. See _showCookParticles.
+local COOK_PARTICLE_DEFAULT = "Default"
 
 -- The looped sizzle a lit grill carries, eased in and back out so the stove going on or off doesn't
 -- crack in or cut dead.
@@ -77,7 +80,10 @@ local ALARM_FADE_OUT = 0.15 -- just enough that cutting the burst short doesn't 
 
 -- Stove visuals: the charcoal glow, the LED and the knob handle.
 local CHARCOAL_OFF_COLOR = Color3.fromRGB(25, 12, 7)
-local CHARCOAL_ON_COLOR = Color3.fromRGB(255, 85, 0)
+-- What the coals burn up to, when the Charcoal part doesn't say otherwise -- the attribute below is
+-- what a grill authored to burn its own colour sets.
+local CHARCOAL_GLOW_ATTRIBUTE = "GlowColor"
+local CHARCOAL_DEFAULT_GLOW = Color3.fromRGB(255, 85, 0)
 local CHARCOAL_FADE_TIME = 3 -- seconds the charcoal glow fades in at the start of a cook and back out at the end
 local LED_ON_COLOR = Color3.fromRGB(0, 255, 0)
 local LED_OFF_COLOR = Color3.fromRGB(255, 0, 0)
@@ -151,12 +157,29 @@ function Grill.new(slot: Instance)
 	local cleaner = Trove.new()
 
 	local knob = slot:FindFirstChild("Knob")
-	-- The two attachments sit on GrillModel's Base part, two levels down rather than as children of
-	-- the griller, so they're looked for the whole way down. Everything else is still a direct child.
+	-- Everything but the knob sits down inside the grill body (the attachments on Grill.Main.Base, the
+	-- charcoal and the grates on Grill.Main), so it's all looked for the whole way down rather than by
+	-- path -- the body gets re-nested as it's re-authored, and a lookup that names each level goes with it.
 	local attachment = slot:FindFirstChild("StickAttachment", true)
 	local grillAttachment = slot:FindFirstChild("GrillAttachment", true)
-	local grillModel = slot:FindFirstChild("GrillModel")
-	local grate = grillModel and grillModel:FindFirstChild("Grate")
+	local grillModel = slot:FindFirstChild("Grill")
+
+	-- Every part named Charcoal in the griller rather than the first one found, so a grill modelled with
+	-- coals down its length lights all of them together. Each carries what it burns up to, read off the
+	-- part rather than fixed here so a grill can burn its own colour without a code change -- and read
+	-- once, since nothing writes it at runtime and these are lerped every frame of every cook on screen.
+	local charcoals = {}
+	for _, descendant in slot:GetDescendants() do
+		if descendant.Name == "Charcoal" and descendant:IsA("BasePart") then
+			table.insert(charcoals, {
+				Part = descendant,
+				GlowColor = descendant:GetAttribute(CHARCOAL_GLOW_ATTRIBUTE) or CHARCOAL_DEFAULT_GLOW,
+				-- Where this one's glow had actually got to when the stove was switched off, so the
+				-- cool-down starts from there rather than flaring up to full first (see _sync).
+				CoolFrom = nil,
+			})
+		end
+	end
 
 	local self = setmetatable({
 		--
@@ -167,6 +190,13 @@ function Grill.new(slot: Instance)
 		-- while its owner does -- so ownership is fixed for the whole life of one of these.
 		_uid = slot:GetAttribute(Structures.UID_ATTRIBUTE),
 		_ownerUserId = slot:GetAttribute(Structures.OWNER_ATTRIBUTE),
+
+		-- Which griller this is, off the type the base stamps alongside the two above -- the tag this class
+		-- is built from only says it's a griller. Resolved to the config entry once here rather than looked
+		-- up per cook: a placed structure never changes what it is, and it's what the grate's effect and its
+		-- extra sound both come off. Nil for a model the config has since dropped, which both readers below
+		-- fall back on the shared set for.
+		_structure = Structures.GetStructureFromId(slot:GetAttribute(Structures.TYPE_ATTRIBUTE)),
 
 		-- Where the skewer seats, as an offset from the griller's own pivot rather than as the world pose
 		-- it works out to. A world pose read here would be wrong twice over: a griller placed this
@@ -185,7 +215,7 @@ function Grill.new(slot: Instance)
 		_knob = knob,
 		_led = knob and knob:FindFirstChild("LED"),
 		_handle = knob and knob:FindFirstChild("Handle"),
-		_charcoal = slot:FindFirstChild("Charcoal"),
+		_charcoals = charcoals,
 		_handleRestOffset = nil,
 		-- Whether the stove is currently *shown* lit, so the handle is only ever sprung when that
 		-- actually changes. Springing it to where it already is would be harmless on a settled griller,
@@ -196,9 +226,9 @@ function Grill.new(slot: Instance)
 		-- holds the knob as well, and that carries its own cue on its own condition.
 		_grillModel = grillModel,
 
-		-- The grate the skewer sits on: what the cook's particles mount to, and what its sounds play from,
+		-- The grates the skewer sits on: what the cook's particles mount to, and what its sounds play from,
 		-- so they come off the grill itself rather than a point in space.
-		_gratePart = grate and grate:FindFirstChild("Mesh"),
+		_gratesPart = slot:FindFirstChild("Grates", true),
 
 		-- The server-cloned skewer model and the per-part raw -> cooked targets the colour lerp drives.
 		_skewerModel = slot:FindFirstChild("Skewer"),
@@ -215,7 +245,7 @@ function Grill.new(slot: Instance)
 		_placedStickId = slot:GetAttribute("PlacedStickId"),
 
 		-- The wind-down that plays the spin out after a stop: { StartClock, StartAngle, Hold }, and the
-		-- charcoal's own cool-down from wherever its glow had got to: { StartClock, StartColor }.
+		-- coals' own cool-down: { StartClock }, which each of them fades along from its own CoolFrom.
 		_spinDown = nil,
 		_stoveOff = nil,
 
@@ -304,6 +334,8 @@ function Grill.new(slot: Instance)
 		"CookTime",
 		"CookWindowStretch",
 		"CookProgress",
+		"CookInstability",
+		"CookInstabilityPhase",
 		"CookIngredients",
 	}
 	for _, attribute in attributes do
@@ -315,8 +347,8 @@ function Grill.new(slot: Instance)
 	-- Start from the off look; _sync lights the stove straight back up if this slot's already cooking.
 	-- The charcoal is settled here rather than in _setStoveOff, which now hands it to Update's cool-down
 	-- instead of snapping it dark.
-	if self._charcoal then
-		self._charcoal.Color = CHARCOAL_OFF_COLOR
+	for _, charcoal in self._charcoals do
+		charcoal.Part.Color = CHARCOAL_OFF_COLOR
 	end
 
 	self:_setStoveOff()
@@ -493,6 +525,8 @@ function Grill:_sync()
 	self._cookTime = self._slot:GetAttribute("CookTime")
 	self._cookWindowStretch = self._slot:GetAttribute("CookWindowStretch")
 	self._cookProgress = self._slot:GetAttribute("CookProgress")
+	self._cookInstability = self._slot:GetAttribute("CookInstability")
+	self._cookInstabilityPhase = self._slot:GetAttribute("CookInstabilityPhase")
 
 	if cooking and not self._cooking then
 		self._cooking = true
@@ -515,11 +549,12 @@ function Grill:_sync()
 		self:_stopCookSound()
 		self:_stopAlarm()
 
-		-- The glow cools down from wherever it had actually got to. A cook stopped in its first seconds
-		-- has barely lit, so starting the fade from full would flare it up before dimming it.
-		if self._charcoal then
-			self._stoveOff = { StartClock = os.clock(), StartColor = self._charcoal.Color }
+		-- Each coal cools down from wherever its own glow had actually got to. A cook stopped in its first
+		-- seconds has barely lit, so starting the fade from full would flare it up before dimming it.
+		for _, charcoal in self._charcoals do
+			charcoal.CoolFrom = charcoal.Part.Color
 		end
+		self._stoveOff = { StartClock = os.clock() }
 
 		-- The spin is client-authoritative, so rather than reconciling to wherever the server seated
 		-- the rebuilt model (the old snap), Update keeps turning it from the captured angle: full speed
@@ -538,7 +573,7 @@ function Grill:_sync()
 	-- A skewer arriving on an empty grate is the player setting one down; the take that clears it isn't.
 	local skewer = self._slot:FindFirstChild("Skewer")
 	if placedStickId and not self._placedStickId and skewer then
-		SoundController:PlaySound("Place", self._gratePart)
+		SoundController:PlaySound("Place", self._gratesPart)
 	end
 	self._placedStickId = placedStickId
 
@@ -630,15 +665,36 @@ function Grill:_hideCookingUI()
 end
 
 -- Mounts the cooking particles on the grate and switches them on for the length of the cook.
+--
+-- Which set it mounts is the grill's own, off its CookEffect and so per model rather than per category:
+-- this is the one thing about a cook that's meant to differ between two grillers rather than between a
+-- griller and a stand -- the Electric Grill arcs and smokes where the rest sizzle. Every grill that
+-- names none falls back on Default, so giving one its own effect is a folder in
+-- Assets.Particles.Cooking and a CookEffect naming it, and nothing else.
 function Grill:_showCookParticles()
 	-- Drops anything still fading out from the last cook, and cancels its pending teardown.
 	self._particleCleaner:Clean()
 
-	if not self._gratePart then
+	if not self._gratesPart then
 		return
 	end
 
-	local effect = EffectUtil.ParentEffectFolder(Particles.Cooking, self._gratePart)
+	-- Named by the config rather than taken off the grill's id, so the folder and the model needn't share
+	-- a name.
+	local effectName = (self._structure and self._structure.CookEffect) or COOK_PARTICLE_DEFAULT
+
+	local folder = Particles.Cooking:FindFirstChild(effectName)
+		or Particles.Cooking:FindFirstChild(COOK_PARTICLE_DEFAULT)
+
+	-- Found rather than indexed, and warned rather than thrown: a grill with no effect authored for it
+	-- should still cook. This is the same call that lights the stove and starts the bar, so erroring here
+	-- would take the whole cook down over a missing folder.
+	if not folder then
+		warn(`[Grill] Assets.Particles.Cooking has no {effectName} or {COOK_PARTICLE_DEFAULT} folder`)
+		return
+	end
+
+	local effect = EffectUtil.ParentEffectFolder(folder, self._gratesPart)
 	for _, particle in effect.Particles do
 		particle.Enabled = true
 	end
@@ -668,22 +724,37 @@ end
 -- Starts the sizzle on the grate for the length of the cook, easing it up so lighting the stove doesn't
 -- crack in at full volume. Every client runs this off the slot's attributes, so anyone stood by the grill
 -- hears it.
+--
+-- A grill carrying a CookSound gets that laid over the sizzle rather than in place of it, so it still
+-- reads as a grill and the extra layer is what makes it read as its own kind of grill -- the Electric one
+-- hums over the top of the same sizzle everything else has. Both layers ride the same fades, so they ramp
+-- up and back out together instead of one cracking in underneath the other, and the cleaner below holds
+-- both stoppers so one clean ends the pair.
 function Grill:_startCookSound()
 	-- Drops anything still fading out from the last cook.
 	self:_stopCookSound()
 
-	if not self._gratePart then
+	if not self._gratesPart then
 		return
 	end
 
-	local stop = SoundController:PlayLoopedSound(COOK_SOUND, self._gratePart, COOK_SOUND_FADE_IN, COOK_SOUND_FADE_OUT)
-	if stop then
-		self._soundCleaner:Add(stop)
+	local sounds = { COOK_SOUND }
+
+	local extra = self._structure and self._structure.CookSound
+	if extra then
+		table.insert(sounds, extra)
+	end
+
+	for _, soundName in sounds do
+		local stop = SoundController:PlayLoopedSound(soundName, self._gratesPart, COOK_SOUND_FADE_IN, COOK_SOUND_FADE_OUT)
+		if stop then
+			self._soundCleaner:Add(stop)
+		end
 	end
 end
 
--- Eases the sizzle back out and drops it: the cleaner is holding the stopper the controller handed back,
--- so cleaning it is what runs the fade.
+-- Eases the sizzle back out and drops it: the cleaner is holding every stopper the controller handed
+-- back, so cleaning it is what runs the fade -- on both layers at once where the grill carries two.
 function Grill:_stopCookSound()
 	self._soundCleaner:Clean()
 end
@@ -693,11 +764,11 @@ end
 function Grill:_playAlarm()
 	self._alarmCleaner:Clean()
 
-	if not self._gratePart then
+	if not self._gratesPart then
 		return
 	end
 
-	local stop = SoundController:PlayLoopedSound(ALARM_SOUND, self._gratePart, ALARM_FADE_IN, ALARM_FADE_OUT)
+	local stop = SoundController:PlayLoopedSound(ALARM_SOUND, self._gratesPart, ALARM_FADE_IN, ALARM_FADE_OUT)
 	if not stop then
 		return
 	end
@@ -733,10 +804,13 @@ function Grill:Update()
 		-- The glow keeps cooling on its own clock rather than the spin's, since an emptied slot drops the
 		-- wind-down (below) while the charcoal still has heat left in it.
 		local stoveOff = self._stoveOff
-		if stoveOff and self._charcoal then
+		if stoveOff then
 			local cool = math.clamp((os.clock() - stoveOff.StartClock) / CHARCOAL_FADE_TIME, 0, 1)
 			cool = cool * cool * (3 - 2 * cool) -- smoothstep, so it eases out rather than ramping flat
-			self._charcoal.Color = stoveOff.StartColor:Lerp(CHARCOAL_OFF_COLOR, cool)
+
+			for _, charcoal in self._charcoals do
+				charcoal.Part.Color = charcoal.CoolFrom:Lerp(CHARCOAL_OFF_COLOR, cool)
+			end
 
 			if cool >= 1 then
 				self._stoveOff = nil
@@ -777,10 +851,23 @@ function Grill:Update()
 	-- creep while the food carries on at the old rate. A cook resumed from an earlier pull enters part-way
 	-- along the same way, so the bar opens where it left off with the food already that far browned.
 	--
+	-- An unstable grill bends it the same way and the same one-piece rule applies: the bar lurches and
+	-- the food browns and chars in the same lurches, so the grate always agrees with the bar over it.
+	--
 	-- The stove and the spin are the two things that deliberately don't read this: they're the grill
 	-- starting up rather than the food cooking, so they ramp from a standstill on every light no matter
-	-- how far along the skewer on it already is.
-	local elapsed = CookStates.GetBarElapsed(self:_elapsed(), cookTime, self._cookWindowStretch, self._cookProgress)
+	-- how far along the skewer on it already is -- and on an unstable grill they turn steadily while the
+	-- bar wobbles, since it's the heat that's unreliable and not the motor. The spin especially has to
+	-- stay off it: the wind-down in _sync sizes its hold off a constant SPIN_SPEED so the skewer lands on
+	-- a whole turn and the server's model swap never shows, and a wobbled angle breaks that outright.
+	local elapsed = CookStates.GetBarElapsed(
+		self:_elapsed(),
+		cookTime,
+		self._cookWindowStretch,
+		self._cookProgress,
+		self._cookInstability,
+		self._cookInstabilityPhase
+	)
 	local progress = math.clamp(elapsed / cookTime, 0, 1)
 	local overtime = elapsed - cookTime
 
@@ -800,10 +887,10 @@ function Grill:Update()
 	-- fade back out toward now the player picks the moment, so the cool-down is the wind-down's job.
 	-- Off the raw seconds since the light rather than the bar above: the coals went out when the stove
 	-- did, so a skewer resumed part-cooked still sets them alight from cold.
-	if self._charcoal then
-		local glow = math.clamp(self:_elapsed() / CHARCOAL_FADE_TIME, 0, 1)
-		glow = glow * glow * (3 - 2 * glow) -- smoothstep, so the glow eases in rather than ramping flat
-		self._charcoal.Color = CHARCOAL_OFF_COLOR:Lerp(CHARCOAL_ON_COLOR, glow)
+	local glow = math.clamp(self:_elapsed() / CHARCOAL_FADE_TIME, 0, 1)
+	glow = glow * glow * (3 - 2 * glow) -- smoothstep, so the glow eases in rather than ramping flat
+	for _, charcoal in self._charcoals do
+		charcoal.Part.Color = CHARCOAL_OFF_COLOR:Lerp(charcoal.GlowColor, glow)
 	end
 
 	local cookingUI = self._cookingUI

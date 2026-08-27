@@ -29,11 +29,12 @@ local BaseManager
     so nothing is ever spent by putting something in the wrong spot -- which is what lets a player
     rearrange a base they've paid for.
 
-    Only integer cells cross the wire. The client works out which cell of which plot its ghost is
-    hovering and sends that; the server turns it back into a pose itself and re-checks the plot is
-    owned, the block is on the floor and nothing is already there (see BaseManager:PlaceStructureOnBase).
-    So a client can't forge a placement off-grid, onto a plot it hasn't bought, or on top of something
-    else -- the worst a hacked client manages is picking a legal cell it wasn't looking at.
+    Only integer cells cross the wire. The client works out which cell of the base its ghost is hovering
+    and sends that; the server turns it back into a pose itself and re-checks that every cell of the
+    block is on ground they own and that nothing is already there (see
+    BaseManager:PlaceStructureOnBase). So a client can't forge a placement off-grid, onto a plot it
+    hasn't bought, or on top of something else -- the worst a hacked client manages is picking a legal
+    cell it wasn't looking at.
 
     There's nowhere to buy a structure yet: players start with one of each (see the data template) and
     GrantStructure is what a shop will call when there is one.
@@ -92,9 +93,8 @@ local BuildManager = {
 	PlaceStructureEvent = Network.Event("PlaceStructure", {
 		Direction = "ClientToServer",
 		RateLimit = { MaxPerSecond = 20 },
-		Validate = function(_player, structureType, plotId, cellX, cellZ, rotation)
+		Validate = function(_player, structureType, cellX, cellZ, rotation)
 			return type(structureType) == "string"
-				and type(plotId) == "string"
 				and isWholeNumber(cellX)
 				and isWholeNumber(cellZ)
 				and isWholeNumber(rotation)
@@ -160,6 +160,7 @@ function BuildManager:_reconcileTools(player: Player)
 		local newTool = Instance.new("Tool")
 		newTool.Name = structure.Name
 		newTool.ToolTip = structure.Name
+		newTool.TextureId = structure.Icon
 		newTool.RequiresHandle = false
 		newTool.CanBeDropped = false
 		newTool:SetAttribute(STRUCTURE_ATTRIBUTE, structure.Id)
@@ -236,12 +237,11 @@ end
 function BuildManager:HandlePlaceRequest(
 	player: Player,
 	structureType: string,
-	plotId: string,
 	cellX: number,
 	cellZ: number,
 	rotation: number
 )
-	BaseManager:PlaceStructureOnBase(player, structureType, plotId, cellX, cellZ, rotation)
+	BaseManager:PlaceStructureOnBase(player, structureType, cellX, cellZ, rotation)
 end
 
 -- Takes one of the player's structures back down, returning it to their inventory.
@@ -277,8 +277,8 @@ end
 
 function BuildManager:OnStart()
 	self.PlaceStructureEvent:OnServerEvent(
-		function(player: Player, structureType: string, plotId: string, cellX: number, cellZ: number, rotation: number)
-			self:HandlePlaceRequest(player, structureType, plotId, cellX, cellZ, rotation)
+		function(player: Player, structureType: string, cellX: number, cellZ: number, rotation: number)
+			self:HandlePlaceRequest(player, structureType, cellX, cellZ, rotation)
 		end
 	)
 
