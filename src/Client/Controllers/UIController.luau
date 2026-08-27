@@ -125,7 +125,7 @@ function UIController:BindButtonClick(
 	--
 	local cleaner = Trove.new()
 
-	cleaner:Add(button.MouseButton1Up:Connect(function()
+	cleaner:Add(button.Activated:Connect(function()
 		if clickCallback then
 			task.spawn(clickCallback)
 		end

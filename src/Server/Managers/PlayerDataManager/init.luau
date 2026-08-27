@@ -23,8 +23,8 @@ local GuiUtil = require(Shared.GuiUtil)
 
 --
 local USE_STUDIO_DATA = false
-local LIVE_DATA_VERSION = "PLAYER_DATA_A2"
-local STUDIO_DATA_VERSION = "PLAYER_DATA_STUDIO_A4"
+local LIVE_DATA_VERSION = "PLAYER_DATA_A3"
+local STUDIO_DATA_VERSION = "PLAYER_DATA_STUDIO_A5"
 local DEFAULT_TIMEOUT = 25
 local DATA_POLL_INTERVAL = 0.1
 
@@ -221,12 +221,7 @@ end
 -- @param key The key (string or table path) to the array
 -- @param value The value to insert
 -- @param maxSize The maximum number of entries to retain after insertion (must be >= 1)
-function PlayerDataManager:InsertCappedPlayerDataKey(
-	player: Player,
-	key: string | table,
-	value: any,
-	maxSize: number
-)
+function PlayerDataManager:InsertCappedPlayerDataKey(player: Player, key: string | table, value: any, maxSize: number)
 	if not validatePlayer(player) then
 		warn(`Cannot insert capped data for invalid player: {player}`)
 		return
