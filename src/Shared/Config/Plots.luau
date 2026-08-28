@@ -32,7 +32,7 @@ Plots.Grid = {
 -- Where each plot's pieces live on a base. Named here so the server that moves them and the client
 -- that mounts their UI can't drift apart.
 Plots.FOLDER_NAME = "Plots" -- the folder on a base model holding every plot
-Plots.MISC_FOLDER_NAME = "Misc" -- the overgrowth on a plot, hidden once it's bought
+Plots.MISC_FOLDER_NAME = "Misc" -- the overgrowth on a plot, parked in the base's storage once it's bought
 Plots.SIGN_NAME = "UnlockSign" -- the board a buyable plot wears
 Plots.SIGN_UI = "PlotUnlockUI" -- the Assets.UI template that sign's UI is cloned from
 -- The part covering a plot's buildable ground. Every plot carries one, the starting cell included --
@@ -63,9 +63,17 @@ Plots.RobuxProductIds = {
 -- so the clearing reads as the land being burned back rather than the props blinking out of
 -- existence. Played by the client (see the Plot class), because it's the trees themselves being
 -- animated -- a plot that was already bought before you joined skips it and is simply clear.
+--
+-- What's left at the end of it isn't a hidden tree: the server pulls the whole Misc folder into the
+-- base's storage as the fade lands, so a cleared plot has no overgrowth in the world at all.
 Plots.CLEAR_COLOR = Color3.fromRGB(255, 205, 65)
 Plots.CLEAR_HOLD = 0.15 -- seconds the neon holds at full before the fade starts
 Plots.CLEAR_FADE = 0.75 -- seconds the fade itself runs
+-- How long the server leaves the overgrowth standing past the end of that fade before it pulls the
+-- folder. The effect goes out at the same moment the wait starts, so a player on a slow connection is
+-- that far behind the burn the server is timing -- and without the margin their trees are taken out
+-- from under a tween still running.
+Plots.CLEAR_PARK_GRACE = 0.25
 
 -- [plotId] = { Row, Column } into the grid above, built once so neighbour lookups don't re-walk it.
 local CELLS = {}

@@ -39,11 +39,13 @@ local PlotController
     world to replicate and can't show a board to one player and not another, but a plot sign is only
     ever its owner's business -- left standing on someone else's base it'd be a blank board in the way.
 
-    Clearing is the other half. The server leaves a bought plot's overgrowth standing and just flags
-    the plot Unlocked, because it can't animate something it has already taken out of the world -- so
-    every client burns the trees back itself, turning each part neon and fading it out, and keeps them
-    hidden from there. That flag replicates to everyone, so a visitor sees the same cleared ground the
-    owner does.
+    Clearing is the other half, and it's only the animation. Which plots are clear is the server's --
+    it pulls a bought plot's overgrowth out of the world entirely (see Base:ApplyPlots), so cleared
+    ground has nothing standing on it rather than something hidden. What it can't do is animate a folder
+    it has already taken away, so it holds the overgrowth for the length of the burn and every client
+    plays that burn on the real trees. Nothing here is put back afterwards: the parts these writes land
+    on are replicas the server destroys a moment later, and the folder parented back for the next owner
+    of this base arrives fresh off the place file.
 ]]
 
 -- The one ScreenGui the plot signs live under. They sit in PlayerGui adorned back onto the sign's
@@ -88,14 +90,6 @@ function Plot.new(model: Model, baseId: string)
 		-- came back empty isn't tried again every time the sign is repainted.
 		_requestedPrices = {},
 
-		-- The authored look of every overgrowth part we've burned back, so the plot grows in again for
-		-- whoever is handed this base next. Keyed loosely on purpose: the restore just writes each pair
-		-- back, so it never has to work out what a given part was.
-		_miscLooks = {}, -- [BasePart] = { Material, Color, Transparency, CanCollide }
-		_miscTweens = {}, -- the live fades, so an owner leaving mid-burn doesn't leave one writing
-		_burning = false, -- while true the snap holds off, so it can't cut a burn short
-		_cleared = nil, -- last state the snap rendered, so it only acts on an actual change
-
 		--
 		_cleaner = cleaner,
 	}, Plot)
@@ -107,163 +101,70 @@ function Plot.new(model: Model, baseId: string)
 	cleaner:Connect(model.ChildAdded, function()
 		self:RefreshSign()
 	end)
-	cleaner:Connect(model.DescendantAdded, function()
-		self:RefreshSign()
+	cleaner:Connect(model.DescendantAdded, function(descendant: Instance)
+		local sign = model:FindFirstChild(Plots.SIGN_NAME)
+
+		-- Narrowed to the sign, unlike the two either side of it. The overgrowth is parented in and out
+		-- as a whole folder (see Base:ApplyPlots), which lands here once per part in it -- and only the
+		-- sign's own parts can change whether there's a board to mount.
+		if sign and descendant:IsDescendantOf(sign) then
+			self:RefreshSign()
+		end
 	end)
 	cleaner:Connect(model.ChildRemoved, function()
 		self:RefreshSign()
 	end)
 
-	cleaner:Connect(model:GetAttributeChangedSignal("Unlocked"), function()
-		self:RefreshClearing()
-	end)
-
-	-- The clearing render reads nothing but the attribute, so it's safe to run right here -- and
-	-- running it now is what makes a plot that was already bought before this client joined snap to
-	-- cleared rather than burning back in front of them.
-	--
-	-- The sign is the opposite: RefreshSign reads player data, which yields until the replica lands,
-	-- and these are all built inside the controller's OnStart, where a yield would stall every
-	-- controller loaded after it. The controller does that first paint off its own thread instead.
-	self:RefreshClearing()
+	-- No first paint here. There's nothing to render on a plot that isn't its sign: a plot bought before
+	-- this client joined arrives with no overgrowth at all. RefreshSign is the one that has to run, and
+	-- it reads player data -- which yields until the replica lands, and these are all built inside the
+	-- controller's OnStart where a yield would stall every controller loaded after it. The controller
+	-- does that first paint off its own thread instead.
 
 	return self
 end
 
--- Remembers how the place file authored every part of the plot's overgrowth, so it can be put back
--- for the next owner of this base. Idempotent, because the snap and the burn can arrive in either
--- order and whichever gets here first is the one that has to capture the untouched values.
-function Plot:_captureMisc(): { BasePart }
+-- Burns the overgrowth back: every visible part of it goes neon, holds, then fades out. Driven by the
+-- server's one-shot effect, since only the server knows a plot was *just* bought -- so this is what
+-- everyone nearby actually watches happen.
+--
+-- Nothing is remembered and nothing is put back. The server pulls the whole overgrowth folder into the
+-- base's storage as this lands, which takes these parts off every client outright, so every write below
+-- goes with the instance it was made on -- and what the next owner of this base is given is the folder
+-- parented back, fresh off the place file.
+function Plot:PlayClearBurn()
 	local misc = self._model:FindFirstChild(Plots.MISC_FOLDER_NAME)
+
+	-- The overgrowth is already gone: the effect and the pull that follows it are both the server's, and
+	-- on a slow enough connection they can land in that order.
 	if not misc then
-		return {}
+		return
 	end
 
-	local parts = {}
+	local tweenInfo =
+		TweenInfo.new(Plots.CLEAR_FADE, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, Plots.CLEAR_HOLD)
+
 	for _, part in misc:GetDescendants() do
 		if not part:IsA("BasePart") then
 			continue
 		end
 
-		table.insert(parts, part)
-
-		if not self._miscLooks[part] then
-			self._miscLooks[part] = {
-				Material = part.Material,
-				Color = part.Color,
-				Transparency = part.Transparency,
-				CanCollide = part.CanCollide,
-			}
-		end
-	end
-
-	return parts
-end
-
--- The cleared plot: overgrowth gone and walkable. Collision goes for every part, invisible ones
--- included -- a tree's hitbox is still a wall, and the point of clearing a plot is standing on it.
-function Plot:_hideMisc()
-	for _, part in self:_captureMisc() do
-		part.Transparency = 1
-		part.CanCollide = false
-	end
-end
-
--- Grows the overgrowth back exactly as the place file had it, for the next owner of this base.
-function Plot:_restoreMisc()
-	-- Stopped rather than left to finish: a fade still running would keep writing Transparency over
-	-- the values being put back, and the tree would end up invisible on a plot nobody has bought.
-	for _, tween in self._miscTweens do
-		tween:Cancel()
-	end
-	table.clear(self._miscTweens)
-	self._burning = false
-
-	for instance, authored in self._miscLooks do
-		local part = instance :: any
-		for property, value in authored do
-			part[property] = value
-		end
-	end
-	table.clear(self._miscLooks)
-end
-
--- Snaps the plot to cleared or overgrown off the flag the server set. Deliberately no animation: this
--- runs on a plot flipping for any reason at all -- a purchase, a base being handed over, an owner
--- leaving -- and those race freely on join, so it can't tell which is which. The burn is played by
--- PlayClearBurn instead, which only fires on an actual purchase.
---
--- Client-side because the server can't animate something it's taken out of the world, so it leaves
--- the overgrowth standing and flags the plot instead. Nothing here is authoritative -- it's decoration
--- on a plot the server has already decided is bought.
-function Plot:RefreshClearing()
-	local cleared = self._model:GetAttribute("Unlocked") == true
-	if cleared == self._cleared then
-		return
-	end
-
-	self._cleared = cleared
-
-	if not cleared then
-		self:_restoreMisc()
-		return
-	end
-
-	-- A burn already running settles the plot itself when it finishes. Snapping now would put the
-	-- overgrowth out mid-fade and there'd be nothing left to watch.
-	if not self._burning then
-		self:_hideMisc()
-	end
-end
-
--- Burns the overgrowth back: every visible part of it goes neon, holds, then fades out. Driven by the
--- server's one-shot effect rather than the flag above, since only the server knows a plot was *just*
--- bought -- so this is what everyone nearby actually watches happen.
---
--- Safe in either order against RefreshClearing: whichever lands first captures the authored look, and
--- the settle at the end puts the plot in the same state the snap would have.
-function Plot:PlayClearBurn()
-	if self._burning then
-		return
-	end
-	self._burning = true
-
-	local tweenInfo =
-		TweenInfo.new(Plots.CLEAR_FADE, Enum.EasingStyle.Quad, Enum.EasingDirection.Out, 0, false, Plots.CLEAR_HOLD)
-
-	for _, part in self:_captureMisc() do
-		local authored = self._miscLooks[part]
-
+		-- The plot is walkable from the moment it's bought rather than once the burn is over. Locally
+		-- only, which is all it has to be: a character is simulated on its owner's client, and the parts
+		-- themselves leave the world a moment later anyway.
 		part.CanCollide = false
 
 		-- Authored invisible on purpose (a hitbox, a mount). Lighting it up would put something in the
 		-- world that was never meant to be seen, so it's left alone.
-		if authored.Transparency >= 1 then
+		if part.Transparency >= 1 then
 			continue
 		end
 
-		-- Set back to how it was authored before lighting it: the snap may already have run and taken
-		-- it to fully transparent, and a fade that starts from gone shows nothing.
-		part.Transparency = authored.Transparency
 		part.Material = Enum.Material.Neon
 		part.Color = Plots.CLEAR_COLOR
 
-		local tween = TweenService:Create(part, tweenInfo, { Transparency = 1 })
-		table.insert(self._miscTweens, tween)
-		tween:Play()
+		TweenService:Create(part, tweenInfo, { Transparency = 1 }):Play()
 	end
-
-	task.delay(Plots.CLEAR_HOLD + Plots.CLEAR_FADE, function()
-		-- Left alone if the plot went back to overgrown while this was playing (its owner left): the
-		-- restore has already cancelled these tweens and put the place file's values back.
-		if not self._burning then
-			return
-		end
-
-		self._burning = false
-		table.clear(self._miscTweens)
-		self:_hideMisc()
-	end)
 end
 
 -- Mounts this plot's sign UI on its board, or takes it down, following the sign model the server
@@ -452,10 +353,10 @@ function Plot:RefreshSign()
 end
 
 function Plot:Destroy()
-	-- Both of these outlive this class, so put them back the way we found them rather than leaving a
-	-- base's board invisible and its trees burned away for whoever is handed it next.
+	-- The sign outlives this class, so put it back the way we found it rather than leaving a base's
+	-- board invisible for whoever is handed it next. The overgrowth needs no such thing: the parts a
+	-- burn wrote on are ones the server has already taken out of the world.
 	self:_setSignShown(true)
-	self:_restoreMisc()
 
 	self._cleaner:Destroy()
 end

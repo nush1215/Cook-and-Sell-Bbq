@@ -29,14 +29,34 @@ local Sticks = {}
 -- What slice of a stick's own Price comes back in the sale of the skewer built on it, so the tier a
 -- player skewered on shows up in the payout rather than only in how many slots they got. A sale
 -- destroys the stick, so this is the stick being liquidated, never a refund.
--- Higher = expensive sticks pay more of themselves off per sale. Past ~0.148 a stick can sell for more
--- than it cost under a lucky haggle, which turns the shop into a money loop.
+-- Higher = expensive sticks pay more of themselves off per sale. Past the point where the slice comes
+-- back bigger than the Price it's a slice of, the shop is a money loop.
 -- This is the smaller of the two ways a tier reaches the payout: the other is ValueBoost below, which
 -- scales the whole skewer rather than crediting back a flat slice, so raise them together with care.
+--
+-- Where that ceiling sits depends on the whole multiplier stack, because the slice sits inside it (see
+-- StickModel.GetSellValue) -- so it's every multiplier a skewer can carry at once, on the luckiest
+-- sale: ValueBoost, sauce, mutation, cook state, and a haggle run to CounterCap. As the game ships
+-- today, with Sauces.Data empty, the worst case is the diamond on a golden grill cooked perfect and
+-- haggled to the cap, which returns 0.95x its price -- under, so no loop.
+-- Restoring Sauces.Data puts a 2.25x back into that stack and the same skewer returns 2.14x. So
+-- re-enabling sauces means dropping this to ~0.045 in the same change, or the shop starts printing.
 Sticks.SALE_RETURN_FACTOR = 0.1
 
 -- Ordered lowest to highest: array order is the tier, so wooden is the cheapest stick and diamond
 -- the best. Id matches the model name under Assets.Sticks.
+--
+-- ValueBoost is set so every stick pays for itself on COMMON ingredients -- the tier near enough nine
+-- rolls in ten land on. That's the rule the ladder is built to, and it's what stops an upgrade from
+-- being a trap: buying up is never worse than the stick below it, whatever the player happens to have
+-- to put on it. It's solved rather than picked -- the boost at which a stick's cost, its liquidated
+-- slice and its share of the skewer's value cancel at a common's worth per slot -- which is why the
+-- numbers aren't round. Reprice a stick and its boost has to be re-solved with it, or that tier
+-- quietly goes back to losing money on the only ingredients most players have.
+--
+-- Above common the boost is pure profit, and that's where the tiers are meant to be told apart. Wooden
+-- and bamboo carry none on purpose: at $3 and $17 a slot their price is already noise, and what they
+-- sell is capacity.
 Sticks.Data = {
 	{
 		Id = "WoodenStick",
@@ -73,7 +93,7 @@ Sticks.Data = {
 		Name = "Copper",
 		Price = 500,
 		Capacity = 5,
-		ValueBoost = 5,
+		ValueBoost = 29,
 		Icon = "rbxassetid://71422270507233",
 		TextColor = Color3.fromRGB(210, 120, 55),
 		StrokeColor = Color3.fromRGB(63, 36, 16),
@@ -88,7 +108,7 @@ Sticks.Data = {
 		Name = "Titanium",
 		Price = 1_000,
 		Capacity = 6,
-		ValueBoost = 10,
+		ValueBoost = 45,
 		Icon = "rbxassetid://139823220671033",
 		TextColor = Color3.fromRGB(175, 190, 205),
 		StrokeColor = Color3.fromRGB(52, 57, 62),
@@ -104,7 +124,7 @@ Sticks.Data = {
 		Name = "Gold",
 		Price = 2_500,
 		Capacity = 7,
-		ValueBoost = 20,
+		ValueBoost = 85,
 		Icon = "rbxassetid://83501186533591",
 		TextColor = Color3.fromRGB(255, 215, 0),
 		StrokeColor = Color3.fromRGB(77, 64, 0),
@@ -117,9 +137,16 @@ Sticks.Data = {
 	{
 		Id = "DiamondStick",
 		Name = "Diamond",
-		Price = 250_000,
+		-- Nobody is ever charged this. There's no shop row and the currency path refuses anything not
+		-- Restockable, so the only way to hold one is the dev product below -- which means Price does
+		-- exactly one thing here, and it's feed SALE_RETURN_FACTOR. At the 250,000 this used to read,
+		-- every diamond skewer paid out a five-figure liquidation on a stick that cost no Bux at all,
+		-- which outearned everything actually on the skewer. Priced on the ladder it's measured
+		-- against instead: one step past gold, so the slice it credits back is one step past gold's.
+		-- What makes it the best stick is the capacity and the boost, not a number nobody pays.
+		Price = 6_000,
 		Capacity = 8,
-		ValueBoost = 30,
+		ValueBoost = 95,
 		Icon = "rbxassetid://127215303482669",
 		TextColor = Color3.fromRGB(110, 220, 245),
 		StrokeColor = Color3.fromRGB(33, 66, 73),

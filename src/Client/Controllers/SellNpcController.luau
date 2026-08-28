@@ -70,7 +70,7 @@ local NOT_INTERESTED = {
     Plays the "deciding" bubble over a sell-stall customer NPC's head.
 
     When a customer reaches the stand the server fires NpcDecide with the NPC, its verdict, and the
-    server-time the decision lands at. This clones NPCUIAttachment onto the NPC's head and flips the Title
+    server-time the decision lands at. This hangs NPCUIAttachment's billboards over the NPC and flips the Title
     between "Interested"/"Not Interested" -- pacing itself off the time left so the flips go fast at first
     then decelerate onto the landing (like the rolling stand) -- pulsing the Title's scale down-then-back
     on every swap. At the timestamp it lands on the real verdict. The bubble lingers until the NPC is
@@ -123,7 +123,7 @@ local function pulseScale(scale: UIScale, startScale: number)
 	Spr.target(scale, PULSE_DAMPING, PULSE_FREQUENCY, { Scale = PULSE_TARGET })
 end
 
--- Tears down the NPC's decide bubble (stops its spring, destroys the holder, ends the flip loop).
+-- Tears down the NPC's decide bubble (stops its springs, destroys the billboards, ends the flip loop).
 function SellNpcController:_cleanup(npc: Model)
 	local state = self._active[npc]
 	if not state then
@@ -150,6 +150,9 @@ function SellNpcController:_attachNpcBillboards(npc: Model, dialogueVariant: str
 		return nil
 	end
 
+	-- The template is an Attachment holding both billboards. It's cloned only to get at them and at the
+	-- authored offset above the head -- nothing adorns or parents to it (see below), so it's dropped once
+	-- both are read.
 	local holder = UI.NPCUIAttachment:Clone()
 	local decideUI, offerUI = holder.DecideUI, holder.OfferUI
 	local decideFrame = decideUI.DecideFrame
@@ -158,33 +161,44 @@ function SellNpcController:_attachNpcBillboards(npc: Model, dialogueVariant: str
 	local stroke = title.UIStroke
 	local scale = title.UIScale
 
-	local restPosition = holder.Position
+	local restOffset = holder.Position
 
 	-- Both billboards stay Enabled for the NPC's whole life; their frames carry the visibility. Both start
 	-- hidden: the decide frame is the caller's to raise (a rich customer never does), and the offer frame
 	-- only opens once the customer actually makes an offer.
 	decideFrame.Visible = false
 	offerFrame.Visible = false
-	holder.Parent = head
 
-	-- The attachment stays on the head as the world anchor, but the billboards themselves live in PlayerGui
-	-- and adorn back to it -- world-parented buttons don't take clicks, and the offer frame needs them.
+	-- The billboards live in PlayerGui and adorn back into the world, because world-parented buttons don't
+	-- take clicks and the offer frame needs them. Adorned to the head itself, not to an attachment on it:
+	-- an Attachment adornee was costing the offer buttons every tap on touch (the press landed, the release
+	-- didn't), and it's what set these apart from the plot and dispenser signs, which adorn a BasePart and
+	-- work. The offset the attachment used to provide is carried in world space so it stays overhead
+	-- however the customer is facing.
 	local screenGui = getScreenGui()
 	for _, billboard in { decideUI, offerUI } do
-		billboard.Adornee = holder
+		billboard.Adornee = head
+		billboard.StudsOffsetWorldSpace = restOffset
+		-- Both scale with the adornee's size, so whatever the template authored them to did nothing against
+		-- a sizeless Attachment and would start shifting the bubble now that it's the head. Zeroed to keep
+		-- the bubble exactly where it used to sit.
+		billboard.ExtentsOffset = Vector3.zero
+		billboard.ExtentsOffsetWorldSpace = Vector3.zero
 		billboard.Active = true
 		billboard.Parent = screenGui
 	end
 
+	holder:Destroy()
+
 	local trove = Trove.new()
-	-- All three, since the billboards are no longer children of the attachment and won't die with it.
-	trove:Add(holder)
+	-- Both, since the billboards live in PlayerGui and nothing on the NPC takes them down with it.
 	trove:Add(decideUI)
 	trove:Add(offerUI)
 	-- Stop the springs before they're destroyed (Trove cleans in reverse add order).
 	trove:Add(function()
 		Spr.stop(scale)
-		Spr.stop(holder)
+		Spr.stop(decideUI)
+		Spr.stop(offerUI)
 	end)
 	-- Tear the billboards down when the NPC leaves the world. A despawning customer is parked back in the
 	-- pool (reparented out of workspace) rather than destroyed, so its replica here is removed without
@@ -215,8 +229,9 @@ function SellNpcController:_attachNpcBillboards(npc: Model, dialogueVariant: str
 	-- Springs the billboard to clear the current stack of chat bubbles: BUBBLE_CLEARANCE studs per active
 	-- bubble, so it rises as bubbles appear and settles back to rest as they expire.
 	local function updateRaise()
-		local lift = BUBBLE_CLEARANCE * state.bubbleCount
-		Spr.target(holder, RAISE_DAMPING, RAISE_FREQUENCY, { Position = restPosition + Vector3.new(0, lift, 0) })
+		local lift = restOffset + Vector3.new(0, BUBBLE_CLEARANCE * state.bubbleCount, 0)
+		Spr.target(decideUI, RAISE_DAMPING, RAISE_FREQUENCY, { StudsOffsetWorldSpace = lift })
+		Spr.target(offerUI, RAISE_DAMPING, RAISE_FREQUENCY, { StudsOffsetWorldSpace = lift })
 	end
 
 	-- Says a dialogue line and counts its bubble in while it's up, so the billboard lifts to clear the
@@ -336,7 +351,9 @@ end
 
 -- Opens (or updates, when the customer counter-offers) the offer frame on the customer's billboard. Only the
 -- base owner is sent this, so the buttons only ever exist for them.
-function SellNpcController:_showOffer(npc: Model, offer: number, count: number, bonus: number)
+-- `payout` is what the sale actually banks -- the customer's offer with the player's boosts already on
+-- it, worked out by the server (see SellNpcManager) so what's quoted here is what lands.
+function SellNpcController:_showOffer(npc: Model, payout: number, count: number, bonus: number)
 	local state = self._active[npc]
 	if not state or not state.running then
 		return
@@ -347,10 +364,11 @@ function SellNpcController:_showOffer(npc: Model, offer: number, count: number, 
 	-- A random line with the coloured amount dropped into it, drawn from the cook state's own set so a
 	-- lowball on a burnt skewer says why. Ignoring the last line keeps a counter-offer from repeating the
 	-- one the player just turned down.
-	local amount = `<font color="{OFFER_AMOUNT_COLOR}">${GuiUtil.ConvertNumberWithSuffix(offer)}</font>`
+	local amount = `<font color="{OFFER_AMOUNT_COLOR}">${GuiUtil.ConvertNumberWithSuffix(payout)}</font>`
 
-	-- What the offer is worth over the skewers themselves. A lowball can land on the nose, and "[+0%]"
-	-- says less than no badge at all, so it only shows when there's something to show.
+	-- How far over the skewers' own worth that leaves the player, boosts included. A lowball can land on
+	-- the nose, and "[+0%]" says less than no badge at all, so it only shows when there's something to
+	-- show -- which is also what keeps an unboosted player's frame reading exactly as it always has.
 	if bonus > 0 then
 		amount ..= ` <font color="{OFFER_BONUS_COLOR}">[+{bonus}%]</font>`
 	end
@@ -386,12 +404,15 @@ function SellNpcController:_showOffer(npc: Model, offer: number, count: number, 
 			self.NpcOfferResponseEvent:FireServer(npc, accepted)
 		end
 
+		-- Answered on the press rather than the release: the buttons ride a billboard over an animated
+		-- head, so they can drift out from under a finger before it lifts and take the tap with them.
+		-- `answered` above already makes a stray second press a no-op.
 		state.trove:Add(UIController:BindButtonClick(accept, function()
 			answer(true)
-		end, true).Disconnect)
+		end, true, nil, nil, true).Disconnect)
 		state.trove:Add(UIController:BindButtonClick(decline, function()
 			answer(false)
-		end, true).Disconnect)
+		end, true, nil, nil, true).Disconnect)
 	end
 
 	state.answered = false
@@ -451,8 +472,8 @@ function SellNpcController:OnStart()
 		self:_showRichArrival(npc)
 	end)
 
-	self.NpcOfferEvent:OnClientEvent(function(npc: Model, offer: number, count: number, bonus: number)
-		self:_showOffer(npc, offer, count, bonus)
+	self.NpcOfferEvent:OnClientEvent(function(npc: Model, payout: number, count: number, bonus: number)
+		self:_showOffer(npc, payout, count, bonus)
 	end)
 
 	self.NpcOfferEndEvent:OnClientEvent(function(npc: Model)

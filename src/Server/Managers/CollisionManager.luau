@@ -10,6 +10,12 @@ local Players = game:GetService("Players")
     Player characters are assigned to the Player group as they spawn; callers assign their own models (e.g.
     a spawned NPC) with SetModelGroup.
 
+    Structure is what every placed structure goes into (see Base:BuildStructure). It's solid to players
+    like the rest of the world -- a base you can walk through isn't a base -- and passable to the
+    customers coming for the stall, who are sent on a plain MoveTo with nothing routing them round
+    anything (see SellNpcManager:_walkTo). Without that, a griller left standing on the line between the
+    spawn and the stall stops the visit dead until it times out and the sale simply never happens.
+
     RockDebris is the odd one out: nothing here assigns it, because the rocks a meteor crate throws are
     spawned client-side by Modules/RockModule, which can't require a server manager. It names the group
     as a string and this registers it -- so the name has to stay in step across the two.
@@ -19,6 +25,7 @@ local Players = game:GetService("Players")
 local CollisionManager = {
 	PLAYER = "Player",
 	NPC = "Npc",
+	STRUCTURE = "Structure",
 	ROCK_DEBRIS = "RockDebris",
 }
 
@@ -41,11 +48,16 @@ end
 function CollisionManager:OnInit()
 	ensureGroup(self.PLAYER)
 	ensureGroup(self.NPC)
+	ensureGroup(self.STRUCTURE)
 	ensureGroup(self.ROCK_DEBRIS)
 
 	-- NPCs don't collide with each other or with players; both still collide with the world (Default).
 	PhysicsService:CollisionGroupSetCollidable(self.NPC, self.NPC, false)
 	PhysicsService:CollisionGroupSetCollidable(self.NPC, self.PLAYER, false)
+
+	-- A customer walks through whatever the owner has built rather than getting stuck on it. Left
+	-- collidable with Player on purpose, since a structure is something you stand a base out of.
+	PhysicsService:CollisionGroupSetCollidable(self.STRUCTURE, self.NPC, false)
 
 	-- Debris is scenery: it falls, rests on the ground and fades, but never shoves anyone around.
 	-- Left collidable with Default on purpose, or the rocks would drop through the floor.

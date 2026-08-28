@@ -159,17 +159,11 @@ function HeldItem:Start()
 		local holder = UI.EstimatedValueAttachment:Clone()
 		holder.UI.Value.Text = `${GuiUtil.ConvertNumberWithSuffix(estimate)}`
 
-		-- The state is read the same way the sell price reads it, so the figure and the label under it
+		-- The state is read the same way the sell price reads it, so the figure and the badge under it
 		-- are always saying the same thing -- including on a skewer saved before cook states existed,
 		-- which resolves to Cooked rather than reading blank.
 		local stateId = StickModel.GetCookStateId(record)
-		local cookStateLabel = holder.UI.CookState
-		cookStateLabel.Text = CookStates.GetStateFromId(stateId).Name
-
-		-- Driven off the config's own list, so the states are only ever spelled out in one place.
-		for _, cookState in CookStates.GetAllStates() do
-			cookStateLabel[`{cookState.Id}Gradient`].Enabled = cookState.Id == stateId
-		end
+		holder.UI.CookStateIcon.Image = CookStates.GetStateFromId(stateId).Icon
 
 		holder.Parent = character.Head
 		self._cleaner:Add(holder)

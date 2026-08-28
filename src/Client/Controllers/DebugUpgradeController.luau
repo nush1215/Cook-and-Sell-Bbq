@@ -11,7 +11,6 @@ local Shared = ReplicatedStorage.Shared
 local Network = require(Shared.Network)
 local BaseUnlocks = require(Shared.Config.BaseUnlocks)
 -- local Sauces = require(Shared.Config.Sauces)
-local Sticks = require(Shared.Config.Sticks)
 
 -- Controllers
 local PlayerDataController
@@ -28,8 +27,12 @@ local ENABLED = false -- Flip to false to hide the debug panel entirely
 -- server changes, so it's safe to delete wholesale once the real upgrade UI lands.
 local DebugUpgradeController = {
 	PurchaseUnlockUpgradeEvent = Network.Event("PurchaseUnlockUpgrade"),
-	GiveStickEvent = Network.Event("GiveStick"),
 
+	-- No stick remote here any more, and there shouldn't be one again. Granting a stick on the client's
+	-- say-so is a remote that hands out any stick in the game to anyone who finds it, panel disabled or
+	-- not -- the flag below only hides the buttons, it doesn't unpublish the identifier. Sticks are the
+	-- giveStick command now, which the CommandManager gates on staff rank.
+	--
 	-- The sauce remotes go with the dispenser system they fire at, postponed to a future update. A
 	-- client Network.Event waits on the server publishing that identifier and errors if it never
 	-- does, so declaring one with no handler left would stall this module's load and then fail it.
@@ -158,17 +161,6 @@ function DebugUpgradeController:_rebuild()
 		end
 	end
 	]==]
-
-	-- Sticks: one row per tier that grants that stick, showing how many are currently owned. Always
-	-- enabled, since sticks stack.
-	local sticks = PlayerDataController:GetKey("Sticks")
-	for _, stick in Sticks.GetAllSticks() do
-		local owned = sticks[stick.Id] or 0
-
-		self:_addRow(`{stick.Name} Stick  [owned: {owned}]`, true, function()
-			self.GiveStickEvent:FireServer(stick.Id)
-		end, "Give")
-	end
 
 	-- Sauce bottles: one row per flavor that grants that bottle, showing how many are currently owned.
 	-- Always enabled, since bottles stack. Equipping one and using it on a dispenser is what fills it.

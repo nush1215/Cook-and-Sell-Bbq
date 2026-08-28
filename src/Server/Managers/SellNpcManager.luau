@@ -141,6 +141,10 @@ local SellNpcManager = {
 	_friendIds = {}, -- [player] = { userId, ... }, the owner's friend list fetched once per player
 	_guaranteed = {}, -- [player] = true while their customers skip the wait and always come in interested
 	_noticedRefusals = {}, -- [player] = refusals they were last told about, so the all-clear fires once
+	-- [player] = true once one of their customers has given the free first counter-offer. One visit thread
+	-- runs per unsold skewer and each reads SeenHaggle at its own start, so without this a stand full of
+	-- concurrent visits all read it unset, all give the free counter, and all fire the toast explaining it.
+	_grantedFirstCounter = {},
 }
 
 --
@@ -687,16 +691,51 @@ function SellNpcManager:GetStandingSaleRefusals(player: Player): number
 	return math.clamp(refusals.Count - forgiven, 0, SellNpc.REFUSAL_PENALTY_MAX)
 end
 
--- Holds one more refused offer against the player. The count written back is the *decayed* one rather than
--- whatever was saved, which is what lets a single timestamp carry the decay: every refusal re-stamps the
--- clock, so the forgiveness already earned is banked into the count instead of being lost with the stamp.
-function SellNpcManager:RecordSaleRefusal(player: Player)
+-- What those standing refusals actually charge the player: their count less SellNpc.REFUSAL_GRACE, floored
+-- at 0. Everything that costs them something reads this rather than the standing count, the arrival line
+-- included -- being told offers are down while nothing is down is worse than not being told at all.
+--
+-- The grace is what separates a player haggling from a player fishing. Declining once is the mechanic
+-- working exactly as the counter-offer toast taught it, and the counter roll going against them isn't
+-- something they did; charging for it teaches them not to decline at all. Repeated refusals still land.
+-- Yields on their data.
+function SellNpcManager:GetChargedSaleRefusals(player: Player): number
+	return math.max(self:GetStandingSaleRefusals(player) - SellNpc.REFUSAL_GRACE, 0)
+end
+
+-- Moves the player's refusal count by delta and re-stamps the clock. The count written back is the
+-- *decayed* one rather than whatever was saved, which is what lets a single timestamp carry the decay:
+-- every write banks the forgiveness already earned into the count instead of losing it with the stamp.
+-- @param player: The player whose record this adjusts
+-- @param delta: How many refusals to add (or, negative, to shed)
+function SellNpcManager:_adjustSaleRefusals(player: Player, delta: number)
 	local standing = self:GetStandingSaleRefusals(player)
 
 	PlayerDataManager:SetPlayerDataKey(player, "SaleRefusals", {
-		Count = math.min(standing + 1, SellNpc.REFUSAL_PENALTY_MAX),
+		Count = math.clamp(standing + delta, 0, SellNpc.REFUSAL_PENALTY_MAX),
 		At = workspace:GetServerTimeNow(),
 	})
+end
+
+-- Holds one more refused offer against the player.
+function SellNpcManager:RecordSaleRefusal(player: Player)
+	self:_adjustSaleRefusals(player, 1)
+end
+
+-- Sheds one refusal for a player who just sold something. A refusal is only ever suspicion that they're
+-- turning offers down to fish for a better opening roll, and a completed sale is the plainest evidence
+-- they aren't -- so making one buys the goodwill back rather than leaving them to sit out a penalty they
+-- have already disproved. Without it, declining a single lowball and then selling the next five skewers
+-- still costs the full REFUSAL_DECAY.
+--
+-- The early-out is what keeps a sale from stamping a fresh clock onto a record with nothing on it, which
+-- would hand a clean player a timestamp for their next refusal to decay from.
+function SellNpcManager:ForgiveSaleRefusal(player: Player)
+	if self:GetStandingSaleRefusals(player) <= 0 then
+		return
+	end
+
+	self:_adjustSaleRefusals(player, -1)
 end
 
 -- Puts the player's customers into (or out of) guaranteed mode: while it's on, a customer sent to them comes
@@ -717,7 +756,8 @@ end
 -- Declining is a reroll, not a loss -- the skewers go back on the stand and another customer comes -- so the
 -- two things that keep it from being free both live here: MAX_COUNTER_ROUNDS bounds how far one customer can
 -- be pushed in a single visit, and a refusal is recorded against the player to drag the *next* customer's
--- opening range down (GetStandingSaleRefusals).
+-- opening range down (GetChargedSaleRefusals). Free for the first one, though, and a sale hands one back --
+-- what's being priced in is a player rerolling, not a player using the mechanic the stand taught them.
 function SellNpcManager:_negotiateSale(
 	player: Player,
 	npc: Model,
@@ -744,8 +784,9 @@ function SellNpcManager:_negotiateSale(
 	local counterCap = 0
 
 	-- Every offer this player has turned down and not yet had forgiven drags the whole opening range down,
-	-- so the customer they sent away costs them the goodwill of the next one.
-	local refusals = self:GetStandingSaleRefusals(player)
+	-- so the customer they sent away costs them the goodwill of the next one. The charged count rather than
+	-- the standing one: the first refusal is free, so it neither moves the offer nor gets mentioned below.
+	local refusals = self:GetChargedSaleRefusals(player)
 	local penalty = refusals * SellNpc.REFUSAL_OFFER_PENALTY
 
 	-- Whether a customer has ever countered this player before. Their first one is given rather than
@@ -828,10 +869,16 @@ function SellNpcManager:_negotiateSale(
 		record.offerResponse = nil
 		record.offerPending = true
 
-		-- How far over the skewers' own worth the customer is offering, so the frame can show what kind of
-		-- deal it is rather than a bare number. Re-derived each round, so a counter-offer moves it too.
-		local bonus = math.round((offer / value - 1) * 100)
-		self.NpcOfferEvent:FireClient(player, npc, offer, count, bonus)
+		-- What the sale is actually worth to the player, which is the customer's offer plus whatever their
+		-- boosts add on top of it. The frame quotes this rather than the bare offer because this is what
+		-- lands in their balance -- a boosted player shown the plain figure watches the counter jump by
+		-- half as much again as the number they just agreed to.
+		--
+		-- The badge is how far over the skewers' own worth that leaves them, so it carries the boosts too
+		-- and the two describe the same number. Both re-derived each round, so a counter-offer moves them.
+		local payout = CurrencyManager:GetBoostedAmount(player, offer)
+		local bonus = math.round((payout / value - 1) * 100)
+		self.NpcOfferEvent:FireClient(player, npc, payout, count, bonus)
 
 		-- Wait on their answer, but never forever -- an ignored offer would stall every later customer.
 		-- Nudging on the way is what stops a player at the grill losing the sale to a toast they missed.
@@ -895,21 +942,27 @@ function SellNpcManager:_negotiateSale(
 		-- Declining is the one mechanic the onboarding can't teach -- it takes the Decline button off the
 		-- offer it walks them to, since a first-timer turning down the sale the whole sequence built to
 		-- has no idea what they've just done -- so their first real no is answered on the cook state's
-		-- own chance, which is 15% on the raw skewers a new player is making. A first no that goes
+		-- own chance, which is 30% on the raw skewers a new player is making. A first no that goes
 		-- unanswered teaches them declining is simply a loss, and they never meet the mechanic at all.
 		--
 		-- Gated on hasData so a profile that failed to load isn't handed a guarantee that can't be
-		-- recorded, which would mean a free counter on every visit for the rest of the session.
-		local firstCounter = hasData and not seenHaggle
+		-- recorded, which would mean a free counter on every visit for the rest of the session. The
+		-- session latch is the other half of that: seenHaggle was read at the top of this negotiation and
+		-- the sibling visits read their own, so the saved key alone can't stop several of them granting
+		-- the same one counter at once.
+		local firstCounter = hasData and not seenHaggle and not self._grantedFirstCounter[player]
 		if not firstCounter and not RandomUtil.RollChance(counterChance, self._rng) then
 			break
 		end
 		counterRounds += 1
 
 		-- Spent the moment it's granted rather than once the exchange settles, so the later rounds of
-		-- this same haggle are rolled for like any other.
+		-- this same haggle are rolled for like any other. The latch goes up before the write rather than
+		-- after it, since the write is what yields and a sibling visit resuming inside it would otherwise
+		-- still find the grant going spare.
 		if firstCounter then
 			seenHaggle = true
+			self._grantedFirstCounter[player] = true
 			PlayerDataManager:SetPlayerDataKey(player, "SeenHaggle", true)
 
 			-- The bubble and the haggle sound show that something happened; this is what says what. Put
@@ -989,7 +1042,15 @@ function SellNpcManager:_negotiateSale(
 		return false
 	end
 
-	-- Sold: pay up (boosts apply), then the customer takes it round the back to eat.
+	-- What the player is about to be paid, worked out before the payout rather than after it: the early
+	-- boost decays against TotalEarned, and IncrementCurrency bumps TotalEarned, so asking afterwards
+	-- would price this sale's bonus off a figure this sale already moved. Display only -- everything
+	-- below that quotes a number to the player quotes this one.
+	local payout = CurrencyManager:GetBoostedAmount(player, offer)
+
+	-- Sold: pay up, then the customer takes it round the back to eat. Handed the plain offer, not the
+	-- payout above: applying the boosts is IncrementCurrency's own job, and giving it a figure that
+	-- already carries them would boost the sale twice.
 	CurrencyManager:IncrementCurrency(player, offer, "SkewerSale")
 
 	-- This is the one point a sale is committed, so it's where the skewers stop being the stand's: they're
@@ -1003,9 +1064,15 @@ function SellNpcManager:_negotiateSale(
 	StatsManager:RecordSaleCompleted(player, soldRecords)
 	self.OnSaleCompleted:Fire(player, offer, soldRecords, isRich)
 
+	-- Selling buys back a refusal, so a player who turned one offer down and took the next isn't left
+	-- paying for it. Down here rather than up with the payout because it yields on their data, and the
+	-- record's skewers are only safe to yield past once they've been cleared off it above.
+	self:ForgiveSaleRefusal(player)
+
 	-- Cash bursts off the customer and flies to the seller, so everyone nearby sees the sale land.
-	-- Passing the offer lets each projectile pop one "+X" label on arrival for the seller.
-	EffectManager:RunEffect("All", "CollectCash", { npc, offer, player })
+	-- Passing the payout lets each projectile pop one "+X" label on arrival for the seller, and the
+	-- labels then add up to the jump they can watch on the currency counter.
+	EffectManager:RunEffect("All", "CollectCash", { npc, payout, player })
 
 	-- {value} is NotificationManager's own placeholder for the Count below, so it has to survive into the
 	-- text as-is rather than being interpolated here.
@@ -1013,7 +1080,7 @@ function SellNpcManager:_negotiateSale(
 		Text = if count > 1 then "Sold " .. count .. " BBQs for {value}!" else "Sold a BBQ for {value}!",
 		Duration = 3,
 		Count = {
-			Value = offer,
+			Value = payout,
 			Format = "Price",
 			Color = Colors.Currency,
 		},
@@ -1128,7 +1195,7 @@ function SellNpcManager:_runVisit(player: Player)
 		return self:_spawnCustomer(player)
 	end)
 	while not resolved and validatePlayer(player) do
-		local refusalDelay = self:GetStandingSaleRefusals(player) * SellNpc.REFUSAL_RETRY_DELAY
+		local refusalDelay = self:GetChargedSaleRefusals(player) * SellNpc.REFUSAL_RETRY_DELAY
 		task.wait(self._rng:NextNumber(SellNpc.RETRY_DELAY_MIN, SellNpc.RETRY_DELAY_MAX) + refusalDelay)
 		if not validatePlayer(player) then
 			break
@@ -1385,6 +1452,7 @@ function SellNpcManager:_cleanupPlayer(player: Player)
 	self._slots[player] = nil
 	self._guaranteed[player] = nil
 	self._noticedRefusals[player] = nil
+	self._grantedFirstCounter[player] = nil
 end
 
 -- Puts the skewers the player's customers are holding back on their stand, right before their profile

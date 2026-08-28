@@ -101,6 +101,28 @@ local FACING_FRONT_OFFSET = 0
 local TOUCH_AIM_CLEARANCE = 5
 local TOUCH_AIM_HEIGHT = 12
 
+-- How much room a character needs around them before the block they're standing in counts as taken. A
+-- character is about two studs across, so this is roughly their own width -- measured out from the
+-- block's edges rather than from its middle, so somebody stands as close to a big structure as to a
+-- small one before they're in the way.
+local PLAYER_CLEARANCE = 2
+
+-- What a refused click says, one per reason a ghost goes red. Written out together rather than at the
+-- point each check fails, so everything placement can turn somebody down for is one list to read and to
+-- reword. The ghost going red is the standing answer and these are only the click that argues with it,
+-- so they're worded as what to do about it rather than as what went wrong.
+local REFUSAL_NO_SPOT = "Aim at ground you own"
+local REFUSAL_OFF_GROUND = "It won't fit on ground you own"
+local REFUSAL_OCCUPIED = "Something's already built there"
+local REFUSAL_SELF = "You're standing there"
+local REFUSAL_PLAYER = "Someone's standing there"
+
+-- How long a refusal stays up, and what it sounds like. Both taken from the game's existing rejections
+-- (see CodeController, CrateController) rather than picked afresh, so being told no while building
+-- lands the same way as being told no anywhere else.
+local REFUSAL_DURATION = 3
+local REFUSAL_SOUND = "Reject"
+
 -- The two actions a player drives placement with. Both are bound through ContextActionUtility, which
 -- pairs the binding with an on-screen button on touch devices and does nothing extra anywhere else --
 -- so these are what gives a phone a way to rotate at all, there being no key to press.
@@ -302,13 +324,15 @@ function BuildController:_isBlockFreeLocally(
 		return true
 	end
 
+	-- Only what's streamed in, which is what makes this local read a hint rather than an answer: a
+	-- structure is streamed whole (see Base:BuildStructure), so one at the far end of the base isn't in
+	-- here at all and its cells read as free. That's tolerable because it's only ever wrong further away
+	-- than the player is building -- the cell under the cursor is by definition streamed in -- and the
+	-- server's own check is what actually decides (see Base:IsBlockFree).
 	for _, model in folder:GetChildren() do
 		local placedX = model:GetAttribute(Structures.CELL_X_ATTRIBUTE)
 		local placedZ = model:GetAttribute(Structures.CELL_Z_ATTRIBUTE)
 
-		-- A structure replicates model-first, so one that's just gone down can be here with its cells
-		-- still on the way. Skipping it only reads that spot as free for a frame, and the server would
-		-- refuse the placement anyway.
 		if not placedX or not placedZ then
 			continue
 		end
@@ -333,6 +357,58 @@ function BuildController:_isBlockFreeLocally(
 	end
 
 	return true
+end
+
+-- Whoever is standing in the block of cells under the cursor, or nil if it's clear. The other half of
+-- _isBlockFreeLocally: that one keeps two structures off the same cells, this one keeps one from being
+-- dropped on somebody -- your own character, with a desktop cursor aimed at your own feet, or another
+-- player who has walked onto the base you're building on.
+--
+-- The player rather than just the fact of one, because being told you're standing in your own way reads
+-- as nonsense when it's phrased as somebody else (see the refusals above). Whoever is found first is
+-- whoever gets named; with two people crowding one spot, moving either of them re-runs this anyway.
+--
+-- Measured in studs in the grid's own space rather than in whole cells, because a character is half a
+-- cell across: rounding them to the cell they stand in would block the whole of it for someone at its
+-- far edge, and let someone straddling a seam through.
+--
+-- The one check the server doesn't make again (see the header): where a player is standing has already
+-- changed by the time a message about it lands, so re-testing it there would only refuse placements
+-- that looked fine when they were made. What that costs is a forged packet being able to build under
+-- someone, which spends the structure and lands it on a legal cell either way.
+--
+-- Height is deliberately not looked at -- someone jumping over the spot is still standing in it as far
+-- as this cares, and anyone on another base is already far enough off in X and Z to miss.
+-- @param ground The grid the block is measured in, which is the space the players are tested in
+function BuildController:_getPlayerInBlock(
+	ground: GridUtil.Ground,
+	cellX: number,
+	cellZ: number,
+	footprintX: number,
+	footprintZ: number
+): Player?
+	local minX = cellX * Structures.CELL_SIZE - PLAYER_CLEARANCE
+	local minZ = cellZ * Structures.CELL_SIZE - PLAYER_CLEARANCE
+	local maxX = (cellX + footprintX) * Structures.CELL_SIZE + PLAYER_CLEARANCE
+	local maxZ = (cellZ + footprintZ) * Structures.CELL_SIZE + PLAYER_CLEARANCE
+
+	for _, player in Players:GetPlayers() do
+		local character = player.Character
+		local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+
+		-- Between dying and respawning there's nobody standing anywhere.
+		if not root then
+			continue
+		end
+
+		local point = ground.Origin:PointToObjectSpace(root.Position)
+
+		if point.X > minX and point.X < maxX and point.Z > minZ and point.Z < maxZ then
+			return player
+		end
+	end
+
+	return nil
 end
 
 -- An inert copy of what the tool builds, left looking exactly as it will once it's down. Whether the
@@ -524,7 +600,7 @@ function BuildController:_updateGhost(deltaTime: number)
 	-- Off every plot they own -- or on a base with no grid to measure at all -- so there's nothing to
 	-- snap to.
 	if not (result and ground) then
-		self._valid = false
+		self._refusal = REFUSAL_NO_SPOT
 		self:_paintGhost(false)
 		return
 	end
@@ -563,12 +639,28 @@ function BuildController:_updateGhost(deltaTime: number)
 		cellZ = math.clamp(cellZ, ground.MinZ, maxAnchorZ)
 	end
 
-	local valid = GridUtil.IsBlockOnGround(ground, cellX, cellZ, footprintX, footprintZ)
-		and self:_isBlockFreeLocally(cellX, cellZ, footprintX, footprintZ)
+	-- Why this spot won't do, or nil if it will. Kept as its reason rather than as a plain verdict
+	-- because a click that gets refused has to say which of them it was, and this is the only place all
+	-- three are known -- working it out again in _tryPlace would mean re-running the same checks against
+	-- a frame that had already moved on. Chained rather than gathered so the later ones are still only
+	-- paid for on a spot the earlier ones allowed, exactly as when this was an `and`.
+	local refusal = nil
+
+	if not GridUtil.IsBlockOnGround(ground, cellX, cellZ, footprintX, footprintZ) then
+		refusal = REFUSAL_OFF_GROUND
+	elseif not self:_isBlockFreeLocally(cellX, cellZ, footprintX, footprintZ) then
+		refusal = REFUSAL_OCCUPIED
+	else
+		local blockingPlayer = self:_getPlayerInBlock(ground, cellX, cellZ, footprintX, footprintZ)
+
+		if blockingPlayer then
+			refusal = if blockingPlayer == LocalPlayer then REFUSAL_SELF else REFUSAL_PLAYER
+		end
+	end
 
 	self._targetCellX = cellX
 	self._targetCellZ = cellZ
-	self._valid = valid
+	self._refusal = refusal
 
 	local surface =
 		GridUtil.CellToSurfaceCFrame(ground.Origin, cellX, cellZ, footprintX, footprintZ, Structures.CELL_SIZE)
@@ -583,7 +675,7 @@ function BuildController:_updateGhost(deltaTime: number)
 	end
 
 	ghost:PivotTo(self._ghostCFrame)
-	self:_paintGhost(true, valid)
+	self:_paintGhost(true, refusal == nil)
 end
 
 -- The pool the calm pass is drawn from, made once per equip. Fixed in size rather than one highlight
@@ -763,19 +855,35 @@ function BuildController:_armPickup(model: Model?, uid: string?)
 	self:_refreshPickupHighlights()
 end
 
--- Sends the cell under the cursor to be built on. Refused placements come back as nothing happening,
--- which is what the ghost turning red is there to prevent -- so anything reaching here has already
--- been shown to the player as buildable.
+-- Sends the cell under the cursor to be built on, or says why it won't. The ghost has been red the
+-- whole time the answer was no, so the notification isn't news -- it's for the player who clicked
+-- anyway, which is the moment they're actually asking what's wrong with the spot.
 function BuildController:_tryPlace()
-	if not (self._structure and self._valid) then
+	if not self._structure then
 		return
 	end
 
+	-- Ahead of the refusal rather than after it, so one window covers both: mashing the button at a red
+	-- ghost shakes the notification at the rate a placement would have gone out at, instead of once a
+	-- click. What that costs is a refused click holding the next real one up by the same fraction of a
+	-- second, which is the debounce doing its job either way.
 	local now = os.clock()
 	if now - self._lastPlaceTime < PLACE_DEBOUNCE then
 		return
 	end
 	self._lastPlaceTime = now
+
+	local refusal = self._refusal
+	if refusal then
+		NotificationController:NotifyNormal({
+			Text = refusal,
+			Duration = REFUSAL_DURATION,
+			Sound = REFUSAL_SOUND,
+			Effect = "Error",
+		})
+
+		return
+	end
 
 	self.PlaceStructureEvent:FireServer(self._structure.Id, self._targetCellX, self._targetCellZ, self._rotation)
 end
@@ -1056,7 +1164,9 @@ function BuildController:_enterPlacement(structure: Structures.Structure, mouse:
 	self._rotation = 0
 	self._raycastParams = raycastParams
 	self._ghostCFrame = nil
-	self._valid = false
+	-- A refusal rather than nil, nil being the one value that means the spot is good: nothing has been
+	-- aimed at yet on the frame a tool is equipped, and a click landing in that gap shouldn't build.
+	self._refusal = REFUSAL_NO_SPOT
 
 	self:_refreshRaycastParams()
 	self:_warnIfUnplaceable(structure)
@@ -1171,7 +1281,8 @@ function BuildController:_exitPlacement()
 	self._ghostCFrame = nil
 	self._targetCellX = nil
 	self._targetCellZ = nil
-	self._valid = false
+	-- Left as a refusal rather than nil'd with the rest, for the reason given in _enterPlacement.
+	self._refusal = REFUSAL_NO_SPOT
 	self._structureFolder = nil
 	self._hoverUid = nil
 	self._hoverHighlight = nil

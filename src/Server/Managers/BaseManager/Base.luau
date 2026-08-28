@@ -7,6 +7,7 @@ local Packages = ReplicatedStorage.Packages
 local Trove = require(Packages.Trove)
 
 -- Managers
+local CollisionManager = require(script.Parent.Parent.CollisionManager)
 local EffectManager = require(script.Parent.Parent.EffectManager)
 local SoundManager = require(script.Parent.Parent.SoundManager)
 
@@ -86,11 +87,16 @@ function Base.new(model: Model)
 		--
 		_storage = storage,
 		_layouts = {}, -- [unlockId] = { Template, Home, Center, Step: Vector2, Spec, Count, Clones }  (Layout)
-		-- [plotId] = { Model, Sign, Floor } -- the sign parks in _storage while the plot isn't buyable,
-		-- and Floor is the part saying which cells of the base's grid this plot covers. The starting cell
-		-- is in here too: it has no sign and is never bought, but it's ground the player can build on like
-		-- any other -- and its floor is what the whole grid is measured off (see GetGround).
+		-- [plotId] = { Model, Sign, Misc, Floor } -- the sign parks in _storage while the plot isn't
+		-- buyable and the overgrowth parks there once it's bought, and Floor is the part saying which
+		-- cells of the base's grid this plot covers. The starting cell is in here too: it has neither of
+		-- the first two and is never bought, but it's ground the player can build on like any other --
+		-- and its floor is what the whole grid is measured off (see GetGround).
 		_plots = {},
+		-- [plotId] = the token belonging to the pull waiting on that plot's burn. A render landing
+		-- mid-burn reads it to leave the plot alone, and the pull reads it back to know it's still the
+		-- one that should run -- see ApplyPlots.
+		_clearing = {},
 
 		_structureFolder = structureFolder,
 		_structures = {}, -- [uid] = the live model for that placed structure
@@ -169,9 +175,9 @@ function Base:_cacheUnlocks()
 	end
 end
 
--- Finds each plot's unlock sign and its build floor once, before anything renders on top of them. The
--- sign is the only piece of a plot the server moves; the overgrowth is the client's, for the reason
--- below.
+-- Finds each plot's unlock sign, its overgrowth and its build floor once, before anything renders on
+-- top of them. The first two are the pieces the server moves in and out of the world; the floor stays
+-- put and is only ever read.
 --
 -- The starting cell is cached alongside the buyable plots. It's never bought and wears no sign, so
 -- most of the plot render skips it -- but it's ground the player owns from the moment they're handed
@@ -196,20 +202,24 @@ function Base:_cachePlots()
 			continue
 		end
 
-		-- The sign is parked in storage and parented back rather than hidden and restored: it's one move
-		-- instead of writing every part, and nothing has to remember what the place file authored.
-		--
-		-- The overgrowth is deliberately NOT handled here. Clearing a plot burns its trees back on
-		-- screen, and the server can't animate something it has already taken out of the world -- so it
-		-- stays put and every client dissolves and hides it off the Unlocked attribute instead. That's
-		-- the same split the grillers and stands use: the server owns the state, the client owns how it
-		-- looks getting there.
+		-- Both are parked in storage and parented back rather than hidden and restored: it's one move
+		-- instead of every client writing every part, and nothing has to remember what the place file
+		-- authored -- a folder pulled out of the world comes back off the place file's own values for
+		-- whoever is handed this base next.
 		--
 		-- The starting cell has neither, being owned from the off and never overgrown.
 		local sign = if isStart then nil else plotModel:FindFirstChild(Plots.SIGN_NAME)
+		local misc = if isStart then nil else plotModel:FindFirstChild(Plots.MISC_FOLDER_NAME)
 
 		if not isStart and not sign then
 			warn(`[Base] {self._model.Name} plot {plotModel.Name} has no {Plots.SIGN_NAME}, it can't be bought`)
+		end
+
+		if not isStart and not misc then
+			warn(
+				`[Base] {self._model.Name} plot {plotModel.Name} has no {Plots.MISC_FOLDER_NAME}, `
+					.. `it has no overgrowth to clear`
+			)
 		end
 
 		-- The cells of the base's grid this plot covers. Searched rather than indexed, so a floor tucked
@@ -228,6 +238,7 @@ function Base:_cachePlots()
 		self._plots[plotModel.Name] = {
 			Model = plotModel,
 			Sign = sign,
+			Misc = misc,
 			Floor = floor,
 		}
 	end
@@ -246,10 +257,10 @@ end
 -- wear a sign -- the latter being what walks the player outwards from the middle of their base
 -- instead of letting them buy a far corner.
 --
--- `animate` is for a render that follows a purchase. The client can't work that out for itself: a
--- plot flipping to cleared looks the same whether it was just bought or whether this base was only
--- assigned a moment ago, and the two races freely on join. So the flag below says *what* is cleared
--- and this says *that one just changed hands*, which is what gets burned rather than snapped.
+-- `animate` is for a render that follows a purchase, and it's the only thing separating a plot that
+-- was just bought from one this base was handed over already owning -- the two look identical from a
+-- client and race freely on join. So a plot cleared under it is burned back on screen before its
+-- overgrowth is pulled, and one cleared without it simply never had any.
 function Base:ApplyPlots(plots: { [string]: boolean }, animate: boolean?)
 	for plotId, plot in self._plots do
 		-- The starting cell is cached with the plots so building can find its floor, but there's nothing
@@ -260,19 +271,54 @@ function Base:ApplyPlots(plots: { [string]: boolean }, animate: boolean?)
 
 		local isUnlocked = plots[plotId] == true
 
-		-- Read before the write below overwrites it: the attribute the last render left is all the
-		-- history needed to spot the locked -> unlocked edge, so no extra state is kept.
+		-- Read before the write below overwrites it: where the last render left each plot is all the
+		-- history needed to spot the locked -> unlocked edge, so no extra state is kept. Nobody else
+		-- reads it -- what a client used to hide off this flag is taken out of the world below instead --
+		-- so it's an attribute purely because the plot model is somewhere to keep it that lives exactly
+		-- as long as the base does.
 		local wasUnlocked = plot.Model:GetAttribute("Unlocked") == true
-
-		-- The one thing this render says about a plot, and it says it to everyone: the owner's Plots
-		-- table doesn't replicate to visitors, but this does, so every client can keep the overgrowth
-		-- hidden off the same flag.
 		plot.Model:SetAttribute("Unlocked", isUnlocked or nil)
 
 		-- Burned back rather than snapped, on the one plot that just changed hands. Everyone nearby
 		-- sees it: it's the plot model that goes over, so EffectManager culls by distance from it.
-		if animate and isUnlocked and not wasUnlocked then
+		local burning = animate and isUnlocked and not wasUnlocked
+		if burning then
 			EffectManager:RunEffect("All", "PlotCleared", { plot.Model })
+		end
+
+		-- A bought plot's overgrowth leaves the world outright, so what's standing on cleared ground is
+		-- nothing rather than something invisible: no collision to walk into, no parts to raycast, and
+		-- nothing to stream back in overgrown. It comes back for the next owner of this base the same
+		-- way the sign does.
+		--
+		-- The one wrinkle is the burn. The trees being tweened are these, and the server can't animate
+		-- something it has already taken out of the world -- so the plot that just changed hands keeps
+		-- them until the fade everyone is watching has run.
+		if plot.Misc then
+			if not isUnlocked then
+				-- Any pull still waiting on a burn goes with it, so an owner leaving mid-clear can't have
+				-- one fire on the plot it has just put back.
+				self._clearing[plotId] = nil
+				plot.Misc.Parent = plot.Model
+			elseif burning then
+				-- Held against a token rather than a bare flag, because it answers two questions: whether a
+				-- pull is already coming, for the render that lands mid-burn -- buying a second plot
+				-- re-applies every one of them -- and whether this is still the pull that should run, for
+				-- the pull itself, on a base that may have changed hands by the time it comes round.
+				local token = {}
+				self._clearing[plotId] = token
+
+				task.delay(Plots.CLEAR_HOLD + Plots.CLEAR_FADE + Plots.CLEAR_PARK_GRACE, function()
+					if self._clearing[plotId] ~= token then
+						return
+					end
+
+					self._clearing[plotId] = nil
+					plot.Misc.Parent = self._storage
+				end)
+			elseif not self._clearing[plotId] then
+				plot.Misc.Parent = self._storage
+			end
 		end
 
 		-- Exactly the plots that are buyable right now wear a board, so a player is never shown a price
@@ -334,6 +380,12 @@ function Base:ApplyUnlocks(unlocks: { [string]: number }, animate: boolean?)
 			for i = layout.Count + 1, target do
 				local clone = layout.Template:Clone()
 				clone.Name = tostring(i)
+
+				-- Streamed whole or not at all, for the same reason a placed structure is (see
+				-- BuildStructure): the client builds a class per copy and reads its parts as it does, and
+				-- under the default mode the copy's model arrives ahead of them.
+				clone.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
+
 				layout.Clones[i] = clone
 			end
 
@@ -359,6 +411,18 @@ function Base:ApplyUnlocks(unlocks: { [string]: number }, animate: boolean?)
 
 					clone:AddTag("LayoutStand")
 					clone.Parent = layout.Home
+
+					-- Once the rise has had time to land, put the server's own copy on its slot at full
+					-- size and drop the flash with it -- the same settle a placed structure gets, and for
+					-- the same reason (see BuildStructure). Scale as well as pose here, since a fresh copy
+					-- starts undersized as well as sunk.
+					task.delay(BaseUnlocks.LAYOUT_SETTLE_TIME, function()
+						if clone.Parent then
+							clone:PivotTo(clone:GetAttribute("SlotCFrame"))
+							clone:ScaleTo(1)
+							clone:SetAttribute("PulseOnSpawn", nil)
+						end
+					end)
 				else
 					clone:SetAttribute("SlotCFrame", slot)
 				end
@@ -491,6 +555,35 @@ function Base:BuildStructure(uid: string, placed: Structures.PlacedStructure, an
 
 	local model = structure.Model:Clone()
 	model.Name = uid
+
+	-- The box the structure was measured against, made inert as it goes down. It wraps the whole model
+	-- (see Structures.HITBOX_NAME) and it's there because this code asked for it rather than because
+	-- anyone wanted something in that spot -- so left as the place file has it, every structure a player
+	-- builds carries an invisible wall the size of its footprint. Query stays on: being the outline of
+	-- the whole thing it's the easiest part of a structure to point at, and the pickup tool aims by
+	-- raycast (see BuildController:_getStructureUnderCursor).
+	local hitbox = model:FindFirstChild(Structures.HITBOX_NAME)
+	if hitbox and hitbox:IsA("BasePart") then
+		hitbox.CanCollide = false
+		hitbox.CanTouch = false
+	end
+
+	-- Solid to the player who built it, passable to the customers walking to their stall -- see
+	-- CollisionManager. Stamped per copy rather than on the template, which is a shared config both
+	-- realms load and a replicated asset the place file should go on agreeing with.
+	CollisionManager:SetModelGroup(model, CollisionManager.STRUCTURE)
+
+	-- Streamed whole or not at all. Every client system that owns a structure builds one class per model
+	-- off the tag below and reads the model's parts once as it does -- so under the default mode, where
+	-- a model's containers stay put on the client while its parts stream out from under them, those
+	-- classes are left holding parts that have been destroyed: the prompts they parented to them are
+	-- gone, the model is still tagged so nothing rebuilds them, and the structure is dead for the rest
+	-- of the session. Atomic is what makes the tag mean all of it, so the added/removed signals those
+	-- classes are already built around fire on each stream cycle and rebuild against a whole model.
+	--
+	-- Stamped per copy rather than on the template for the same reason as the collision group above.
+	model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
+
 	model:SetAttribute("SlotCFrame", pose)
 	model:SetAttribute(Structures.UID_ATTRIBUTE, uid)
 	model:SetAttribute(Structures.OWNER_ATTRIBUTE, self._owner.UserId)
@@ -529,6 +622,20 @@ function Base:BuildStructure(uid: string, placed: Structures.PlacedStructure, an
 	-- The category and not the id: a manager owns a kind of structure rather than one model of it, so
 	-- tagging the kind is what lets a second griller be a config entry and nothing else.
 	model:AddTag(structure.Category)
+
+	-- Once the drop has had time to land, put the server's own copy where the structure actually is and
+	-- drop the flash with it. Only the client ever moved it, so until this runs the server is holding it
+	-- PLACE_DROP_HEIGHT in the air -- and every client that arrives late reads that pose rather than the
+	-- one it was built on. A move landing inside the window has already written both the attribute and
+	-- the pivot, so the pose is read back off the attribute rather than closed over.
+	if animate then
+		task.delay(Structures.PLACE_SETTLE_TIME, function()
+			if model.Parent then
+				model:PivotTo(model:GetAttribute("SlotCFrame"))
+				model:SetAttribute("PulseOnSpawn", nil)
+			end
+		end)
+	end
 
 	self._structures[uid] = model
 

@@ -1,7 +1,7 @@
 return {
 	PlayerDataTemplate = {
 		--
-		Currency = 500,
+		Currency = 100,
 		TotalPlaytime = 0,
 
 		-- Core Game

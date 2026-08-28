@@ -25,8 +25,17 @@ local GRILLER_CATEGORY = "Grillers"
 -- The parts a Grill has to have to do anything. They come off the structure's template, so they're
 -- always there -- but a placed griller replicates in mid-session rather than existing from place-load,
 -- so they're waited on rather than assumed (see _addGrill).
+--
+-- Knob isn't among them on purpose: the server streams a griller whole (Base:BuildStructure sets it
+-- atomic), so nothing here is ever merely late, and a missing knob costs the owner the stove rather
+-- than costing everyone the cook -- Grill warns for it and renders the rest.
 local REQUIRED_DESCENDANTS = { "Grill", "StickAttachment", "GrillAttachment" }
 local CHILD_TIMEOUT = 10
+
+-- How long the skip has to be left alone between requests. The offer used to be a prompt with a hold on
+-- it, which is what made it hard to brush past; it's a button on the cooking bar now, so a mashed one
+-- would raise the same Robux purchase a dozen times over.
+local SKIP_COOK_COOLDOWN = 1
 
 --[[
     Renders the cook on every base's grillers and drives the owner's place/cook interaction.
@@ -66,6 +75,8 @@ local GrillerController = {
 	_grills = {}, -- [model: Instance] = Grill
 	_cleaner = Trove.new(),
 	_takeLocked = false, -- while true, no grill offers to hand a skewer back (see SetTakeLocked)
+	_skipLocked = false, -- while true, no grill shows its Robux skip (see SetSkipLocked)
+	_skipCookNextAt = 0, -- the clock the next skip request is allowed at, so a mashed button sends one
 }
 
 -- Builds a Grill for a placed griller, unless one already tracks it.
@@ -74,9 +85,9 @@ function GrillerController:_addGrill(model: Instance)
 		return
 	end
 
-	-- The server builds the griller complete before it tags it, and Roblox replicates a newly-parented
-	-- model's descendants together, so this is belt-and-braces -- but a Grill built without them is
-	-- dead for good rather than merely late, which is worth waiting to rule out.
+	-- The server builds the griller complete before it tags it, and streams it atomically so it can't
+	-- arrive in pieces either, so this is belt-and-braces -- but a Grill built without them is dead for
+	-- good rather than merely late, which is worth waiting to rule out.
 	for _, name in REQUIRED_DESCENDANTS do
 		if not waitForDescendant(model, name, CHILD_TIMEOUT) then
 			warn(`[Griller] {model.Name} has no {name}, it won't render`)
@@ -125,7 +136,16 @@ end
 -- Asks the server to raise the Robux prompt for skipping the cook running on this grill. Opened
 -- server-side rather than through ShopController so the grill it was raised from is remembered there:
 -- the receipt says nothing about which cook was being bought out.
+--
+-- Throttled, unlike the stop above: this one costs money rather than timing, so the cost of holding a
+-- press back is nothing and the cost of letting a dozen through is a stream of purchase prompts. The
+-- server holds the same window (see GrillerManager:PromptSkipCookProduct) -- this only saves the traffic.
 function GrillerController:RequestSkipCook(uid: string)
+	if os.clock() < self._skipCookNextAt then
+		return
+	end
+	self._skipCookNextAt = os.clock() + SKIP_COOK_COOLDOWN
+
 	self.RequestSkipCookEvent:FireServer(uid)
 end
 
@@ -159,6 +179,26 @@ end
 -- Whether taking is currently held off. Read by Grill when it works out what a slot is offering.
 function GrillerController:IsTakeLocked(): boolean
 	return self._takeLocked
+end
+
+-- Holds every grill's Robux skip off, so a cook that's meant to be waited out can't be bought out. The
+-- skip is a button on the cooking bar rather than a prompt, so TutorialController:DisablePrompts has
+-- nothing to hold it by -- this is its equivalent, gating the eligibility the class already computes.
+--
+-- Set by the tutorial across the beat teaching the cook's timing: a step asking the player to watch the
+-- bar shouldn't be offering to sell them out of the thing it's teaching.
+function GrillerController:SetSkipLocked(locked: boolean)
+	if self._skipLocked == locked then
+		return
+	end
+
+	self._skipLocked = locked
+	self:RefreshInteractions()
+end
+
+-- Whether the skip is currently held off. Read by Grill when it works out what a slot is offering.
+function GrillerController:IsSkipLocked(): boolean
+	return self._skipLocked
 end
 
 -- Watches the local character's tools so a free griller lights up as they equip a raw skewer.

@@ -134,15 +134,15 @@ Structures.Data = {
 		Id = "RustyGrill",
 		Name = "Rusty Grill",
 		Category = "Grillers",
-		Cost = 500,
+		Cost = 1_000,
 		Description = `All rusted up! The fire keeps flickering, so the bar is <font color="{WARNING_COLOR}">hard to time</font>`,
 		Icon = "rbxassetid://108556890656046",
 		TextColor = Color3.fromRGB(170, 95, 55),
 		StrokeColor = Color3.fromRGB(55, 30, 16),
 		Rarity = "Common",
 		Restockable = true,
-		RestockChance = 100,
-		RestockAmount = NumberRange.new(4, 6),
+		RestockChance = 90,
+		RestockAmount = NumberRange.new(1, 2),
 		RobuxProductId = 3710074789,
 		-- It cooks a skewer in exactly as long as an Iron Grill does; what it costs is being able to
 		-- time the window, since the bar surges and stalls its way there. The cheapest rung on the
@@ -161,7 +161,7 @@ Structures.Data = {
 		StrokeColor = Color3.fromRGB(70, 30, 12),
 		Rarity = "Common",
 		Restockable = true,
-		RestockChance = 100,
+		RestockChance = 75,
 		RestockAmount = NumberRange.new(2, 4),
 		RobuxProductId = 3710074770,
 	},
@@ -170,15 +170,15 @@ Structures.Data = {
 		Id = "GasGrill",
 		Name = "Gas Grill",
 		Category = "Grillers",
-		Cost = 12_000,
+		Cost = 25_000,
 		Description = `Now we're in the big leagues! <font color="{SPEED_COLOR}">25% faster</font> cooking`,
 		Icon = "rbxassetid://139507103650602",
 		TextColor = Color3.fromRGB(90, 170, 255),
 		StrokeColor = Color3.fromRGB(20, 50, 90),
 		Rarity = "Rare",
 		Restockable = true,
-		RestockChance = 90,
-		RestockAmount = NumberRange.new(2, 3),
+		RestockChance = 50,
+		RestockAmount = NumberRange.new(1, 3),
 		RobuxProductId = 3710074809,
 		CookSpeed = 1.25,
 	},
@@ -187,15 +187,15 @@ Structures.Data = {
 		Id = "SolarGrill",
 		Name = "Solar Grill",
 		Category = "Grillers",
-		Cost = 45_000,
+		Cost = 100_000,
 		Description = `Harness the power of the sun! <font color="{SPEED_COLOR}">50% faster</font> cooking`,
 		Icon = "rbxassetid://75120638448905",
 		TextColor = Color3.fromRGB(255, 235, 120),
 		StrokeColor = Color3.fromRGB(95, 80, 20),
 		Rarity = "Epic",
 		Restockable = true,
-		RestockChance = 70,
-		RestockAmount = NumberRange.new(1, 2),
+		RestockChance = 30,
+		RestockAmount = NumberRange.new(1, 1),
 		RobuxProductId = 3710074824,
 		CookSpeed = 1.5,
 	},
@@ -204,14 +204,14 @@ Structures.Data = {
 		Id = "ElectricGrill",
 		Name = "Electric Grill",
 		Category = "Grillers",
-		Cost = 150_000,
+		Cost = 500_000,
 		Description = `I like my BBQ a little zappy! <font color="{SPEED_COLOR}">25% faster</font> cooking, and a chance for a <font color="{SHOCKED_COLOR}">Shocked</font> BBQ worth <font color="{VALUE_COLOR}">1.5x</font>`,
 		Icon = "rbxassetid://106240207741508",
 		TextColor = Color3.fromRGB(120, 205, 255),
 		StrokeColor = Color3.fromRGB(25, 65, 95),
 		Rarity = "Legendary",
 		Restockable = true,
-		RestockChance = 50,
+		RestockChance = 10,
 		RestockAmount = NumberRange.new(1, 1),
 		RobuxProductId = 3710074849,
 		-- Deliberately below the Solar Grill's 1.5: this rung isn't bought for pace. The speed is a nudge on
@@ -277,6 +277,14 @@ Structures.CELL_SIZE = 4
 -- The spring itself is shared with those, so it lands with the same weight; only where it starts
 -- differs. Higher = a longer fall, since the spring covers whatever distance it's given.
 Structures.PLACE_DROP_HEIGHT = 6
+
+-- How long the server waits before settling its own copy onto the cell and dropping the spawn flash.
+-- The drop above is the client's to play, and the server has no signal for when its spring landed --
+-- so it waits the spring out and then stops lying about where the structure is. Everything that reads
+-- the world rather than the render depends on it telling the truth: a client that arrives after this
+-- (a rejoin, or a structure streaming back in) springs from the settled pose, which is a no-op, rather
+-- than replaying the drop and the gold flash on a structure that was built minutes ago.
+Structures.PLACE_SETTLE_TIME = 3
 
 -- The attributes every placed copy wears. Named here so the server that writes them and the managers
 -- and controllers that read them can't drift apart. The cell four are what let a client work out

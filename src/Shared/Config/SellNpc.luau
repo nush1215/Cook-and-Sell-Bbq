@@ -93,8 +93,9 @@ SellNpc.SKEWER_HOLD_OFFSET = CFrame.identity
 -- Worth knowing: a skewer's sell value is what its ingredients cost in the shop plus a slice of what
 -- the stick under them cost (Sticks.SALE_RETURN_FACTOR), times that stick's tier boost
 -- (Sticks.ValueBoost), times its sauce, times its cook state. So $1,000 of ingredients on a $2,500 gold
--- stick (+$250, then +20%) under mustard (1.6) makes a $4,320 skewer cooked perfectly (1.8), and
--- $1,920 if it's left on until it chars (0.8).
+-- stick (+$250, then +85%) makes a $4,163 skewer cooked perfectly (1.8), and $1,850 if it's left on
+-- until it chars (0.8). No sauce in that sum because there's nothing to put on one yet -- Sauces.Data
+-- ships empty and GetMultiplier returns 1 for everything, so the flavour band is a no-op today.
 
 -- The guess shown on the billboard over a held skewer, as a multiple of its sell value. Both numbers
 -- sit at or below 1 on purpose, and every state's OfferMin sits at or above it, so a customer's opening
@@ -179,22 +180,38 @@ SellNpc.NUDGE_PULSE_COUNT = 3
 --
 -- The shifted range is floored at the skewer's plain sell value, so declining stops paying a bonus but
 -- never pays out a loss -- and the offer still can't come in under the estimate the player was shown.
--- A well-cooked skewer therefore runs from +10-35% clean down to +1-26% at PENALTY_MAX, and a charred one
--- (opening at 1-1.05) is squeezed almost flat, so rerolling a burnt skewer is worth next to nothing.
+-- A well-cooked skewer therefore runs from +10-35% clean down to +1-26% at the full penalty, and a
+-- charred one (opening at 1-1.05) is squeezed almost flat, so rerolling a burnt skewer is worth next to
+-- nothing.
 --
 -- Deliberately smaller than what one landed counter-offer pays (see COUNTER_INCREASE above). A refusal has
 -- to cost less than a successful push earns, or the arithmetic tells the player never to haggle -- which
 -- is the opposite of what the stand is built around. What it still has to beat is the *free* reroll: a
 -- player declining everything to fish for a high opening roll.
 --
+-- GRACE is how many standing refusals cost nothing at all. Declining once is the mechanic working exactly
+-- as the onboarding taught it -- the toast on the first counter-offer tells them declining can get a
+-- better price -- so a player who takes that advice and has the counter roll go against them has done
+-- nothing but use the stand as intended. Charging for that teaches them not to. What the penalty is
+-- actually aimed at is the player declining over and over, and that still lands from the second one on.
+-- GRACE and PENALTY_MAX move together: the most anyone ever pays is (PENALTY_MAX - GRACE) of the numbers
+-- below, so raising one without the other shifts the ceiling rather than the forgiveness.
+--
+-- A completed sale also sheds one (SellNpcManager:ForgiveSaleRefusal), since a sale is the plainest
+-- evidence the player isn't fishing -- without it, turning down one lowball and selling the next five
+-- still costs a full DECAY.
+--
 -- Refusals are stored in player data on the synced clock rather than a session timer, for the same reason
 -- the rich customer's cooldown is: rejoining or hopping servers would otherwise wipe the slate.
 -- Higher PENALTY = a couple of refusals gut the offer and the mechanic reads as punishing. Lower = the
 -- reroll is profitable again.
 -- Higher DECAY = the penalty hangs over a session for much longer. Lower = waiting it out beats selling.
+-- Higher GRACE = declining is free for longer, and the reroll comes back for a player who spaces them out.
+-- Lower = the first no costs, and haggling is punished for going the way it usually goes.
 -- Higher PENALTY_MAX = the floor is reached and there's nothing left to lose by declining forever.
 SellNpc.REFUSAL_OFFER_PENALTY = 0.03
-SellNpc.REFUSAL_PENALTY_MAX = 3
+SellNpc.REFUSAL_GRACE = 1
+SellNpc.REFUSAL_PENALTY_MAX = 4
 SellNpc.REFUSAL_DECAY = 60
 SellNpc.REFUSAL_RETRY_DELAY = 2
 

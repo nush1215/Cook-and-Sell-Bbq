@@ -130,6 +130,17 @@ function PlayerDataManager:GetPlayerData(player: Player, timeout: number?)
 	end)
 end
 
+-- The player's data as it stands right now, or nil if it hasn't loaded yet. The non-yielding
+-- counterpart to GetPlayerData above, for callers on a hot path that can carry on without it -- a
+-- promise there would change the contract of whatever they're called from. Read-only by convention:
+-- writes still go through the Set/Increment functions below so the replica replicates them.
+-- @param player The player to get data for
+-- @returns the data table, or nil if the profile isn't loaded
+function PlayerDataManager:GetLoadedPlayerData(player: Player)
+	local loadedPlayerData = self._playerData[player]
+	return loadedPlayerData and loadedPlayerData.Replica.Data
+end
+
 -- Gets a specific key from player data
 -- @param player The player to get data for
 -- @param key The key to retrieve

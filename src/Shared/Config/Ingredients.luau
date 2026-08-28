@@ -75,6 +75,15 @@ local Ingredients = {}
 -- more lucrative across the board; retier or retune ValueMultiplier to change how steeply rarity pays.
 Ingredients.SALE_VALUE_MULTIPLIER = 1.1
 
+-- What every slot past the slowest one adds to the cook, as a fraction of its own CookTime. The skewer
+-- goes on the grill in one piece, so what sets the length is the thing on it that needs the longest --
+-- the rest ride along, adding heat to shift rather than a cook of their own. That's what makes capacity
+-- worth paying for: a full stick isn't a full stick's worth of waiting.
+--
+-- Short of 1 so filling a stick is worth doing, and well clear of 0 so it still costs something: value
+-- has no falloff at all (see GetTotalValue), and at 0 an empty slot would be free money.
+Ingredients.ADDITIONAL_SLOT_FACTOR = 0.5
+
 -- How far the chances can add up to short of or past 100% before the load-time warn fires. Small drift
 -- rounds away on the labels (a 1% miss turns "1 in 20" into "1 in 20.2", which still prints 20), so
 -- this is set to where it would start to show rather than at zero.
@@ -125,6 +134,12 @@ table.freeze(Ingredients.ProductPriceBands)
 -- dollar spent, not just a bigger number per skewer slot. Price is the anchor the tier's entries are
 -- priced around rather than the price they all pay -- move it to shift a whole tier, and reprice the
 -- entries to change how far apart the cheapest and dearest of them sit.
+--
+-- CookTime and ValueMultiplier climb together on purpose, and steeply: the good stuff is the slow stuff,
+-- so what a rare buys is a longer wait for a much better return rather than a strictly better ingredient.
+-- Common is the one that doesn't move -- it's the whole of the opening loop (near enough nine rolls in
+-- ten land there), so it stays quick and stays the baseline everything else is measured against. The
+-- climb past it is what a player is actually chasing.
 Ingredients.Tiers = {
 	{
 		Id = "Common",
@@ -135,32 +150,32 @@ Ingredients.Tiers = {
 	{
 		Id = "Uncommon",
 		Price = 450,
-		CookTime = 9,
-		ValueMultiplier = 1.1,
+		CookTime = 16,
+		ValueMultiplier = 1.35,
 	},
 	{
 		Id = "Rare",
 		Price = 1_700,
-		CookTime = 14,
-		ValueMultiplier = 1.25,
+		CookTime = 32,
+		ValueMultiplier = 1.8,
 	},
 	{
 		Id = "Epic",
 		Price = 5_000,
-		CookTime = 20,
-		ValueMultiplier = 1.4,
+		CookTime = 50,
+		ValueMultiplier = 2.4,
 	},
 	{
 		Id = "Legendary",
 		Price = 60_000,
-		CookTime = 28,
-		ValueMultiplier = 1.55,
+		CookTime = 70,
+		ValueMultiplier = 3.2,
 	},
 	{
 		Id = "Mythic",
 		Price = 400_000,
-		CookTime = 40,
-		ValueMultiplier = 1.75,
+		CookTime = 95,
+		ValueMultiplier = 4.2,
 	},
 }
 
@@ -529,12 +544,17 @@ function Ingredients.GetDearestIngredientInProductTier(tier: number): Ingredient
 	return dearest
 end
 
--- Total seconds to cook a skewer holding `ids`. The first copy of each ingredient counts its full
--- CookTime; every extra copy of the same id only adds a quarter, so a stick of five corn isn't five
--- times as slow. An id the config no longer has contributes nothing.
+-- Total seconds to cook a skewer holding `ids`. The slowest ingredient on it counts its full CookTime --
+-- it's the one that has to be cooked through, so it decides when the skewer is done -- and every other
+-- slot adds ADDITIONAL_SLOT_FACTOR of its own. So a stick of five corn isn't five times as slow as one,
+-- and neither is a stick of five different things. An id the config no longer has contributes nothing.
+--
+-- Discounting every slot including the slowest and then topping that one back up, rather than working
+-- out which slot is the slowest first and running a second pass to add the others: same answer, one
+-- pass, and nothing that breaks if two ingredients tie for longest.
 function Ingredients.GetTotalCookTime(ids: { string }): number
 	local total = 0
-	local seen = {}
+	local longest = 0
 
 	for _, id in ids do
 		local ingredient = Ingredients.GetIngredientFromId(id)
@@ -542,15 +562,11 @@ function Ingredients.GetTotalCookTime(ids: { string }): number
 			continue
 		end
 
-		if seen[id] then
-			total += ingredient.CookTime * 0.25
-		else
-			total += ingredient.CookTime
-			seen[id] = true
-		end
+		total += ingredient.CookTime * Ingredients.ADDITIONAL_SLOT_FACTOR
+		longest = math.max(longest, ingredient.CookTime)
 	end
 
-	return total
+	return total + longest * (1 - Ingredients.ADDITIONAL_SLOT_FACTOR)
 end
 
 -- What a skewer holding `ids` is worth to sell, before a customer's offer haggles around it. Every copy pays

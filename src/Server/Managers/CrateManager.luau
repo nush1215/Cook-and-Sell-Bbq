@@ -46,6 +46,10 @@ local REVEAL_DELAY = 2
 -- rewards itself.
 local CLAIM_FALLBACK_DELAY = 5
 
+-- How long a granted crate waits for the rest of its batch before the tally announces them together.
+-- A batch's crates land THROW_STAGGER apart, so one window comfortably covers all ten of them.
+local TALLY_WINDOW = 1
+
 --[[
     Crates: stacking backpack items that pay out several things at once.
 
@@ -99,6 +103,7 @@ local CrateManager = {
 	_openCooldowns = {}, -- [player] = os.clock() their next open is allowed at
 	_listeners = {}, -- [player] = the Crates data listener
 	_pendingEquips = {}, -- [player] = the crate id to equip once its tool exists
+	_pendingTallies = {}, -- [player] = what their in-flight batch has opened and paid out so far
 }
 
 --
@@ -328,36 +333,115 @@ function CrateManager:_getSpawnedFolder(): Folder
 	return self._spawnedFolder
 end
 
--- Hands the player everything one crate rolled and tells them what they got in a single line, rather
--- than one toast per reward. Reached from the owner's claim and from the fallback below, so it must
--- stay safe to reach exactly once per crate -- both callers drop the crate from _spawned first.
+-- Hands the player everything one crate rolled, then folds what it gave into their running tally
+-- instead of announcing it on its own. Reached from the owner's claim and from the fallback below,
+-- so it must stay safe to reach exactly once per crate -- both callers drop the crate from _spawned
+-- first.
 --
 -- Granted in the order the rewards were rolled, which is the order the config authors them and the
 -- order the reveal laid them out. Every grant equips what it handed over, so the player ends up
 -- holding the last of them: on a crate authored as a group per kind that's the last group's reward,
 -- and on a mixed pool there's no such last group to lean on, so it's whatever its final slot rolled.
 function CrateManager:_grantCrateRewards(player: Player, spawnedCrate: SpawnedCrate)
-	local crate = Crates.GetCrateFromId(spawnedCrate.CrateId)
-	local names = {}
-
 	for _, reward in spawnedCrate.Rewards do
 		if reward.Type == "Ingredient" then
-			local ingredient = Ingredients.GetIngredientFromId(reward.Id)
 			IngredientManager:GrantIngredient(player, reward.Id)
-			table.insert(names, GuiUtil.Colorize(ingredient.Name, ingredient.Color))
 		else
-			local stick = Sticks.GetStickFromId(reward.Id)
 			StickManager:GrantStick(player, reward.Id)
-			table.insert(names, GuiUtil.Colorize(`{stick.Name} Stick`, stick.TextColor))
 		end
 	end
 
+	self:_tallyCrateRewards(player, spawnedCrate)
+end
+
+-- Adds one crate's payout to its player's tally and re-arms the summary that announces the batch.
+-- The window restarts on every crate, so a whole batch reports once however many crates are in it --
+-- they land THROW_STAGGER apart, well inside it. A crate that misses the window (one the claim
+-- fallback had to grant seconds after the rest) simply gets a summary of its own.
+function CrateManager:_tallyCrateRewards(player: Player, spawnedCrate: SpawnedCrate)
+	local pending = self._pendingTallies[player]
+
+	-- A tally speaks for one kind of crate, so a second kind arriving mid-window flushes what's there
+	-- rather than being folded into it
+	if pending and pending.CrateId ~= spawnedCrate.CrateId then
+		self:_announceCrateTally(player)
+		pending = nil
+	end
+
+	if not pending then
+		pending = { CrateId = spawnedCrate.CrateId, Crates = 0, Rewards = {}, Counts = {}, Generation = 0 }
+		self._pendingTallies[player] = pending
+	end
+
+	pending.Crates += 1
+
+	-- Kept in first-rolled order, since that's the order the reveal laid the row out in
+	for _, reward in spawnedCrate.Rewards do
+		local key = `{reward.Type}:{reward.Id}`
+
+		if pending.Counts[key] then
+			pending.Counts[key] += 1
+		else
+			pending.Counts[key] = 1
+			table.insert(pending.Rewards, reward)
+		end
+	end
+
+	-- Bumped so only the last crate's timer gets to announce; the earlier ones find a newer generation
+	-- and leave it alone
+	pending.Generation += 1
+	local generation = pending.Generation
+
+	task.delay(TALLY_WINDOW, function()
+		if self._pendingTallies[player] == pending and pending.Generation == generation then
+			self:_announceCrateTally(player)
+		end
+	end)
+end
+
+-- Tells the player what their batch opened: one line for the crates themselves and one per distinct
+-- thing they paid out, rather than a toast per crate listing every slot it rolled.
+function CrateManager:_announceCrateTally(player: Player)
+	local pending = self._pendingTallies[player]
+	if not pending then
+		return
+	end
+
+	self._pendingTallies[player] = nil
+
+	-- The window is a delay, so they may well have left inside it
+	if not validatePlayer(player) then
+		return
+	end
+
+	local crate = Crates.GetCrateFromId(pending.CrateId)
+
 	NotificationManager:NotifyNormal(player, {
-		Text = `Opened a {GuiUtil.Colorize(crate.Name, crate.Color)} and got {table.concat(names, ", ")}`,
+		Text = `You opened {pending.Crates}x {GuiUtil.Colorize(crate.Name, crate.Color)}`,
 		Duration = 5,
 		Sound = "CollectedReward",
 		Effect = "Success",
 	})
+
+	for _, reward in pending.Rewards do
+		local count = pending.Counts[`{reward.Type}:{reward.Id}`]
+		local name, color
+
+		if reward.Type == "Ingredient" then
+			local ingredient = Ingredients.GetIngredientFromId(reward.Id)
+			name, color = ingredient.Name, ingredient.Color
+		else
+			local stick = Sticks.GetStickFromId(reward.Id)
+			name, color = `{stick.Name} Stick`, stick.TextColor
+		end
+
+		NotificationManager:NotifyNormal(player, {
+			Text = `You got {count}x {GuiUtil.Colorize(name, color)}`,
+			Duration = 5,
+			Sound = "CollectedReward",
+			Effect = "Success",
+		})
+	end
 end
 
 -- Puts one crate into the world with its payout already rolled and stamped onto it, and returns the
@@ -673,6 +757,7 @@ function CrateManager:OnStart()
 		end
 
 		self._pendingEquips[player] = nil
+		self._pendingTallies[player] = nil
 		self._openCooldowns[player] = nil
 	end)
 end

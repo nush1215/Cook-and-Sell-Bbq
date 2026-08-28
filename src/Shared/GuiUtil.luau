@@ -259,6 +259,24 @@ function GuiUtil.ConvertSecondsToDHMS(totalSeconds: number): string
 end
 
 --[[
+	Converts seconds to a live countdown, at the resolution that stretch of it is actually read at
+	(e.g., 3665 -> "1h 1m 5s", 185 -> "3m 5s", 9.45 -> "09.45", 0.5 -> "00.50").
+
+	A minute out, the seconds are what matter and the hundredths are a blur, so it reads as the units;
+	inside the last minute the whole thing is a timing call, so it drops to SS.hh and ticks. Meant for
+	something redrawn every frame -- a countdown updated once a second would sit on "00.00".
+	@param totalSeconds Seconds remaining
+	@return Unit string above a minute, zero-padded SS.hh below it
+]]
+function GuiUtil.ConvertSecondsToCountdown(totalSeconds: number): string
+	if totalSeconds >= 60 then
+		return GuiUtil.ConvertSecondsToDHMS(totalSeconds)
+	end
+
+	return string.format("%05.2f", math.max(totalSeconds, 0))
+end
+
+--[[
 	Converts seconds to HH:MM:SS format (e.g., 3665 -> "01:01:05").
 	@param totalSeconds Total seconds to convert
 	@return Formatted string in HH:MM:SS format

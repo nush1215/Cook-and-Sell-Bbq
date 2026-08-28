@@ -82,9 +82,10 @@ local GrillerManager = {
 	RequestSkipCookEvent = Network.Event("RequestSkipCook"),
 
 	-- (player, cookStateId, elapsed, method) when a cook is stopped and settled. elapsed is how long it
-	-- sat on the heat in seconds. method is "Timed" or "Skipped" -- a skipped cook's elapsed is however
-	-- long it happened to be on when it was bought out, which says nothing about the cook, so the two
-	-- can't be read as one population.
+	-- sat on the heat in seconds. method is "Timed", "Skipped" or "PickedUp" -- a skipped cook's elapsed is
+	-- however long it happened to be on when it was bought out, which says nothing about the cook, and a
+	-- picked-up one ended because the griller under it came down rather than because anyone was watching
+	-- the bar, so none of the three can be read as one population.
 	OnCookCompleted = Signal.new(),
 
 	_grillers = {}, -- [player] = { [uid] = Model }, every placed griller they own
@@ -93,6 +94,7 @@ local GrillerManager = {
 	_toggling = {}, -- [player] = true across the read -> write window, so a spammed prompt can't double up
 	_starting = {}, -- [player] = true across StartCooking's read -> write window
 	_stopping = {}, -- [player] = true across StopCooking's read -> write window
+	_skipping = {}, -- [player] = true across the skip's read -> prompt window, so a mashed button raises one
 	_pendingSkipCookUid = {}, -- [player] = the griller their open skip-cook Robux prompt was raised from
 	_cookWindowStretch = {}, -- [player] = how many times longer their perfect window runs, stamped per cook
 }
@@ -100,6 +102,22 @@ local GrillerManager = {
 --
 local function validatePlayer(player: Player?): boolean
 	return player ~= nil and player:IsDescendantOf(Players)
+end
+
+-- What a skewer model is built from, as one string, so a re-render can tell a record that would build
+-- the same model again from one that genuinely wouldn't. Every field StickModel.BuildStickModel varies
+-- on is in here and nothing else is -- the cook stamps deliberately aren't, which is the whole point:
+-- they change on every light and every settle, and rebuilding for them is what used to swap an
+-- identical model in under a client that was mid-animation on the old one.
+local function skewerModelKey(record): string
+	return table.concat({
+		record.StickId,
+		table.concat(record.Ingredients, ","),
+		if record.Cooked then "1" else "",
+		record.CookState or "",
+		record.Sauce or "",
+		record.Mutation or "",
+	}, "|")
 end
 
 -- Whether the player currently has a bare (ingredient-less) stick equipped. A bare stick can't be
@@ -206,11 +224,16 @@ function GrillerManager:_renderGrills(player: Player)
 
 		local existing = skewers[uid]
 
-		-- A cook in progress writes to Grillers only at its start and finish, but interacting with another
-		-- griller re-renders this one too. Leave a still-cooking skewer's (raw) model in place -- the client
-		-- spins and browns it off the attributes, so a needless rebuild would pop its colours back to raw.
-		-- The model carries the cook it belongs to, so a genuinely new cook still rebuilds.
-		if existing and cooking and existing:GetAttribute("CookStartedAt") == record.CookStartedAt then
+		-- Every record write lands here, but most of them don't change what's on the skewer -- so a model
+		-- that would only be built again exactly as it stands is kept and re-stamped instead. That covers
+		-- the two writes that would otherwise swap an identical model in under a client that's mid-
+		-- animation on the old one: a re-render triggered by interacting with another griller, which
+		-- would pop a browning skewer back to raw, and the light itself -- StartCooking carries the record
+		-- over untouched but for the stamps, and the rebuild it used to force tore the client's spin off
+		-- its model on exactly the frame the spin starts. The settle still rebuilds, since that one really
+		-- does change what's on the skewer (Cooked, its state, and any mutation stamped with it).
+		if existing and record and existing:GetAttribute("ModelKey") == skewerModelKey(record) then
+			existing:SetAttribute("CookStartedAt", if cooking then record.CookStartedAt else nil)
 			self:_writeSlotAttributes(slot, record)
 			continue
 		end
@@ -229,9 +252,11 @@ function GrillerManager:_renderGrills(player: Player)
 			-- real failure case.
 			if model and attachment then
 				-- A fixed name and the cook stamp are the client's handle on the skewer: it finds it by
-				-- name and only animates it while this cook is the one running.
+				-- name and only browns it while this cook is the one running. ModelKey is this end's own:
+				-- what the model was built from, which is what the reuse check above reads back off it.
 				model.Name = "Skewer"
 				model:SetAttribute("CookStartedAt", if cooking then record.CookStartedAt else nil)
+				model:SetAttribute("ModelKey", skewerModelKey(record))
 
 				-- Seated off where the griller belongs rather than where it currently is. A structure
 				-- built this session is left PLACE_DROP_HEIGHT above its cell here on the server -- only
@@ -325,22 +350,13 @@ function GrillerManager:ToggleGrillStick(player: Player, uid: string)
 	local record = data.Grillers[uid]
 
 	if record then
-		-- Mid-cook skewers are committed until the timer's done.
-		if record.Cooking then
+		-- Occupied: hand the skewer back and clear the grill. The return only turns this down for a cook
+		-- already being stopped by hand, which the prompt can't offer a toggle on anyway.
+		if not self:ReturnContentsToPlayer(player, data, uid, record) then
 			self._toggling[player] = nil
 			return
 		end
 
-		-- Occupied: hand the skewer back as a distinct filled tool (carrying however its cook went, and
-		-- whatever a pull off the raw band banked on it) and clear the grill.
-		StickManager:AddFilledStick(player, {
-			StickId = record.StickId,
-			Ingredients = table.clone(record.Ingredients),
-			Cooked = record.Cooked,
-			CookState = record.CookState,
-			CookProgress = record.CookProgress,
-			Mutation = record.Mutation,
-		})
 		PlayerDataManager:SetPlayerDataKey(player, { "Grillers", uid }, nil)
 	else
 		-- Empty: only a skewer can go on -- a bare stick has nothing to cook.
@@ -385,6 +401,82 @@ function GrillerManager:ToggleGrillStick(player: Player, uid: string)
 	end
 
 	self._toggling[player] = nil
+end
+
+-- Hands a griller's skewer back to the player as a distinct filled tool, carrying however its cook
+-- went and whatever a pull off the raw band banked on it.
+--
+-- Shared by the prompt above and by BaseManager taking the whole griller down, so a griller picked up
+-- with a skewer on it gives back exactly what taking that skewer off by hand would have. Clearing the
+-- record is the caller's, since only they know what else is being written alongside it.
+--
+-- A lit grill isn't turned away: the cook is settled where it had actually got to, exactly as the stop
+-- prompt would have settled it at that moment. So picking a griller up is never a way to dodge a burn,
+-- and never a way to lose a cook either.
+--
+-- @param fromPickup The griller was taken down with the pickup tool rather than the skewer taken off
+-- it. The skewer goes quietly to the backpack instead of into their hands -- the hammer stays equipped,
+-- so a base can be cleared in one go -- and a toast says what happened, since without the tool
+-- appearing in their hand nothing on screen otherwise would.
+-- @return Whether the pickup may go ahead. False only for a cook this player is already stopping by
+-- hand: letting both run would have that stop write the record back under a uid the pickup has just
+-- taken away, stranding it where nothing can reach it.
+function GrillerManager:ReturnContentsToPlayer(player: Player, data, uid: string, record, fromPickup: boolean?): boolean
+	local settled = record
+	local cookState
+
+	if record.Cooking then
+		-- Read first, like the stop prompt does, so the seconds spent settling below aren't charged to the
+		-- cook. Unlike the stop this isn't the timing call the minigame turns on -- the player is taking the
+		-- grill down, not calling the moment -- so the read BaseManager already yielded on before getting
+		-- here costs nothing worth correcting for.
+		local stoppedAt = workspace:GetServerTimeNow() - math.min(player:GetNetworkPing(), MAX_STOP_COMPENSATION)
+
+		-- The same lock the stop prompt takes, and held right through the hand-back rather than just the
+		-- settle: AddFilledStick yields inside the reconcile it kicks off, and the caller only clears
+		-- Grillers[uid] once this returns. A stop slipping into that gap would read the record still sitting
+		-- there mid-cook, settle it a second time and write it back -- counting one cook twice.
+		if self._stopping[player] then
+			return false
+		end
+		self._stopping[player] = true
+
+		settled, cookState = self:SettleCookRecord(data, uid, record, stoppedAt)
+
+		-- Counted like any cook ended by hand: the skewer carries a state now, so leaving it out would put
+		-- SkewersCooked and the sum of CookStateCounts out of step. The elapsed reported is this stint on
+		-- the heat in real, unwarped seconds, and the method is what says it ended with the grill rather
+		-- than with the knob.
+		self:RecordCookResult(player, cookState, stoppedAt - record.CookStartedAt, "PickedUp")
+	end
+
+	StickManager:AddFilledStick(player, {
+		StickId = settled.StickId,
+		Ingredients = table.clone(settled.Ingredients),
+		Cooked = settled.Cooked,
+		CookState = settled.CookState,
+		CookProgress = settled.CookProgress,
+		Mutation = settled.Mutation,
+	}, fromPickup)
+
+	-- Only ever taken on the branch above, so only dropped for the same one -- clearing it flat would
+	-- release a lock a stop running alongside an idle take is holding.
+	if cookState then
+		self._stopping[player] = nil
+	end
+
+	-- Skipped when a cook was settled: RecordCookResult has already toasted the verdict on it, which says
+	-- everything this one would and more, and two landing together would just talk over each other.
+	if fromPickup and not cookState then
+		NotificationManager:NotifyNormal(player, {
+			Text = "BBQ returned to your inventory",
+			Duration = 3,
+			Sound = "Notify",
+			Effect = "Success",
+		})
+	end
+
+	return true
 end
 
 -- Lights the stove under an eligible skewer: works out how long the whole bar takes from its
@@ -493,17 +585,27 @@ function GrillerManager:PromptSkipCookProduct(player: Player, uid: string)
 		return
 	end
 
+	-- The offer is a button on the cooking bar rather than a prompt with a hold on it, so nothing on the
+	-- way in slows a mashed one down but this. Held across the read below as well as the prompt: the two
+	-- requests either side of the yield would otherwise both write _pendingSkipCookUid.
+	if self._skipping[player] then
+		return
+	end
+	self._skipping[player] = true
+
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
+		self._skipping[player] = nil
 		return
 	end
 
 	if not self:OwnsGrillerStructure(data, uid) then
+		self._skipping[player] = nil
 		return
 	end
 
 	-- There's nothing to buy your way out of on a grill that isn't cooking. The client only puts the
-	-- prompt up through a cook, so this is the remote being held to that rather than a case a player can
+	-- button up through a cook, so this is the remote being held to that rather than a case a player can
 	-- walk into.
 	local record = data.Grillers[uid]
 	if not record or not record.Cooking then
@@ -512,11 +614,14 @@ function GrillerManager:PromptSkipCookProduct(player: Player, uid: string)
 			Duration = 3,
 			Sound = "Reject",
 		})
+		self._skipping[player] = nil
 		return
 	end
 
 	self._pendingSkipCookUid[player] = uid
 	ShopManager:AttemptProductPurchase(player, SKIP_COOK_PRODUCT)
+
+	self._skipping[player] = nil
 end
 
 -- Finishes a cook the player bought their way out of, settling it perfect wherever the bar had actually
@@ -584,33 +689,21 @@ function GrillerManager:GrantSkipCookFromProduct(player: Player)
 		Mutation = self:GetGrillerMutation(data, uid),
 	})
 
-	-- Counted like any other cook, so SkewersCooked still comes to the sum of CookStateCounts. The elapsed
-	-- reported is the real seconds it did spend on the heat before being bought out -- none at all on a BBQ
-	-- that was never lit -- and the method is what says not to read it as a cook that was timed.
-	StatsManager:RecordCookCompleted(player, SKIP_COOK_STATE)
-	self.OnCookCompleted:Fire(
+	-- The elapsed reported is the real seconds it did spend on the heat before being bought out -- none at
+	-- all on a BBQ that was never lit. The toast this ends on is the same one a cook that landed in the
+	-- window by hand gets, off the same state: what the player bought is that result, so it should read as
+	-- that result.
+	self:RecordCookResult(
 		player,
 		SKIP_COOK_STATE,
 		if record.CookStartedAt then workspace:GetServerTimeNow() - record.CookStartedAt else 0,
 		"Skipped"
 	)
-
-	-- The same toast a cook that landed in the window by hand gets, off the same state: what the player
-	-- bought is that result, so it should read as that result.
-	local notification = CookStates.GetStateFromId(SKIP_COOK_STATE).Notification
-	if notification then
-		NotificationManager:NotifyNormal(player, {
-			Text = notification.Text,
-			Duration = 3,
-			Sound = notification.Sound,
-			Effect = notification.Effect,
-		})
-	end
 end
 
--- Pulls a griller's skewer off the heat and settles it at wherever the cook had got to: raw below the
--- window (so it stays re-cookable), perfect inside it, merely cooked through the rest of the bar, and
--- overcooked then charred for however long past the end of it nobody came back.
+-- Pulls a griller's skewer off the heat, settling it where the cook had got to and leaving it on the
+-- grill to be taken off. The timing is the whole minigame, so what this owns over SettleCookRecord is
+-- reading the moment the player acted before anything yields.
 function GrillerManager:StopCooking(player: Player, uid: string)
 	if not validatePlayer(player) then
 		return
@@ -639,8 +732,31 @@ function GrillerManager:StopCooking(player: Player, uid: string)
 		return
 	end
 
-	-- Warped after the ping compensation above, not before: that correction is in real seconds off a real
-	-- clock, and it's the corrected moment that has to be read against the bar the player was watching.
+	local settled, state = self:SettleCookRecord(data, uid, record, stoppedAt)
+	PlayerDataManager:SetPlayerDataKey(player, { "Grillers", uid }, settled)
+
+	self._stopping[player] = nil
+
+	-- The elapsed reported is this stint on the heat and not the bar it landed on: real, unwarped seconds
+	-- off a real clock, so a cook resumed from an earlier pull reports the leg that was actually run rather
+	-- than counting the banked part twice across two stops.
+	self:RecordCookResult(player, state, stoppedAt - record.CookStartedAt, "Timed")
+end
+
+-- Works out where a cook had got to and returns the record it settles into, without writing it: raw below
+-- the window (so it stays re-cookable), perfect inside it, merely cooked through the rest of the bar, and
+-- overcooked then charred for however long past the end of it nobody came back.
+--
+-- Shared by the stop prompt and by a griller picked up mid-cook, so both land on the same state for the
+-- same moment on the bar. Returned rather than written because the two want it in different places -- one
+-- back onto the grill, the other onto a skewer going into the backpack.
+--
+-- @param stoppedAt The ping-compensated server time the cook ended at, which the caller reads before
+-- anything that yields -- the correction is only worth anything against the moment the player acted.
+-- @return the settled record, and the CookStates id it settled on
+function GrillerManager:SettleCookRecord(data, uid: string, record, stoppedAt: number)
+	-- Warped after the ping compensation, not before: that correction is in real seconds off a real clock,
+	-- and it's the corrected moment that has to be read against the bar the player was watching.
 	-- CookProgress goes in with it, so a resumed cook is read against the whole bar it's been through
 	-- rather than only this leg of it, and the instability pair so an unstable grill settles on the bar
 	-- that was actually drawn rather than the steady one underneath it.
@@ -656,7 +772,7 @@ function GrillerManager:StopCooking(player: Player, uid: string)
 	local state = CookStates.GetStateFromCook(elapsed, record.CookTime)
 	local raw = state == "Raw"
 
-	PlayerDataManager:SetPlayerDataKey(player, { "Grillers", uid }, {
+	return {
 		StickId = record.StickId,
 		Ingredients = table.clone(record.Ingredients),
 		-- Cooked stays the plain "has been through a grill" flag the sauce dispenser gates on, and
@@ -677,24 +793,28 @@ function GrillerManager:StopCooking(player: Player, uid: string)
 		-- stamping one would let a player light a Golden Grill for a second, pull it raw, and then finish
 		-- the cook on a plain grill still carrying the multiplier.
 		Mutation = if raw then nil else self:GetGrillerMutation(data, uid),
-	})
+	}, state
+end
 
-	self._stopping[player] = nil
-
-	-- Every stop counts, a raw pull included -- the raw ones are the interesting half of a cook-quality
-	-- tally rather than a non-event, so SkewersCooked always comes to the sum of CookStateCounts.
-	--
-	-- The elapsed reported is this stint on the heat and not the bar it landed on: real, unwarped seconds
-	-- off a real clock, so a cook resumed from an earlier pull reports the leg that was actually run rather
-	-- than counting the banked part twice across two stops.
-	StatsManager:RecordCookCompleted(player, state)
-	self.OnCookCompleted:Fire(player, state, stoppedAt - record.CookStartedAt, "Timed")
+-- Counts a finished cook and gives the player the verdict on it.
+--
+-- Every cook that ends counts, a raw pull included -- the raw ones are the interesting half of a
+-- cook-quality tally rather than a non-event, so SkewersCooked always comes to the sum of
+-- CookStateCounts. Shared by all three ways a cook can end, which is what keeps that true.
+--
+-- @param elapsed Real, unwarped seconds this skewer spent on the heat -- not where it landed on the bar.
+-- @param method How the cook ended: "Timed" off the knob, "Skipped" bought out with Robux, or "PickedUp"
+-- with the whole griller. Analytics reads them apart because they can't be one population -- see the
+-- comment on OnCookCompleted.
+function GrillerManager:RecordCookResult(player: Player, stateId: string, elapsed: number, method: string)
+	StatsManager:RecordCookCompleted(player, stateId)
+	self.OnCookCompleted:Fire(player, stateId, elapsed, method)
 
 	-- The verdict on the cook, written next to the state it belongs to rather than spelled out here. Every
 	-- state carries one now, a raw pull included: what it's there to say is that the cook was banked and
 	-- not lost, which is the one thing about a stop the bar can't show on its way down. Slots landing
 	-- together share their text, so they collapse into one toast with a counter rather than stacking.
-	local notification = CookStates.GetStateFromId(state).Notification
+	local notification = CookStates.GetStateFromId(stateId).Notification
 	if notification then
 		NotificationManager:NotifyNormal(player, {
 			Text = notification.Text,
@@ -737,6 +857,7 @@ function GrillerManager:_cleanupPlayer(player: Player)
 	self._toggling[player] = nil
 	self._starting[player] = nil
 	self._stopping[player] = nil
+	self._skipping[player] = nil
 	self._pendingSkipCookUid[player] = nil
 	self._cookWindowStretch[player] = nil
 end

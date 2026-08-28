@@ -275,21 +275,53 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 		return
 	end
 
-	-- Not holding an ingredient: take the stick off. With ingredients it's a distinct filled tool
-	-- that can't stack; empty, it just stacks back onto the plain stick tool.
-	if #record.Ingredients > 0 then
+	-- Not holding an ingredient: take the stick off.
+	self:ReturnContentsToPlayer(player, data, uid, record)
+	PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid }, nil)
+
+	self._toggling[player] = nil
+end
+
+-- Hands whatever was on a stand back to the player. With ingredients it's a distinct filled tool that
+-- can't stack; empty, it just stacks back onto the plain stick tool.
+--
+-- Shared by the prompt above and by BaseManager taking the whole stand down, so a stand picked up with
+-- a stick on it gives back exactly what taking that stick off by hand would have. Clearing the record
+-- is the caller's, since only they know what else is being written alongside it.
+--
+-- @param fromPickup The stand was taken down with the pickup tool rather than the stick taken off it.
+-- The stick goes quietly to the backpack instead of into their hands -- the hammer stays equipped, so
+-- a base can be cleared in one go -- and a toast says what came back, since without the tool appearing
+-- in their hand nothing on screen otherwise would.
+-- @return Whether the pickup may go ahead. Always true here: a stand has nothing going on that a stick
+-- coming off it could interrupt, so there's no state it refuses in. The griller's takes the same
+-- parameters and can say no, and BaseManager calls whichever owns the structure without knowing which.
+function StickStandManager:ReturnContentsToPlayer(player: Player, _data, _uid: string, record, fromPickup: boolean?): boolean
+	local isFilled = #record.Ingredients > 0
+
+	if isFilled then
 		StickManager:AddFilledStick(player, {
 			StickId = record.StickId,
 			Ingredients = table.clone(record.Ingredients),
 			Cooked = record.Cooked,
 			CookState = record.CookState,
-		})
+		}, fromPickup)
 	else
-		StickManager:GrantStick(player, record.StickId)
+		StickManager:GrantStick(player, record.StickId, nil, fromPickup)
 	end
-	PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid }, nil)
 
-	self._toggling[player] = nil
+	if fromPickup then
+		NotificationManager:NotifyNormal(player, {
+			Text = if isFilled
+				then "BBQ returned to your inventory"
+				else "Stick returned to your inventory",
+			Duration = 3,
+			Sound = "Notify",
+			Effect = "Success",
+		})
+	end
+
+	return true
 end
 
 -- Registers the player's data listener. Guarded so two stands being bound in the same frame can't

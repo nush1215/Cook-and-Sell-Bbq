@@ -106,7 +106,12 @@ function UIController:CloseOpenFrame()
 	end
 end
 
---
+--[[
+	`activateOnPress` answers on the press instead of the release. Activated needs the release to land
+	back on the same button, which a button that moves under the finger can't promise -- the ones on a
+	BillboardGui tracking an animated NPC lose every touch that way. Only for buttons there's nothing to
+	change your mind about mid-tap; everything else wants the default, where sliding off cancels.
+]]
 function UIController:BindButtonClick(
 	button: GuiButton,
 	clickCallback: () -> (),
@@ -120,12 +125,16 @@ function UIController:BindButtonClick(
 		OnHoverEndCallback: () -> ()?,
 		ClickSoundName: string?,
 		ButtonNormalScale: number?,
-	}?
+	}?,
+	activateOnPress: boolean?
 ): { Disconnect: () -> () }
 	--
 	local cleaner = Trove.new()
 
-	cleaner:Add(button.Activated:Connect(function()
+	-- MouseButton1Down covers touch as well as the mouse, so there's no separate tap path to bind.
+	local clickSignal = if activateOnPress then button.MouseButton1Down else button.Activated
+
+	cleaner:Add(clickSignal:Connect(function()
 		if clickCallback then
 			task.spawn(clickCallback)
 		end
@@ -281,14 +290,14 @@ function UIController:OnInit()
 	end)
 
 	-- Disable Reset Button
-	--[[task.spawn(function()
+	task.spawn(function()
 		repeat
 			local success = pcall(function()
 				StarterGui:SetCore("ResetButtonCallback", false)
 			end)
 			task.wait(1)
 		until success
-	end)]]
+	end)
 end
 
 function UIController:OnStart() end

@@ -5,7 +5,6 @@ local HttpService = game:GetService("HttpService")
 
 -- Shared
 local Shared = ReplicatedStorage.Shared
-local Network = require(Shared.Network)
 local Sticks = require(Shared.Config.Sticks)
 local Ingredients = require(Shared.Config.Ingredients)
 local Sauces = require(Shared.Config.Sauces)
@@ -49,14 +48,17 @@ export type FilledStick = {
     Player data is the only source of truth here -- nothing grants a tool directly. Any write to
     Sticks re-runs the reconcile, which diffs what the player owns against what's in their backpack
     and creates, updates or destroys tools to match. Stacking, respawn and rejoin all fall out of
-    that one path. The buying flow doesn't exist yet, so GrantStick is fired off a debug remote for
-    now; the real stick-stand purchase will call the same method later.
+    that one path.
+
+    Nothing here listens to the client. Every way a stick is handed over -- the stick shop, a crate,
+    the starter pack, the group reward, a code -- goes through GrantStick from the server side that
+    already decided the player had earned it. There is deliberately no remote that grants one on
+    request: giving a stick for testing is the giveStick command, which the CommandManager's BeforeRun
+    hook gates on staff rank.
 ]]
 
 --
 local StickManager = {
-	GiveStickEvent = Network.Event("GiveStick"),
-
 	_listeners = {}, -- [player] = { sticks = conn, filled = conn }
 	_pendingEquips = {}, -- [player] = the stick id or filled-stick uid to equip once its tool exists
 }
@@ -336,9 +338,13 @@ function StickManager:_reconcileTools(player: Player)
 end
 
 -- Adds some of the given stick tier to the player's owned count (default one), which the reconcile
--- turns into a backpack tool or a higher Count, equipped. Reused by the real stick-stand purchase
--- once it exists, and by the starter pack, which hands over several of one tier at a time.
-function StickManager:GrantStick(player: Player, stickId: string, amount: number?)
+-- turns into a backpack tool or a higher Count, equipped. The one way a stick is ever handed over, so
+-- it's what the stick shop, the crates, the starter pack and the giveStick command all call -- the
+-- last three of those hand over several of one tier at a time.
+-- @param skipEquip Leave it in the backpack rather than putting it in their hands, for a stick that
+-- came back off a structure the player picked up: taking the hammer out of their hand there would end
+-- the pickup after every structure, so a base couldn't be cleared in one go.
+function StickManager:GrantStick(player: Player, stickId: string, amount: number?, skipEquip: boolean?)
 	local stick = Sticks.GetStickFromId(stickId)
 	if not stick then
 		return
@@ -350,7 +356,9 @@ function StickManager:GrantStick(player: Player, stickId: string, amount: number
 	end
 
 	-- Flagged before the write, since that's what runs the reconcile that builds the tool to equip.
-	self._pendingEquips[player] = stickId
+	if not skipEquip then
+		self._pendingEquips[player] = stickId
+	end
 
 	local owned = data.Sticks[stickId] or 0
 	PlayerDataManager:SetPlayerDataKey(player, { "Sticks", stickId }, owned + (amount or 1))
@@ -423,11 +431,16 @@ end
 -- taking a loaded stick off a stand or a griller (where it comes back carrying however its cook
 -- went), or off the sell stand (where it may come back sauced). The record goes straight into player
 -- data, so callers hand over one they've built rather than one they're still holding.
-function StickManager:AddFilledStick(player: Player, record: FilledStick)
+-- @param skipEquip Leave it in the backpack rather than putting it in their hands, for a skewer that
+-- came back off a structure the player picked up: taking the hammer out of their hand there would end
+-- the pickup after every structure, so a base couldn't be cleared in one go.
+function StickManager:AddFilledStick(player: Player, record: FilledStick, skipEquip: boolean?)
 	local uid = HttpService:GenerateGUID(false)
 
 	-- Flagged before the write, since that's what runs the reconcile that builds the tool to equip.
-	self._pendingEquips[player] = uid
+	if not skipEquip then
+		self._pendingEquips[player] = uid
+	end
 
 	PlayerDataManager:SetPlayerDataKey(player, { "FilledSticks", uid }, record)
 end
@@ -460,10 +473,6 @@ function StickManager:OnInit()
 end
 
 function StickManager:OnStart()
-	self.GiveStickEvent:OnServerEvent(function(player, stickId)
-		self:GrantStick(player, stickId)
-	end)
-
 	Players.PlayerAdded:Connect(function(player: Player)
 		self:_setupPlayer(player)
 	end)

@@ -44,6 +44,12 @@ BaseUnlocks.LAYOUT_FREQUENCY = 3.5
 BaseUnlocks.LAYOUT_RISE = 0.5
 BaseUnlocks.LAYOUT_ENTRANCE_SCALE = 0.4
 
+-- How long the server waits before settling its own copy onto its slot at full size and dropping the
+-- spawn flash. The rise is the client's to play and the server has no signal for when its spring
+-- landed, so it waits the spring out -- see Structures.PLACE_SETTLE_TIME, which is the same thing for
+-- the placed structures riding this component the other way up.
+BaseUnlocks.LAYOUT_SETTLE_TIME = 3
+
 -- The one-shot gold flash a slot wears the moment it's bought, so the thing you just paid for is
 -- obvious on a base that already has five of them. Fed straight to the HighlightPulse effect:
 -- START_TRANSPARENCY is where the fill begins before it tweens out over DURATION seconds.
@@ -76,7 +82,7 @@ BaseUnlocks.Data = {
 		LockStyle = "Layout",
 		Layout = { MaxPerRow = 3, Padding = 3 },
 		Limit = 6,
-		Costs = { 0, 1_500, 12_500, 50_000, 250_000, 750_000 },
+		Costs = { 0, 1_000, 15_000, 50_000, 300_000, 1_000_000 },
 		-- Level 6 has no product made for it yet, so that last step is currency-only.
 		RobuxProductIds = { [2] = 3709025046, [3] = 3709025081, [4] = 3709025105, [5] = 3709025123 },
 	},
@@ -88,28 +94,34 @@ BaseUnlocks.Data = {
 		-- One rung per entry in Rolling.LEVEL_DURATIONS, which is what the level is read against.
 		Limit = #Rolling.LEVEL_DURATIONS,
 		-- Level 1 is granted by the data template, so its 0 is only here to hold the array dense.
+		--
+		-- The first six buyable rungs are priced to be bought on impulse -- a new player should feel the
+		-- roll get faster several times over on their first few sells, since a slow roll is what gates
+		-- everything else they can do. From level 8 the ladder ramps on its own curve, starting at about
+		-- 1.6x a rung and easing out towards 2x by the top, so there's no single wall to hit; it's the
+		-- steady climb that prices the last rungs, not one spike part-way up.
 		Costs = {
 			0,
+			100,
+			200,
+			350,
+			600,
 			1_000,
 			1_600,
-			2_600,
-			4_200,
-			6_800,
-			11_000,
-			17_500,
-			28_000,
-			45_000,
-			72_000,
-			115_000,
-			185_000,
-			295_000,
-			470_000,
-			750_000,
-			1_200_000,
-			1_900_000,
-			3_000_000,
-			4_800_000,
-			7_500_000,
+			2_500,
+			4_000,
+			7_000,
+			12_000,
+			21_000,
+			38_000,
+			70_000,
+			130_000,
+			245_000,
+			465_000,
+			900_000,
+			1_750_000,
+			3_500_000,
+			7_000_000,
 		},
 		-- Ten products over the twenty buyable levels, so each one covers a band of two. Banded rather
 		-- than one per level so the Robux button never disappears part-way up the ladder, and the same
@@ -117,9 +129,10 @@ BaseUnlocks.Data = {
 		-- whatever the player's next level is (see Products.luau), so a receipt can't skip a level or
 		-- hand out one already owned.
 		--
-		-- The bands run cheapest-first against the Bux costs above, which roughly double every rung
-		-- while a tier's Robux price holds flat across its two. That's deliberate: the early levels are
-		-- priced to be worth taking at all, and the deal only gets better the further up someone is.
+		-- The bands run cheapest-first against the Bux costs above, which climb towards doubling every
+		-- rung while a tier's Robux price holds flat across its two. That's deliberate: the early levels
+		-- are cheap enough in Bux that nobody needs to pay for them, and the deal only gets better the
+		-- further up someone is, where the currency cost is the one actually worth skipping.
 		RobuxProductIds = {
 			[2] = 3710074572, -- Tier 1
 			[3] = 3710074572,

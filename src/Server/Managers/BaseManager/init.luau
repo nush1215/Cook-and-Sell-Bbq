@@ -14,6 +14,10 @@ local BaseUnlocks = require(Shared.Config.BaseUnlocks)
 local Plots = require(Shared.Config.Plots)
 local Structures = require(Shared.Config.Structures)
 
+-- Managers
+local StickStandManager = require(script.Parent.StickStandManager)
+local GrillerManager = require(script.Parent.GrillerManager)
+
 -- Modules
 local Base = require(script.Base)
 
@@ -24,12 +28,16 @@ local NotificationManager
 local ShopManager
 local BuildManager
 
--- The player-data key holding whatever sits on a structure of each kind, keyed by category. Both are
--- keyed by the structure's uid, so taking a structure down has to take its contents with it. A
--- category that can't hold anything simply isn't listed.
+-- The player-data key holding whatever sits on a structure of each kind, and the manager that owns
+-- handing those contents back, keyed by category. Both keys are keyed by the structure's uid, so
+-- taking a structure down has to take its contents with it -- and hand them back rather than bin them.
+-- A category that can't hold anything simply isn't listed.
+--
+-- The manager rather than a second lookup here so this one never has to know what a stand or a griller
+-- actually holds: it asks the owner for the contents and takes its answer, including a no.
 local STRUCTURE_CONTENTS = {
-	Grillers = "Grillers",
-	StickStands = "StickStands",
+	Grillers = { Key = "Grillers", Manager = GrillerManager },
+	StickStands = { Key = "StickStands", Manager = StickStandManager },
 }
 
 --
@@ -414,13 +422,17 @@ function BaseManager:PlaceStructureOnBase(
 	return true
 end
 
--- Takes one of the player's structures back off their base, along with whatever was sitting on it,
--- and returns the structure itself to their inventory. Clearing that second record is the point: a
--- griller removed with a BBQ on it would otherwise leave the record behind forever, keyed by a uid
--- nothing can reach any more.
+-- Takes one of the player's structures back off their base, returning both the structure itself and
+-- whatever was sitting on it to their inventory. Clearing that second record is what stops a griller
+-- taken down with a BBQ on it leaving the record behind forever, keyed by a uid nothing can reach any
+-- more -- and handing its contents back first is what stops that being a way to lose what you paid
+-- for. So picking a structure up is how a base gets rearranged, and costs nothing either way.
 --
--- The structure comes back but its contents don't, so picking one up is how a base gets rearranged
--- rather than a way to lose what you paid for -- while a griller mid-cook still costs you the skewer.
+-- A lit griller comes down like any other, its cook settled where it had got to and the skewer handed
+-- back at that state -- so the pickup is never a way to dodge a burn or to lose a cook. The owning
+-- manager can still turn one down (a cook the player is already stopping by hand), and it gets that call
+-- rather than this one, so the whole pickup is refused before anything is written rather than left half
+-- done with the structure gone and the cook nowhere.
 function BaseManager:RemoveStructureFromBase(player: Player, uid: string): boolean
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
@@ -434,12 +446,26 @@ function BaseManager:RemoveStructureFromBase(player: Player, uid: string): boole
 		return false
 	end
 
+	local config = Structures.GetStructureFromId(structure.Type)
+	local contents = config and STRUCTURE_CONTENTS[config.Category]
+
+	-- Read before anything is written, since clearing the structure below tears its model down. A record
+	-- is a table; a legacy string-shaped entry (from before ingredients existed) has nothing to give
+	-- back, so it reads as empty rather than erroring on .Ingredients.
+	local record = contents and data[contents.Key][uid]
+	if type(record) ~= "table" then
+		record = nil
+	end
+
+	-- Handed back first because it's the one step that can turn the pickup down.
+	if record and not contents.Manager:ReturnContentsToPlayer(player, data, uid, record, true) then
+		return false
+	end
+
 	PlayerDataManager:SetPlayerDataKey(player, { "Structures", uid }, nil)
 
-	local config = Structures.GetStructureFromId(structure.Type)
-	local contentsKey = config and STRUCTURE_CONTENTS[config.Category]
-	if contentsKey then
-		PlayerDataManager:SetPlayerDataKey(player, { contentsKey, uid }, nil)
+	if contents then
+		PlayerDataManager:SetPlayerDataKey(player, { contents.Key, uid }, nil)
 	end
 
 	-- Back into the backpack for them to put down somewhere else. Only for a structure the config still

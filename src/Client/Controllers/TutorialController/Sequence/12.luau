@@ -32,18 +32,21 @@ return function(self)
 			-- The knob's glow goes with its prompt. It breathes for the whole cook, since the knob is what
 			-- stops one, and left alone it would be lit through the raw band for something the player is
 			-- being held back from doing.
-			-- Every prompt on the attachment rather than the first one found: the body carries the Robux
-			-- skip through a cook as well as the place, and a beat teaching the timing shouldn't be
-			-- offering to sell its way out of the thing it's teaching.
-			local prompts = { knob:FindFirstChildWhichIsA("ProximityPrompt") }
-			for _, child in slot:FindFirstChild("GrillAttachment", true):GetChildren() do
-				if child:IsA("ProximityPrompt") then
-					table.insert(prompts, child)
-				end
-			end
+			local prompts = {
+				knob:FindFirstChildWhichIsA("ProximityPrompt"),
+				slot:FindFirstChild("GrillAttachment", true):FindFirstChildWhichIsA("ProximityPrompt"),
+			}
 
+			-- The Robux skip isn't among them -- it's a button on the cooking bar rather than a prompt on
+			-- the grill, so there's nothing here to hold it by. It gets its own lock, taken and released
+			-- alongside these: a beat teaching the timing shouldn't be offering to sell its way out of the
+			-- thing it's teaching.
+			GrillerController:SetSkipLocked(true)
+
+			-- SetSkipLocked refreshes every grill on its way out, which is all the prompts needed handing
+			-- back too, so the release is the one call.
 			self.CookPromptLock = self:DisablePrompts(prompts, function()
-				GrillerController:RefreshInteractions()
+				GrillerController:SetSkipLocked(false)
 			end, { slot.Knob })
 
 			-- Step 11 held this from the moment the BBQ went down; the cook is what it was holding out for.

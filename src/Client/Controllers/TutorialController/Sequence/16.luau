@@ -26,7 +26,7 @@ local SPOTLIGHT_PADDING = 14
 -- camera properly. Returns nil while there's nothing to project against.
 local function buttonFocusPoint(button: GuiObject): (Vector3?, number?)
 	local billboard = button:FindFirstAncestorOfClass("BillboardGui")
-	local adornee = billboard and billboard.Adornee :: Attachment?
+	local adornee = billboard and billboard.Adornee :: BasePart?
 	local camera = workspace.CurrentCamera
 	if not adornee or not camera then
 		return nil
@@ -35,9 +35,11 @@ local function buttonFocusPoint(button: GuiObject): (Vector3?, number?)
 	local cameraCFrame = camera.CFrame
 
 	-- StudsOffset is measured against the camera's own orientation, so it goes on along those axes. Its Z
-	-- runs toward the camera, which is the opposite of the look vector.
+	-- runs toward the camera, which is the opposite of the look vector. StudsOffsetWorldSpace is on the
+	-- world axes instead and goes on as-is -- it's what carries the bubble up clear of the head.
 	local studsOffset = billboard.StudsOffset
-	local anchor = adornee.WorldPosition
+	local anchor = adornee.Position
+		+ billboard.StudsOffsetWorldSpace
 		+ cameraCFrame.RightVector * studsOffset.X
 		+ cameraCFrame.UpVector * studsOffset.Y
 		- cameraCFrame.LookVector * studsOffset.Z

@@ -63,7 +63,7 @@ export type CookState = {
 	OfferMax: number,
 	CounterChance: number, -- chance out of 100 that declining gets a better price rather than a walk-off
 	CounterCap: number, -- the most a customer can ever be haggled to, as a multiple of that sell value
-	Icon: string, -- rbxassetid for this state's badge on a skewer's inventory slot
+	Icon: string, -- rbxassetid for this state's badge: a skewer's inventory slot and its held billboard
 	Color: Color3, -- the [COOKED] tag's colour on the tooltip that slot pops up
 	BarColor: Color3, -- what the cooking bar's fill turns while the skewer is in this state
 	Tint: Color3?, -- what its cooked models darken toward, or nil to leave them as they are
@@ -93,10 +93,16 @@ CookStates.Data = {
 		End = CookStates.RAW_END,
 		-- A raw skewer still sells, it just barely clears what its ingredients cost. Pulling one off
 		-- early is a loss to eat rather than a wall to hit, and most customers won't touch it anyway.
+		--
+		-- The counter chance is higher than a raw skewer deserves on its merits, because this is the state
+		-- a brand-new player is selling and the counter-offer is the one thing about the stand they have to
+		-- be shown rather than told. What keeps that honest is the cap: 1.1 against a 1.05 OfferMax leaves
+		-- 0.05x of headroom, so a counter landing here moves the price by under 1%. They meet the mechanic
+		-- without a raw skewer ever becoming worth haggling over.
 		Multiplier = 1,
 		OfferMin = 1,
 		OfferMax = 1.05,
-		CounterChance = 15,
+		CounterChance = 30,
 		CounterCap = 1.1,
 		Icon = "rbxassetid://85040089054254",
 		Color = Color3.fromRGB(255, 120, 180),
@@ -141,7 +147,7 @@ CookStates.Data = {
 	{
 		Id = "Overcooked",
 		Name = "Overcooked",
-		Overtime = 15,
+		Overtime = 20,
 		-- Past the bar the haggle narrows rather than the offer dipping under the estimate: a customer
 		-- still opens above the guess, it just won't be talked much past it.
 		Multiplier = 0.9,
@@ -158,13 +164,17 @@ CookStates.Data = {
 	{
 		Id = "Charred",
 		Name = "Charred",
-		Overtime = 40,
+		Overtime = 60,
 		-- The narrowest range of any state, so the bottom of the ladder haggles like the bottom of the
-		-- ladder: nobody talks themselves up over a burnt skewer.
+		-- ladder. That narrowness lives in the cap rather than the chance, though: a customer will happily
+		-- counter on a burnt skewer, there's just nothing above 1.05 for the counter to reach into, so it
+		-- gives ground worth about a percent and nobody talks themselves up over it. Cheaper to refuse the
+		-- push outright, but a counter that visibly moves nothing teaches the state's worth better than a
+		-- roll that silently fails does.
 		Multiplier = 0.8,
 		OfferMin = 1,
 		OfferMax = 1.05,
-		CounterChance = 30,
+		CounterChance = 40,
 		CounterCap = 1.14,
 		Icon = "rbxassetid://117732140813353",
 		Color = Color3.fromRGB(92, 62, 48),
@@ -340,6 +350,63 @@ function CookStates.GetBarElapsed(
 	end
 
 	return elapsed - (stretched - windowLength)
+end
+
+-- The other direction: how many wall-clock seconds after a cook started its bar reaches `barTarget`.
+-- What the cooking bar's countdown is written against -- "perfect in 9.45s" is this, solved for the
+-- band's own boundary, minus the seconds already gone.
+--
+-- Solved numerically rather than rearranged, because the instability term above is `t` plus a cosine
+-- of `t` and there's no closed form for that -- it's Kepler's equation. Bisection is exact here
+-- rather than approximate, and for the one reason the warp above already argues at length: the map
+-- is strictly increasing for any amplitude under 1, so the target sits in exactly one place and
+-- halving the bracket walks straight to it. Taking the same trailing arguments as the forward half
+-- and passing them straight back through is what keeps the two agreeing -- a countdown solved
+-- against a timeline the bar isn't drawing would tick to zero somewhere other than the band mark.
+--
+-- Cheap enough not to think about, but not per-frame cheap: every argument is stamped on the cook
+-- and fixed for its whole run, so a caller should solve once when the cook opens rather than each
+-- time it draws.
+-- @param barTarget: the bar second to reach, e.g. RAW_END * cookTime for the start of the window
+-- @param cookTime: the whole bar in seconds, as stamped on the cook
+-- @param windowStretch, cookProgress, instability, instabilityPhase: as GetBarElapsed takes them
+function CookStates.GetElapsedForBar(
+	barTarget: number,
+	cookTime: number,
+	windowStretch: number?,
+	cookProgress: number?,
+	instability: number?,
+	instabilityPhase: number?
+): number
+	-- A cook resumed from a banked pull enters the timeline part-way along, so it can open at or past
+	-- a target that a cook lit from cold is still seconds away from. The bank is clamped to RAW_END,
+	-- so the case this actually catches is a relight landing exactly on the start of the window.
+	if CookStates.GetBarElapsed(0, cookTime, windowStretch, cookProgress, instability, instabilityPhase) >= barTarget then
+		return 0
+	end
+
+	-- Wide enough to bracket any target on the bar: the wobble puts bar(cookTime) back on cookTime
+	-- whatever it did in between, so a target of cookTime or less is reached within cookTime seconds
+	-- before the stretch, and the stretch can only add its own window again on top of that.
+	local low = 0
+	local high = cookTime * (1 + (windowStretch or 1))
+
+	-- Down to a millisecond, which is finer than anything reading this can show. Counted as well as
+	-- measured so a target that somehow sits outside the bracket ends the loop rather than spinning.
+	for _ = 1, 64 do
+		if high - low <= 1e-3 then
+			break
+		end
+
+		local middle = (low + high) / 2
+		if CookStates.GetBarElapsed(middle, cookTime, windowStretch, cookProgress, instability, instabilityPhase) < barTarget then
+			low = middle
+		else
+			high = middle
+		end
+	end
+
+	return high
 end
 
 -- What a skewer in this state sells for, as a multiple of its ingredient value. A skewer carrying no

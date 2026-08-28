@@ -439,9 +439,16 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 			if icon ~= "" then
 				ToolName.Size = UDim2.new(1, -SLOT_EQUIP_THICKNESS * 2, 0.386, -SLOT_EQUIP_THICKNESS * 2)
 				ToolName.Position = UDim2.fromScale(0.5, 0.8)
+				-- Scaled so a long name (an ingredient's, say) shrinks to fit the strip instead of
+				-- being clipped; the UITextSizeConstraint keeps a short one from blowing up past
+				-- FONT_SIZE.
+				ToolName.TextScaled = true
 			else
 				ToolName.Size = UDim2.new(1, -SLOT_EQUIP_THICKNESS * 2, 1, -SLOT_EQUIP_THICKNESS * 2)
 				ToolName.Position = UDim2.fromScale(0.5, 0.5)
+				-- The full slot is roomy enough for these names at full size, and MaxTextSize equals
+				-- FONT_SIZE anyway -- scaling here could only ever shrink them.
+				ToolName.TextScaled = false
 			end
 
 			-- A filled skewer labels itself with the ingredients on it rather than the tool's own name,
@@ -764,9 +771,10 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 	ToolName.TextStrokeColor3 = TEXT_STROKE_COLOR
 	ToolName.RichText = false
 	ToolName.FontFace = Font.new(FONT_FAMILY.Family, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
-	-- Scaled so a long name (an ingredient's, say) shrinks to fit its strip instead of being clipped;
-	-- the constraint below keeps a short one from blowing up past the normal size.
-	ToolName.TextScaled = true
+	-- Off by default; assignToolData turns it on for a tool with an icon, whose name has only the
+	-- narrow strip under the icon to live in. A tool without one gets the whole slot and reads at
+	-- FONT_SIZE flat.
+	ToolName.TextScaled = false
 	ToolName.TextSize = FONT_SIZE
 	ToolName.AnchorPoint = Vector2.new(0.5, 0.5)
 	ToolName.TextWrapped = true
