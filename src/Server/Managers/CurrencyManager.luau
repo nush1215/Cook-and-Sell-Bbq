@@ -23,7 +23,7 @@ local CurrencyManager = {
 -- What `amount` becomes once the player's boosts are folded in: the gamepasses they hold, how many
 -- friends are in the server with them, and the head start a new player's income gets. Every one is
 -- figured on the base amount rather than stacking on each other, so a brand-new player holding x2Bux
--- gets 1 + 1 + 1.5 rather than 2 x 2.5.
+-- gets 1 + 1 + 0.5 rather than 2 x 1.5.
 --
 -- Split out of IncrementCurrency rather than left inline because the sell stand has to show this number
 -- before it pays it: an offer that quotes the plain figure and then banks a bigger one is the display

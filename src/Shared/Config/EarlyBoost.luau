@@ -16,33 +16,39 @@
 
     What comes out is the bonus fraction, not a multiplier -- CurrencyManager stacks it into the same
     running `addition` as the gamepass and friend boosts, all of them figured on the base amount. So a
-    brand-new player holding x2Bux gets 1 + 1 + 2, not 2 x 3.
+    brand-new player holding x2Bux gets 1 + 1 + 0.5, not 2 x 1.5.
 ]]
 
 --
 local EarlyBoost = {}
 
--- The bonus at nothing earned, as a fraction of the base amount: 2 is triple income. Raise it to make
--- the opening more generous without moving where it stops -- it steepens the whole curve rather than
--- lengthening it, since THRESHOLD is the only thing that says when this is over.
-EarlyBoost.MAX_BONUS = 0.65
+-- These two are the whole shape: how high the head start starts and how long it runs. There's no third
+-- dial for the curve between them on purpose -- see GetBonus.
+
+-- The bonus at nothing earned, as a fraction of the base amount: 0.5 is half again on every sale.
+-- Raise it to make the opening more generous without moving where it stops -- it lifts the whole curve
+-- rather than lengthening it, since THRESHOLD is the only thing that says when this is over.
+EarlyBoost.MAX_BONUS = 0.5
 
 -- Lifetime earnings at which the bonus has run out entirely. This is the length of the head start, and
 -- it's in dollars rather than minutes on purpose: a player who found a good loop gets through it sooner
--- than one still learning, which is the right way round.
-EarlyBoost.THRESHOLD = 50_000
-
--- The shape of the fade between those two. 1 is a straight line; above it the bonus drops away early
--- and trails a long thin tail, below it the bonus holds high and then falls off a cliff near the end.
--- Kept at 1 because the tail is what the player feels as "slowing down", and either extreme turns that
--- into a moment they notice rather than something that just happens.
-EarlyBoost.FALLOFF = 1
+-- than one still learning, which is the right way round. Set past the fourth plot (Config.Plots.Costs)
+-- so the fade has room to be gentle rather than having to spend itself over the opening few sales.
+EarlyBoost.THRESHOLD = 100_000
 
 -- The bonus fraction a player with this much lifetime income still earns on top of what they're paid.
 -- Zero at and past THRESHOLD, so a caller can add it unconditionally.
 function EarlyBoost.GetBonus(totalEarned: number): number
 	local progress = math.clamp(totalEarned / EarlyBoost.THRESHOLD, 0, 1)
-	return EarlyBoost.MAX_BONUS * (1 - progress) ^ EarlyBoost.FALLOFF
+
+	-- Smoothstep, so the fade is flat at both ends: the bonus barely moves over the opening, gives way
+	-- through the middle, and eases into zero rather than arriving there still on a slope. This used to
+	-- be a tunable exponent, which is what made the early game read as the game slowing down -- an
+	-- exponent can only ever be flat at one end, so whichever way it was set there was a stretch where
+	-- income visibly fell away, and at the start is the worst place for that: it's where the player has
+	-- the fewest upgrades of their own to cover the drop.
+	local fade = progress * progress * (3 - 2 * progress)
+	return EarlyBoost.MAX_BONUS * (1 - fade)
 end
 
 return EarlyBoost

@@ -42,6 +42,16 @@ local KNOB_PROMPT_HOLD = 0.1
 -- Stopping a cook is a timing call, so it fires on the press: any hold at all is spent inside the very
 -- window the player is aiming at, and on a short skewer 0.3s is a good fraction of it.
 local STOP_PROMPT_HOLD = 0
+-- The button the take is offered on, which is the one thing on this griller that isn't the default E.
+-- Roblox shows one prompt per button (ProximityPromptExclusivity.OnePerButton) and picks whichever the
+-- player is nearer to, and the take is the only prompt here that's live at the same time as another:
+-- a raw skewer can be lit or taken, so the knob's Cook and the skewer's Take BBQ are both up at once.
+-- Sharing E meant the knob won from nearly anywhere someone stands -- it reaches five studs further and
+-- sits on the near face -- and the take was built, enabled, and never drawn. The place prompt keeps E
+-- alongside the knob because those two genuinely can't both be up: one wants the grate free and the
+-- other wants it occupied.
+local TAKE_PROMPT_KEY = Enum.KeyCode.F
+local TAKE_PROMPT_GAMEPAD_KEY = Enum.KeyCode.ButtonY
 local SKIP_COOK_PRODUCT = "SkipCook" -- the Products entry the skip button is priced from and buys
 -- What the skip is worth offering on at all. A BBQ that's done in a few seconds isn't a wait worth
 -- buying out of, and an offer that's up the moment the stove is lit is the game asking for money rather
@@ -130,8 +140,11 @@ local GrillerController
     OwnerUserId attribute the base stamped on it is what says. A griller only exists while its owner
     does, so that never changes over one griller's life. Each one sits on the thing it acts on: the
     place on the body's GrillAttachment, the stove's switch on the knob, and the take on the skewer
-    being taken. The Robux skip is the one offer that isn't a prompt -- it rides the cooking bar, which
-    is already up for the whole stretch it's on offer for and is where the player is already looking.
+    being taken. The take is offered on its own button (TAKE_PROMPT_KEY) because it's the only one of
+    the three that's ever up alongside another: a raw skewer can be lit or taken, and Roblox draws one
+    prompt per button. The Robux skip is the one offer that isn't a prompt -- it rides the cooking bar,
+    which is already up for the whole stretch it's on offer for and is where the player is already
+    looking.
 
     Every part of the griller is resolved once, here, and held for this class's whole life -- and the
     prompts above are parented to those parts, which under StreamingEnabled means they're destroyed the
@@ -1328,6 +1341,83 @@ function Grill:RefreshInteraction()
 	-- neither is left saying take me while the take is shut.
 	local canTake = owned and placed ~= nil and not cooking and not GrillerController:IsTakeLocked()
 
+	-- The take goes up first, ahead of everything else this decides. It's the only offer here that has to
+	-- be built fresh rather than merely re-labelled -- the server rebuilds the skewer on every record write
+	-- and the prompt goes down with it -- so it's the only one an error further down this function can cost
+	-- outright. The place prompt and the knob's would still be standing from the refresh before; the take
+	-- would simply never come back, on a griller whose other prompts all looked fine. Nothing below feeds
+	-- it, so it costs nothing to settle it here.
+	--
+	-- The take rides on the skewer itself, so what's reached for is the thing that comes off. The model it
+	-- was built on is what's tracked rather than the prompt alone -- otherwise a swap would leave a
+	-- destroyed prompt standing in for one and the new skewer would go without.
+	local takeModel = if canTake then self._skewerModel else nil
+
+	if takeModel ~= self._takeSkewerModel then
+		self._takeSkewerCleaner:Clean()
+		self._takeSkewerPrompt = nil
+		self._takeSkewerModel = takeModel
+
+		-- Hung off a part rather than the model: the custom prompt UI adorns whatever the prompt is
+		-- parented to, and a Model is no use to a BillboardGui. Same fallback the cooking bar uses, since
+		-- not every stick model is authored with a PrimaryPart.
+		local host = takeModel and (takeModel.PrimaryPart or takeModel:FindFirstChildWhichIsA("BasePart", true))
+
+		if host then
+			local prompt = Instance.new("ProximityPrompt")
+			prompt.RequiresLineOfSight = false
+			prompt.HoldDuration = GRILL_PROMPT_HOLD
+			prompt.Style = Enum.ProximityPromptStyle.Custom
+			prompt.MaxActivationDistance = GRILL_PROMPT_DISTANCE
+			-- Its own button rather than the E the rest of the griller offers on -- see TAKE_PROMPT_KEY.
+			-- The knob's Cook is up at the same time as this on a raw skewer, and one button only ever
+			-- draws one prompt.
+			prompt.KeyboardKeyCode = TAKE_PROMPT_KEY
+			prompt.GamepadKeyCode = TAKE_PROMPT_GAMEPAD_KEY
+			prompt.ActionText = "Take BBQ"
+			prompt.Parent = host
+
+			self._takeSkewerPrompt = prompt
+			self._takeSkewerCleaner:Add(prompt)
+			self._takeSkewerCleaner:Connect(prompt.Triggered, function()
+				GrillerController = GrillerController or require(script.Parent)
+				GrillerController:RequestToggle(self._uid)
+			end)
+		elseif takeModel then
+			-- A skewer with nothing to hang the prompt on is a BBQ that can't be taken back off, and the
+			-- only way off a grill is this prompt. Said out loud rather than skipped quietly, the way the
+			-- constructor calls out a griller missing its attachment or its knob.
+			warn(`[Griller] {self._slot.Name}'s skewer has no part to hang the take prompt on`)
+		end
+	end
+
+	-- "Take this off" rides on the skewer itself rather than the grill, so it outlines the thing being
+	-- claimed. Tied to that prompt being on screen rather than breathing for as long as there's something
+	-- to claim: the prompt now sits on the skewer too, so the outline is what picks it out from behind the
+	-- label. Off through the whole cook -- while it's on the heat there's nothing to claim, and the bar is
+	-- already carrying the player's attention. Tagged after the prompt above is in, since the component
+	-- resolves the prompt once as it starts and gives up if there isn't one. The server rebuilds this
+	-- model on every record write, which is why the slot's ChildAdded brings us back here to re-tag it.
+	if self._skewerModel then
+		self._skewerModel:SetAttribute("HighlightColor", Highlights.CLAIM)
+		if canTake then
+			self._skewerModel:AddTag(PROMPT_HIGHLIGHT_TAG)
+		else
+			self._skewerModel:RemoveTag(PROMPT_HIGHLIGHT_TAG)
+		end
+	end
+
+	-- TEMPORARY (take-prompt investigation) -- remove once the cooked-BBQ case is understood. Fires on the
+	-- exact failure: the owner has a BBQ sat on the grate that isn't cooking, so a take should be on offer,
+	-- and there's no prompt. Whichever of these reads wrong names the cause.
+	if owned and placed ~= nil and not cooking and not self._takeSkewerPrompt then
+		warn(
+			`[Griller][take] {self._slot.Name} placed={placed} cooking={cooking} cooked={cooked} `
+				.. `takeLocked={GrillerController:IsTakeLocked()} skewerModel={self._skewerModel and self._skewerModel:GetFullName()} `
+				.. `takeModel={takeModel and takeModel:GetFullName()}`
+		)
+	end
+
 	-- Prompt: up whenever the local player owns the base.
 	if owned and not self._prompt then
 		local promptAttachment = self._grillAttachment
@@ -1405,12 +1495,12 @@ function Grill:RefreshInteraction()
 	if knobEligible and not self._knobPrompt then
 		-- The handle rather than the knob: the knob is a model, and both the prompt and its click want the
 		-- part. It's also the capture that already carries the knob's own nil guard, so a griller whose
-		-- template is missing one goes without the prompt rather than throwing here -- which would abort
-		-- the rest of this and take the take prompt down with it.
+		-- template is missing one goes without the prompt rather than throwing here.
 		if self._handle then
 			-- Sits on the knob part itself -- it has no attachment of its own, and it's small enough that
-			-- the prompt lands where the label needs to be. Shares the slot prompt's key, so Roblox shows
-			-- whichever of the two you're standing nearer to.
+			-- the prompt lands where the label needs to be. Keeps the slot prompt's key, which costs
+			-- nothing: the place wants the grate free and this wants it occupied, so the two are never up
+			-- together. The take is the one that had to move off E, since a raw skewer offers both at once.
 			local prompt = Instance.new("ProximityPrompt")
 			prompt.RequiresLineOfSight = false
 			prompt.Style = Enum.ProximityPromptStyle.Custom
@@ -1464,40 +1554,6 @@ function Grill:RefreshInteraction()
 		self._knobUI = nil
 	end
 
-	-- The take rides on the skewer itself, so what's reached for is the thing that comes off. The server
-	-- rebuilds that model on every record write and the prompt goes with it, so the model it was built on
-	-- is what's tracked rather than the prompt alone -- otherwise a swap would leave a destroyed prompt
-	-- standing in for one and the new skewer would go without.
-	local takeModel = if canTake then self._skewerModel else nil
-
-	if takeModel ~= self._takeSkewerModel then
-		self._takeSkewerCleaner:Clean()
-		self._takeSkewerPrompt = nil
-		self._takeSkewerModel = takeModel
-
-		-- Hung off a part rather than the model: the custom prompt UI adorns whatever the prompt is
-		-- parented to, and a Model is no use to a BillboardGui. Same fallback the cooking bar uses, since
-		-- not every stick model is authored with a PrimaryPart.
-		local host = takeModel and (takeModel.PrimaryPart or takeModel:FindFirstChildWhichIsA("BasePart", true))
-
-		if host then
-			local prompt = Instance.new("ProximityPrompt")
-			prompt.RequiresLineOfSight = false
-			prompt.HoldDuration = GRILL_PROMPT_HOLD
-			prompt.Style = Enum.ProximityPromptStyle.Custom
-			prompt.MaxActivationDistance = GRILL_PROMPT_DISTANCE
-			prompt.ActionText = "Take BBQ"
-			prompt.Parent = host
-
-			self._takeSkewerPrompt = prompt
-			self._takeSkewerCleaner:Add(prompt)
-			self._takeSkewerCleaner:Connect(prompt.Triggered, function()
-				GrillerController = GrillerController or require(script.Parent)
-				GrillerController:RequestToggle(self._uid)
-			end)
-		end
-	end
-
 	-- The knob breathes on the same condition its prompt goes up, so the glow and the prompt are never
 	-- out of step -- which through a cook makes the glow the "turn me off" cue.
 	if self._knob then
@@ -1518,22 +1574,6 @@ function Grill:RefreshInteraction()
 			self._grillModel:AddTag(Highlights.TAG)
 		else
 			self._grillModel:RemoveTag(Highlights.TAG)
-		end
-	end
-
-	-- "Take this off" rides on the skewer itself rather than the grill, so it outlines the thing being
-	-- claimed. Tied to that prompt being on screen rather than breathing for as long as there's something
-	-- to claim: the prompt now sits on the skewer too, so the outline is what picks it out from behind the
-	-- label. Off through the whole cook -- while it's on the heat there's nothing to claim, and the bar is
-	-- already carrying the player's attention. Tagged after the prompt above is in, since the component
-	-- resolves the prompt once as it starts and gives up if there isn't one. The server rebuilds this
-	-- model on every record write, which is why the slot's ChildAdded brings us back here to re-tag it.
-	if self._skewerModel then
-		self._skewerModel:SetAttribute("HighlightColor", Highlights.CLAIM)
-		if canTake then
-			self._skewerModel:AddTag(PROMPT_HIGHLIGHT_TAG)
-		else
-			self._skewerModel:RemoveTag(PROMPT_HIGHLIGHT_TAG)
 		end
 	end
 

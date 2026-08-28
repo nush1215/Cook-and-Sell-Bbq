@@ -73,7 +73,7 @@ local Ingredients = {}
 
 -- The global economy dial, applied on top of every tier's ValueMultiplier. Raise it to make selling
 -- more lucrative across the board; retier or retune ValueMultiplier to change how steeply rarity pays.
-Ingredients.SALE_VALUE_MULTIPLIER = 1.1
+Ingredients.SALE_VALUE_MULTIPLIER = 1.25
 
 -- What every slot past the slowest one adds to the cook, as a fraction of its own CookTime. The skewer
 -- goes on the grill in one piece, so what sets the length is the thing on it that needs the longest --
@@ -82,7 +82,7 @@ Ingredients.SALE_VALUE_MULTIPLIER = 1.1
 --
 -- Short of 1 so filling a stick is worth doing, and well clear of 0 so it still costs something: value
 -- has no falloff at all (see GetTotalValue), and at 0 an empty slot would be free money.
-Ingredients.ADDITIONAL_SLOT_FACTOR = 0.5
+Ingredients.ADDITIONAL_SLOT_FACTOR = 0.75
 
 -- How far the chances can add up to short of or past 100% before the load-time warn fires. Small drift
 -- rounds away on the labels (a 1% miss turns "1 in 20" into "1 in 20.2", which still prints 20), so
@@ -144,37 +144,37 @@ Ingredients.Tiers = {
 	{
 		Id = "Common",
 		Price = 100,
-		CookTime = 5,
+		CookTime = 10,
 		ValueMultiplier = 1,
 	},
 	{
 		Id = "Uncommon",
 		Price = 450,
-		CookTime = 16,
+		CookTime = 24,
 		ValueMultiplier = 1.35,
 	},
 	{
 		Id = "Rare",
 		Price = 1_700,
-		CookTime = 32,
+		CookTime = 40,
 		ValueMultiplier = 1.8,
 	},
 	{
 		Id = "Epic",
 		Price = 5_000,
-		CookTime = 50,
+		CookTime = 60,
 		ValueMultiplier = 2.4,
 	},
 	{
 		Id = "Legendary",
 		Price = 60_000,
-		CookTime = 70,
+		CookTime = 85,
 		ValueMultiplier = 3.2,
 	},
 	{
 		Id = "Mythic",
 		Price = 400_000,
-		CookTime = 95,
+		CookTime = 110,
 		ValueMultiplier = 4.2,
 	},
 }

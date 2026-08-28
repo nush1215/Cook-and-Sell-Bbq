@@ -23,7 +23,7 @@ local GuiUtil = require(Shared.GuiUtil)
 
 --
 local USE_STUDIO_DATA = false
-local LIVE_DATA_VERSION = "PLAYER_DATA_A3"
+local LIVE_DATA_VERSION = "PLAYER_DATA_A5"
 local STUDIO_DATA_VERSION = "PLAYER_DATA_STUDIO_A5"
 local DEFAULT_TIMEOUT = 25
 local DATA_POLL_INTERVAL = 0.1

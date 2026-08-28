@@ -269,6 +269,16 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 		if not canAfford then
 			self._purchasing[player] = nil
 
+			-- Said out loud before the dialog goes up: the prompt names the band's product rather than
+			-- what it was raised over, so without this a player who just can't afford it is handed a
+			-- Robux price with nothing telling them why.
+			NotificationManager:NotifyNormal(player, {
+				Text = `You can't afford {ingredient.Name}`,
+				Duration = 3,
+				Sound = "Reject",
+				Effect = "Error",
+			})
+
 			-- The roll stays on the stand, and now there's somewhere for a broke player to go with it:
 			-- the price band this ingredient is sold in, prompted for Robux while they're stood in front
 			-- of it. Which stand the prompt went up on is remembered here rather than carried on the
