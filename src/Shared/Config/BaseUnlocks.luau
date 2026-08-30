@@ -27,6 +27,9 @@ export type Unlock = {
 	-- the price and the server grants whatever the player's next level is.
 	FormatLevel: ((level: number) -> string)?, -- how a level reads on the upgrade board. Defaults to
 	-- the bare number, which is right for a group whose level *is* a count of something.
+	TutorialLocked: boolean?, -- held off the currency button until the tutorial is finished. The run's
+	-- own beats measure against these -- the settle window in Sequence/*/6.luau is read off the roll
+	-- speed -- and buying one spends money the sequence still needs. Robux is unaffected.
 }
 
 --
@@ -82,9 +85,10 @@ BaseUnlocks.Data = {
 		LockStyle = "Layout",
 		Layout = { MaxPerRow = 3, Padding = 3 },
 		Limit = 6,
-		Costs = { 0, 1_000, 15_000, 50_000, 300_000, 1_000_000 },
+		Costs = { 0, 1_000, 15_000, 100_000, 500_000, 1_250_000 },
 		-- Level 6 has no product made for it yet, so that last step is currency-only.
 		RobuxProductIds = { [2] = 3709025046, [3] = 3709025081, [4] = 3709025105, [5] = 3709025123 },
+		TutorialLocked = true,
 	},
 	{
 		Id = "RollSpeed",
@@ -159,6 +163,7 @@ BaseUnlocks.Data = {
 		FormatLevel = function(level: number): string
 			return string.format("%.1fs", Rolling.GetRollDuration(level))
 		end,
+		TutorialLocked = true,
 	},
 	-- Sauce dispensers are postponed to a future update and their models are out of the workspace, so
 	-- the unlock is out of the list too -- otherwise every base warns about the missing path and the

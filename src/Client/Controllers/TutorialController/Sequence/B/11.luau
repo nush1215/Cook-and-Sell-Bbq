@@ -12,12 +12,18 @@ local RunService = game:GetService("RunService")
 local CookStates = require(ReplicatedStorage.Shared.Config.CookStates)
 
 local NEAR_DISTANCE = 12
+local BEAM_HIDE_DISTANCE = 12
 
 return function(self)
 	local slot = self:GetStructure("Grillers")
 	local knob = slot.Knob.Handle
 
 	local highlight = self:CreateHighlight(knob)
+
+	-- The one beat the player is asked to wait through, so it's the one they're most likely to wander off
+	-- in the middle of -- and the only guard that can put the banner back to "stay by your griller" is
+	-- the one they can walk out of. Pointed at the knob, like step 10, since that's what ends the cook.
+	local beam = self:CreateBeam(knob, BEAM_HIDE_DISTANCE)
 
 	-- How far along the 0-1 bar the cook is, read the same way the griller itself derives it -- both warps
 	-- included, since the tutorial's own cook is the one carrying a widened window, and the grill it's
@@ -105,6 +111,7 @@ return function(self)
 	if lock then
 		lock.Destroy()
 	end
+	beam.Destroy()
 	highlight.Destroy()
 
 	self:LogStep("StopCook")

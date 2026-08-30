@@ -205,6 +205,20 @@ function BaseManager:PurchasePlot(player: Player, plotId: string, skipCurrencyCo
 	end
 
 	if not skipCurrencyCost then
+		-- The tutorial spends against this same balance beat by beat, and a plot bought part-way through
+		-- can leave it short of the ingredient it's about to ask for. Read off the data already fetched
+		-- above rather than asked of TutorialManager, which is awaiting the same key.
+		if not data.TutorialCompleted then
+			self._purchasing[player] = nil
+			NotificationManager:NotifyNormal(player, {
+				Text = "Finish the tutorial first!",
+				Effect = "Error",
+				Duration = 3,
+				Sound = "Reject",
+			})
+			return false
+		end
+
 		local canAfford = CurrencyManager:CanAfford(player, cost)
 		if not canAfford then
 			self._purchasing[player] = nil
@@ -498,6 +512,20 @@ function BaseManager:PurchaseUnlockUpgrade(player: Player, unlockId: string, ski
 	end
 
 	if not skipCurrencyCost then
+		-- Held until the run is done: the tutorial's own beats are timed against these levels -- the settle
+		-- window step 6 waits out is read off the roll speed -- so upgrading mid-run moves the goalposts
+		-- under a beat that's already waiting on them.
+		if unlock.TutorialLocked and not data.TutorialCompleted then
+			self._purchasing[player] = nil
+			NotificationManager:NotifyNormal(player, {
+				Text = "Finish the tutorial first!",
+				Effect = "Error",
+				Duration = 3,
+				Sound = "Reject",
+			})
+			return false
+		end
+
 		local canAfford = CurrencyManager:CanAfford(player, cost)
 		if not canAfford then
 			self._purchasing[player] = nil

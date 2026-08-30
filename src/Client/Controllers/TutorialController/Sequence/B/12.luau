@@ -2,6 +2,7 @@
 local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 
 local NEAR_DISTANCE = 12
+local BEAM_HIDE_DISTANCE = 12
 
 return function(self)
 	local slot = self:GetStructure("Grillers")
@@ -14,6 +15,14 @@ return function(self)
 	local promptAttachment = slot:FindFirstChild("GrillAttachment", true)
 
 	local highlight = self:CreateHighlight(slot)
+
+	-- The skewer rather than the griller: it's what the banner is naming, and the take prompt rides on it.
+	-- The server rebuilds it on every record write -- the raw -> cooked swap this beat opens on is one --
+	-- so it's resolved each frame, falling back to the prompt's own attachment inches away while it's
+	-- between builds.
+	local beam = self:CreateBeam(function()
+		return slot:FindFirstChild("Skewer") or promptAttachment
+	end, BEAM_HIDE_DISTANCE)
 
 	self:AwaitGoal({
 		{
@@ -37,6 +46,7 @@ return function(self)
 		end,
 	})
 
+	beam.Destroy()
 	highlight.Destroy()
 
 	self:LogStep("TakeFromGrill")

@@ -41,8 +41,10 @@ local GRILL_PROMPT_HOLD = 0.3
 local KNOB_PROMPT_HOLD = 0.1
 -- Fires on press: stopping a cook is a timing call, and any hold is spent inside the window being aimed at.
 local STOP_PROMPT_HOLD = 0
--- Own key, not E: OnePerButton exclusivity means the knob's Cook prompt would always win over Take,
--- and both are live on a raw skewer.
+-- The same E as every other prompt, by choice. OnePerButton exclusivity draws one E prompt at a time --
+-- whichever enabled one is nearest -- so the take contends with the knob's Cook on a raw skewer (which
+-- reaches five studs further) and with a neighbouring griller's prompts; standing close to the skewer
+-- is what wins it. Accepted for a consistent button over its own key.
 local TAKE_PROMPT_KEY = Enum.KeyCode.E
 local TAKE_PROMPT_GAMEPAD_KEY = Enum.KeyCode.ButtonY
 local SKIP_COOK_PRODUCT = "SkipCook" -- the Products entry the skip button is priced from and buys
@@ -64,6 +66,15 @@ local COOK_MATERIAL_PROGRESS = 0.8 -- how far through the raw -> cooked browning
 -- band's own colour off the config, so it matches what the fill underneath is about to turn.
 local PERFECT_WORD_COLOR = Color3.fromRGB(255, 212, 0)
 local PERFECT_COUNTDOWN_COLOR = CookStates.GetStateFromId("Perfect").BarColor
+-- The most the shown countdown may sit either side of the true remaining, in seconds. On an unstable grill
+-- the figure is re-predicted every frame off the heat right now, so a stall makes the seconds climb back
+-- up -- but the honest instantaneous prediction is tens of seconds out while the target is still far off,
+-- which reads as broken. Bounded rather than proportional, so what the wobble costs is the same near the
+-- window as it is at the bottom of the bar, and the number stays something to aim with.
+local TIMER_SWING = 1.5
+-- Floor under the rate that prediction divides by. At MAX_INSTABILITY the trough is 0.1, and a stall
+-- deeper than this is a divide running away rather than a figure anyone reads.
+local MIN_BAR_RATE = 0.05
 local PARTICLE_CLEANUP_PADDING = 0.5 -- extra seconds past the longest particle lifetime before dropping emitters
 -- Fallback for a griller with no folder of its own under Assets.Particles.Cooking. See _showCookParticles.
 local COOK_PARTICLE_DEFAULT = "Default"
@@ -990,6 +1001,29 @@ function Grill:Update()
 			-- "ends" is slotted in rather than made a second label, so "Perfect" holds its place.
 			local opening = now < self._perfectStartsAt
 			local remaining = (if opening then self._perfectStartsAt else self._perfectEndsAt) - now
+
+			-- What's left of the bar at the pace the grill is burning at *this instant*, rather than at
+			-- the steady pace the exact figure above assumes. On an unstable grill that's the whole
+			-- point: a stall inflates it and the seconds visibly climb, a surge collapses it. Both fall
+			-- to zero together as the bar reaches the mark, so the countdown still lands on 00.00 there.
+			local barTarget = (if opening then CookStates.RAW_END else CookStates.PERFECT_END) * cookTime
+			local rate = CookStates.GetBarRate(
+				self:_elapsed(),
+				cookTime,
+				self._cookWindowStretch,
+				self._cookProgress,
+				self._cookInstability,
+				self._cookInstabilityPhase
+			)
+			local live = (barTarget - elapsed) / math.max(rate, MIN_BAR_RATE)
+
+			-- Squashed toward the exact figure rather than clamped to it: d*S/(S+|d|) is d itself while
+			-- the two agree and saturates smoothly at TIMER_SWING once they don't, so there's no bound for
+			-- the number to snap against as the prediction swings across it. A steady grill reads a rate
+			-- of 1, no deviation at all, and the same countdown it has always drawn.
+			local deviation = live - remaining
+			remaining = math.max(remaining + deviation * TIMER_SWING / (TIMER_SWING + math.abs(deviation)), 0)
+
 			local countdown = GuiUtil.ConvertSecondsToCountdown(remaining)
 
 			timer.Visible = true
@@ -1142,13 +1176,16 @@ function Grill:RefreshInteraction()
 	if takeModel ~= self._takeSkewerModel then
 		self._takeSkewerCleaner:Clean()
 		self._takeSkewerPrompt = nil
-		self._takeSkewerModel = takeModel
+		self._takeSkewerModel = nil
 
 		-- On a part, not the model: the custom prompt UI adorns its parent, and a Model is no use to a
 		-- BillboardGui. Not every stick model is authored with a PrimaryPart, hence the fallback.
 		local host = takeModel and (takeModel.PrimaryPart or takeModel:FindFirstChildWhichIsA("BasePart", true))
 
 		if host then
+			-- Recorded only once the prompt is actually up, so a model that arrived partless is retried.
+			self._takeSkewerModel = takeModel
+
 			local prompt = Instance.new("ProximityPrompt")
 			prompt.RequiresLineOfSight = false
 			prompt.HoldDuration = GRILL_PROMPT_HOLD
@@ -1167,8 +1204,12 @@ function Grill:RefreshInteraction()
 				GrillerController:RequestToggle(self._uid)
 			end)
 		elseif takeModel then
-			-- This prompt is the only way off the grill, so a skewer with nowhere to hang it is stuck.
-			warn(`[Griller] {self._slot.Name}'s skewer has no part to hang the take prompt on`)
+			-- Under streaming the parts can trail the model by a frame, and this prompt is the only way off
+			-- the grill -- so rather than give up on the model, refresh the moment something lands in it.
+			-- Left unrecorded above, so that refresh (or any other) rebuilds instead of skipping.
+			self._takeSkewerCleaner:Connect(takeModel.DescendantAdded, function()
+				self:RefreshInteraction()
+			end)
 		end
 	end
 
@@ -1181,16 +1222,6 @@ function Grill:RefreshInteraction()
 		else
 			self._skewerModel:RemoveTag(PROMPT_HIGHLIGHT_TAG)
 		end
-	end
-
-	-- TEMPORARY (take-prompt investigation) -- remove once the cooked-BBQ case is understood. The warn is
-	-- muted; un-comment it to catch a take that should be on offer with no prompt built.
-	if owned and placed ~= nil and not cooking and not self._takeSkewerPrompt then
-		--warn(
-		--	`[Griller][take] {self._slot.Name} placed={placed} cooking={cooking} cooked={cooked} `
-		--		.. `takeLocked={GrillerController:IsTakeLocked()} skewerModel={self._skewerModel and self._skewerModel:GetFullName()} `
-		--		.. `takeModel={takeModel and takeModel:GetFullName()}`
-		--)
 	end
 
 	-- Prompt: up whenever the local player owns the base.

@@ -53,9 +53,20 @@ EarlyBoost.MAX_DECLINE_REDUCTION = 0.5
 
 -- Lifetime earnings at which the bonus has run out entirely. This is the length of the head start, and
 -- it's in dollars rather than minutes on purpose: a player who found a good loop gets through it sooner
--- than one still learning, which is the right way round. Set past the fourth plot (Config.Plots.Costs)
--- so the fade has room to be gentle rather than having to spend itself over the opening few sales.
-EarlyBoost.THRESHOLD = 100_000
+-- than one still learning, which is the right way round.
+--
+-- What sets it is where the fade is steepest, not where it ends. Smoothstep sheds the bonus fastest at
+-- the halfway mark, so this is sized at twice the fourth plot (Config.Plots.Costs) to land that on the
+-- plot-4 purchase -- the biggest drop lands on the biggest thing the player buys, instead of part-way
+-- between two of them where nothing arrives to cover it. At the 100,000 this used to read, the steep
+-- part fell at 50,000, and the only purchases either side of it were roll speed and rolling stands,
+-- which add ingredient supply rather than throughput: one stand already feeds about four grills, so
+-- they buy nothing at all for a player under that. Income went down and there was no way to spend
+-- their way out of it, which is what read as the game stalling.
+--
+-- Re-sizing this means re-checking what the new midpoint lands on, and moving a purchase onto it is
+-- as good a fix as moving the threshold.
+EarlyBoost.THRESHOLD = 150_000
 
 -- How far through the head start this much lifetime income is: 0 at nothing earned, 1 at and past
 -- THRESHOLD. Every dial runs off this, so none of them can drift onto its own curve or threshold.

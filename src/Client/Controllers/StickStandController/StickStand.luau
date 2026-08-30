@@ -184,7 +184,7 @@ function StickStand:_render()
 
 	self:_reconcileIngredients(ingredientIds)
 	self:_updateIngredientUI()
-	self:_updatePromptText()
+	self:_updatePrompt()
 	self:RefreshHighlights()
 
 	self._rendered = true
@@ -411,6 +411,13 @@ function StickStand:_spawnIngredient(id: string, index: number, animate: boolean
 	table.insert(self._ingredients, entry)
 end
 
+-- The stick model currently seated on this stand, or nil while it holds none. Built client side and
+-- re-created from scratch on every change (see _renderStick), so callers have to re-resolve it rather
+-- than hold onto what they get back.
+function StickStand:GetStickModel(): Model?
+	return self._stickModel
+end
+
 -- Keeps the stick and its ingredients glued to the attachment, which the client slides around as it
 -- springs the stand up into its slot and reflows the grid. A still-dropping ingredient keeps springing
 -- toward its target (so it chases the stand mid-fall); settled ones snap straight to it.
@@ -485,7 +492,7 @@ function StickStand:RefreshPrompt()
 		self._prompt = nil
 	end
 
-	self:_updatePromptText()
+	self:_updatePrompt()
 	self:RefreshHighlights()
 end
 
@@ -495,14 +502,22 @@ end
 -- A bare stick is a "Stick" and one carrying ingredients is a "Skewer" -- the same two words every
 -- other machine uses, so the noun on the prompt is what tells the player where it goes next: a stick
 -- belongs on a stand, a skewer belongs on the grill.
-function StickStand:_updatePromptText()
+--
+-- One prompt covering three actions is also why the tutorial's holds land here rather than on the
+-- instance: each branch reads its own lock, so shutting the take leaves the add it's about to ask for
+-- alone. Enabled is written on every branch, never just the held one, so a lock that's been handed
+-- back can't leave a prompt down.
+function StickStand:_updatePrompt()
 	if not self._prompt then
 		return
 	end
 
+	StickStandController = StickStandController or require(script.Parent)
+
 	local stickId = self._clone:GetAttribute("PlacedStickId")
 	if not stickId then
 		self._prompt.ActionText = "Place Stick"
+		self._prompt.Enabled = not StickStandController:IsPlaceLocked()
 		return
 	end
 
@@ -518,21 +533,30 @@ function StickStand:_updatePromptText()
 			self._prompt.ActionText = `Add {if ingredient then ingredient.Name else "Ingredient"}`
 		end
 
+		self._prompt.Enabled = true
 		return
 	end
 
 	-- Taking it back hands over whatever's on the stand, so the noun follows what it actually is.
 	self._prompt.ActionText = if #self._ingredientIds > 0 then "Take BBQ" else "Take Stick"
+	self._prompt.Enabled = not StickStandController:IsTakeLocked()
 end
 
 -- Breathes whichever part of the stand the player could act on right now: the stand itself while
 -- they hold a stick to put on it, or the placed stick while they hold an ingredient it has room for.
 -- Reads the same state the prompt text does, so what glows and what the prompt says can't disagree.
 function StickStand:RefreshHighlights()
+	StickStandController = StickStandController or require(script.Parent)
+
 	local owned = self._ownerUserId == LocalPlayer.UserId
 	local stickId = self._clone:GetAttribute("PlacedStickId")
 
-	local canPlaceStick = owned and not stickId and EquippedItem.GetStickId() ~= nil
+	-- The lock goes on the glow as well as the prompt: the glow is what says a prompt is up, so holding
+	-- one without the other lights a stand that does nothing.
+	local canPlaceStick = owned
+		and not stickId
+		and EquippedItem.GetStickId() ~= nil
+		and not StickStandController:IsPlaceLocked()
 
 	self._clone:SetAttribute("HighlightColor", Highlights.PLACE)
 	if canPlaceStick then

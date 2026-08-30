@@ -38,10 +38,16 @@ local Sticks = {}
 -- StickModel.GetSellValue) -- so it's every multiplier a skewer can carry at once, on the luckiest
 -- sale: ValueBoost, sauce, mutation, cook state, and a haggle run to CounterCap. As the game ships
 -- today, with Sauces.Data empty, the worst case is the diamond on a golden grill cooked perfect and
--- haggled to the cap, which returns 0.95x its price -- under, so no loop.
--- Restoring Sauces.Data puts a 2.25x back into that stack and the same skewer returns 2.14x. So
+-- haggled to the cap. Holding that case under 1 needs this at or below 0.105, and it sits above that
+-- on purpose: an ordinary sale still cannot fund the stick -- a gold cooked perfect returns 0.61x its
+-- price, 0.77x haggled to the cap -- and it takes a mutation stacked on a near-cap haggle to cross.
+-- Gold on a Shocked cook reaches 1.16x, on a Golden 1.35x, and the diamond 1.43x. Golden Grill stamps
+-- every cook rather than rolling for it, so that one is a standing edge rather than a tail case; it is
+-- Robux-gated and capped by how fast its owner can cook and sell, which is why it is allowed to stand.
+-- What this must never do is cross on a plain sale -- that is the loop the ceiling above is guarding.
+-- Restoring Sauces.Data puts a 2.25x back into that stack and multiplies every figure here by it. So
 -- re-enabling sauces means dropping this to ~0.045 in the same change, or the shop starts printing.
-Sticks.SALE_RETURN_FACTOR = 0.1
+Sticks.SALE_RETURN_FACTOR = 0.15
 
 -- Ordered lowest to highest: array order is the tier, so wooden is the cheapest stick and diamond
 -- the best. Id matches the model name under Assets.Sticks.
@@ -98,7 +104,7 @@ Sticks.Data = {
 		TextColor = Color3.fromRGB(210, 120, 55),
 		StrokeColor = Color3.fromRGB(63, 36, 16),
 		Restockable = true,
-		RestockChance = 60,
+		RestockChance = 70,
 		RestockAmount = NumberRange.new(4, 8),
 		Rarity = "Rare",
 		RobuxProductId = 3709026173,

@@ -50,7 +50,7 @@ local VARIANT_KEY = "TutorialVariant"
 
 -- What runs when ConfigService can't answer -- in Studio, where it has nothing to answer with, and on a
 -- server that can't reach it -- and when the config names a variant this build has no steps for.
-local FALLBACK_VARIANT = "A"
+local FALLBACK_VARIANT = "B"
 
 -- What the tutorial's roll is pinned to. Rolled ingredients run from $75 to $400,000 and the player
 -- starts with $100, so an unpinned first pull could land something they can't buy and the tutorial

@@ -109,7 +109,8 @@ end)
 
 -- A price the way every call site writes one: "$500", "$1.2K", "$1,250".
 local MONEY_PATTERN = "^%$%d[%d,]*%.?%d*%a*"
-local NUMBER_PATTERN = "^%d+%.?%d*"
+-- The trailing "x" is part of a multiplier ("3x Common Crate"), so it colours with the number.
+local NUMBER_PATTERN = "^%d+%.?%d*x?"
 
 -- A word only counts as a keyword if there's no letter or digit either side of it, so "Uncommon"
 -- can't match as "Common" and "$500" can't match again as "500".

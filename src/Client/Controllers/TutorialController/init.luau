@@ -34,6 +34,7 @@ local ConfettiController
 local InventoryController
 local GrillStandShopController
 local GrillerController
+local StickStandController
 
 -- Local Player
 local LocalPlayer = Players.LocalPlayer
@@ -243,6 +244,11 @@ function TutorialController:Start(variant: string)
 	-- Both held from the top of the run, so they come off here with the HUD.
 	GrillStandShopController:SetLocked(false)
 	GrillerController:SetSkipLocked(false)
+
+	-- Released here, not by the step that took it: the take beat shuts the stand once the BBQ is in hand
+	-- and nothing between there and the finish wants it open, so the run holds it rather than the griller
+	-- beat taking a lock it has no reason to know about.
+	StickStandController:SetPlaceLocked(false)
 
 	ConfettiController:FireSidesConfetti({
 		Images = {
@@ -863,6 +869,7 @@ function TutorialController:OnInit()
 	InventoryController = require(script.Parent.InventoryController)
 	GrillStandShopController = require(script.Parent.GrillStandShopController)
 	GrillerController = require(script.Parent.GrillerController)
+	StickStandController = require(script.Parent.StickStandController)
 
 	for _, variantFolder in script.Sequence:GetChildren() do
 		local steps, count = {}, 0

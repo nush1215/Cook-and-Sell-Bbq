@@ -36,6 +36,10 @@ CookStates.MAX_INSTABILITY = 0.9
 -- fraction, so the lurch reads the same on a short skewer as on a long one.
 CookStates.INSTABILITY_PERIOD = 4
 
+-- How far either side of a point GetBarRate samples the bar to read its slope. A frame, so the sample
+-- spans what the eye does; much finer and the difference of two near-equal seconds is float noise.
+local RATE_EPSILON = 1 / 60
+
 export type CookState = {
 	Id: string, -- also the name of the UIGradient it lights on the cooking bar's title ("{Id}Gradient")
 	Name: string, -- how that title reads
@@ -277,6 +281,38 @@ function CookStates.GetBarElapsed(
 	end
 
 	return elapsed - (stretched - windowLength)
+end
+
+-- How many bar seconds the cook is gaining per wall-clock second right now -- the slope of the map
+-- above, which is what a countdown reads to say how hard the grill is burning at this instant.
+--
+-- Taken as a central difference rather than differentiated by hand, for two reasons. The warps live in
+-- exactly one place and the stretch leg is piecewise, so a written-out derivative would be a second copy
+-- of that shape to keep in step with. And the slope genuinely jumps at each stretch seam; a difference
+-- smears that across one frame instead of snapping, which is what something being rendered wants.
+--
+-- Cheap enough to call per frame: GetBarElapsed is a sine and a couple of branches. It's GetElapsedForBar
+-- that's the expensive one.
+-- @param elapsed: seconds since CookStartedAt
+-- @param cookTime, windowStretch, cookProgress, instability, instabilityPhase: as GetBarElapsed takes them
+-- @return bar seconds per wall second; 1 on a steady grill outside a stretched window
+function CookStates.GetBarRate(
+	elapsed: number,
+	cookTime: number,
+	windowStretch: number?,
+	cookProgress: number?,
+	instability: number?,
+	instabilityPhase: number?
+): number
+	-- A step back past zero falls outside the wobble's own `elapsed > 0` guard and would read a slope the
+	-- cook never runs at, so the opening frames step forward from where they are instead.
+	local from = math.max(elapsed - RATE_EPSILON, 0)
+	local to = math.max(elapsed, 0) + RATE_EPSILON
+
+	local before = CookStates.GetBarElapsed(from, cookTime, windowStretch, cookProgress, instability, instabilityPhase)
+	local after = CookStates.GetBarElapsed(to, cookTime, windowStretch, cookProgress, instability, instabilityPhase)
+
+	return (after - before) / (to - from)
 end
 
 -- The other direction: how many wall-clock seconds after a cook started its bar reaches `barTarget`.

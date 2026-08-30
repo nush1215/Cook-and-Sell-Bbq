@@ -13,6 +13,7 @@ local Plots = require(Shared.Config.Plots)
 
 -- Controllers
 local PlayerDataController = require(script.Parent.PlayerDataController)
+local NotificationController = require(script.Parent.NotificationController)
 
 -- Modules
 local Plot = require(script.Plot)
@@ -45,6 +46,19 @@ local PlotController = {
 -- Asks the server to buy this plot with currency. Which plot is the player's choice; what it costs
 -- isn't, so nothing about the price goes over with it.
 function PlotController:RequestPurchase(plotId: string)
+	-- The server rejects this too; saying so here keeps the press from costing a round trip. The sign
+	-- stays up and priced through the run -- only the currency half is held, so the Robux button beside
+	-- it still works.
+	if not PlayerDataController:GetKey("TutorialCompleted") then
+		NotificationController:NotifyNormal({
+			Text = "Finish the tutorial first!",
+			Effect = "Error",
+			Duration = 3,
+			Sound = "Reject",
+		})
+		return
+	end
+
 	self.PurchasePlotEvent:FireServer(plotId)
 end
 

@@ -3,12 +3,17 @@
 local GrillerController = require(script.Parent.Parent.Parent.Parent.GrillerController)
 
 local NEAR_DISTANCE = 12
+local BEAM_HIDE_DISTANCE = 12
 
 return function(self)
 	local slot = self:GetStructure("Grillers")
 	local knob = slot.Knob.Handle
 
 	local highlight = self:CreateHighlight(knob)
+
+	-- The knob rather than the griller, matching what this beat counts as near: the griller is wide
+	-- enough that a beam into its middle lands nowhere near the thing being asked for.
+	local beam = self:CreateBeam(knob, BEAM_HIDE_DISTANCE)
 
 	self:AwaitGoal({
 		{
@@ -53,6 +58,7 @@ return function(self)
 		end,
 	})
 
+	beam.Destroy()
 	highlight.Destroy()
 
 	self:LogStep("StartCook")

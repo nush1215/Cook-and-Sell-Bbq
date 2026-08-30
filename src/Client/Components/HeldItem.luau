@@ -18,6 +18,7 @@ local Sticks = require(Shared.Config.Sticks)
 local Ingredients = require(Shared.Config.Ingredients)
 local Crates = require(Shared.Config.Crates)
 local CookStates = require(Shared.Config.CookStates)
+local Rarity = require(Shared.Config.Rarity)
 
 -- Controllers
 local AnimationController = require(script.Parent.Parent.Controllers.AnimationController)
@@ -46,8 +47,8 @@ local HOLD_ANIMATION = "Hold"
 -- item rides above the head; the lift then scales with the model's own size (below) so items of any
 -- size clear the head by this same margin. Tune in Studio to match the pose.
 local HOLD_BASE_HEIGHT = 2.7
--- Gap between the top of the carried skewer and the underside of its value billboard.
-local VALUE_UI_HEIGHT_MARGIN = 1
+-- Gap between the top of the carried item and the underside of its billboard.
+local INFO_UI_HEIGHT_MARGIN = 0.25
 
 --
 local HeldItem = Component.new({
@@ -179,6 +180,39 @@ function HeldItem:Start()
 
 		valueUI.Parent = character.Head
 		self._cleaner:Add(valueUI)
+	end
+
+	-- Its own template, mirroring the billboard a rolling stand puts over what it landed on, so an
+	-- ingredient in hand reads the way it read on the stand it came off. Every client draws it off the
+	-- tool's replicated IngredientId, like the rest of the visual. buildModel already resolved the id.
+	local ingredientId = tool:GetAttribute("IngredientId")
+	if ingredientId then
+		local ingredient = Ingredients.GetIngredientFromId(ingredientId)
+		local tier = ingredient.Tier
+
+		local info = UI.EquippedIngredientInfo:Clone()
+		local billboard = info.UI
+
+		billboard.IngredientName.Text = ingredient.Name
+		billboard.Rarity.Text = Rarity.FormatChance(ingredient.Chance)
+		billboard.Price.Text = `${GuiUtil.ConvertNumberWithSuffix(ingredient.Price)}`
+
+		billboard.Rarity.TextColor3 = tier.TextColor
+
+		local stroke = billboard.Rarity:FindFirstChildWhichIsA("UIStroke")
+		if stroke then
+			stroke.Color = tier.StrokeColor
+		end
+
+		-- Hung off the PrimaryPart rather than the model: a stand's result sits still, but this one is
+		-- welded to the head and has to ride along. Seated over the same bounding box the hold offset
+		-- above seats on, so an ingredient of any size clears by this same margin. No cleaner entry
+		-- needed, being a descendant of the model that's already on it.
+		local boundingCFrame, boundingSize = model:GetBoundingBox()
+		info.CFrame = model.PrimaryPart.CFrame:ToObjectSpace(
+			boundingCFrame * CFrame.new(0, boundingSize.Y / 2 + INFO_UI_HEIGHT_MARGIN, 0)
+		)
+		info.Parent = model.PrimaryPart
 	end
 
 	-- Hide the hand handle so only the carried visual shows.

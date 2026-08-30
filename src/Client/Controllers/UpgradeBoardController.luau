@@ -100,6 +100,19 @@ end
 -- product; either way the server is the one that decides what the next level is and grants it.
 function UpgradeBoardController:_bindSection(frame: Frame, unlock: BaseUnlocks.Unlock)
 	local currencyBinding = UIController:BindButtonClick(frame.Buttons.CurrencyPurchase, function()
+		-- The server rejects this too; saying so here keeps the press from costing a round trip. The board
+		-- stays up and priced through the run rather than hiding -- the player is meant to see what's
+		-- waiting for them once they're done.
+		if unlock.TutorialLocked and not PlayerDataController:GetKey("TutorialCompleted") then
+			NotificationController:NotifyNormal({
+				Text = "Finish the tutorial first!",
+				Effect = "Error",
+				Duration = 3,
+				Sound = "Reject",
+			})
+			return
+		end
+
 		self.PurchaseUnlockUpgradeEvent:FireServer(unlock.Id)
 	end, true)
 	self._baseCleaner:Add(currencyBinding.Disconnect)

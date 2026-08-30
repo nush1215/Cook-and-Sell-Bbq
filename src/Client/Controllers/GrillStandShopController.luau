@@ -153,7 +153,10 @@ function GrillStandShopController:GetSelectedStructureId(): string?
 end
 
 -- Syncs the shared ButtonChoices buttons to the selected structure. Robux is only offered once it has a
--- real dev product, and currency-buy is disabled when this window's stock is gone.
+-- real dev product.
+--
+-- Currency-buy is deliberately left pressable even with no stock left and no cash to pay with -- the
+-- server rejects it and says why. A dead button just swallows the press with nothing to read.
 function GrillStandShopController:_refreshSelectionButtons()
 	local structureId = self._selectedStructureId
 	if not structureId then
@@ -163,7 +166,6 @@ function GrillStandShopController:_refreshSelectionButtons()
 	local structure = Structures.GetStructureFromId(structureId)
 	local buttonChoices = self._buttonChoices
 
-	buttonChoices.CurrencyPurchase.Active = self:GetRemaining(structureId) > 0
 	buttonChoices.CurrencyPurchase.Title.Text = `${GuiUtil.ConvertNumberWithSuffix(structure.Cost)}`
 
 	local hasProduct = structure.RobuxProductId ~= nil and structure.RobuxProductId ~= 0
@@ -446,8 +448,8 @@ function GrillStandShopController:_refreshRestockTitle()
 		`Grill & Stand Shop Restocks in: <font color="{RESTOCK_TIME_COLOR}">{minutes}m {seconds}s</font>`
 end
 
--- Re-reads each row's remaining stock and keeps the open ButtonChoices' buy state in sync. Runs on the
--- shop restock (replica change) and on this player's own purchases (GrillStandShop data change).
+-- Re-reads each row's remaining stock. Runs on the shop restock (replica change) and on this player's
+-- own purchases (GrillStandShop data change).
 function GrillStandShopController:_refreshRows()
 	if not next(self._rows) then
 		return
@@ -455,10 +457,6 @@ function GrillStandShopController:_refreshRows()
 
 	for structureId, row in self._rows do
 		row.Details.Stock.Text = `x{self:GetRemaining(structureId)} Stock`
-	end
-
-	if self._selectedStructureId then
-		self:_refreshSelectionButtons()
 	end
 end
 

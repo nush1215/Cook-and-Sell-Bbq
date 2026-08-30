@@ -62,7 +62,18 @@ local Ingredients = {}
 
 -- The global economy dial, on top of every tier's ValueMultiplier. Raise it to make selling more
 -- lucrative across the board; retune ValueMultiplier to change how steeply rarity pays.
-Ingredients.SALE_VALUE_MULTIPLIER = 1.25
+--
+-- It also sets the floor under a sale, and that is the constraint to keep: a skewer has to sell for
+-- more than its ingredients cost even when everything goes wrong, or a bad cook is a loss and the
+-- player is working to stand still. The worst case is the cheapest ingredients cooked to Charred and
+-- offered the minimum, so what has to stay above 1 is
+--
+--     SALE_VALUE_MULTIPLIER * the Charred Multiplier * its OfferMin (both on CookStates.Data)
+--
+-- which is 1.5 * 0.8 * 1 = 1.2 today. At the 1.25 this used to read it came to exactly 1.0, and the
+-- stick under the ingredients tipped it negative -- a charred common skewer sold for less than it
+-- cost to build. Lower this, or lower Charred, and check that product first.
+Ingredients.SALE_VALUE_MULTIPLIER = 1.5
 
 -- What each slot past the slowest adds, as a fraction of its own CookTime. The skewer cooks in one piece,
 -- so the slowest ingredient sets the length and the rest only add heat to shift -- which is what makes

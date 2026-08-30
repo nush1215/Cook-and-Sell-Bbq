@@ -106,7 +106,7 @@ Structures.Data = {
 		Name = "Rusty Grill",
 		Category = "Grillers",
 		Cost = 1_000,
-		Description = `All rusted up! The fire keeps flickering, so the bar is <font color="{WARNING_COLOR}">hard to time</font>`,
+		Description = `All rusted up! The fire keeps flickering, so the bar is <font color="{WARNING_COLOR}">hard to time</font>, and it cooks <font color="{WARNING_COLOR}">10% slower</font>`,
 		Icon = "rbxassetid://108556890656046",
 		TextColor = Color3.fromRGB(170, 95, 55),
 		StrokeColor = Color3.fromRGB(55, 30, 16),
@@ -115,9 +115,11 @@ Structures.Data = {
 		RestockChance = 90,
 		RestockAmount = NumberRange.new(1, 2),
 		RobuxProductId = 3710074789,
-		-- As fast as an Iron Grill; what it costs is being able to time the window. Cheapest rung, so the
-		-- first thing money buys is a grill that behaves.
+		-- The only rung that's worse than the baseline rather than better than it: down on pace, and down
+		-- on being able to time the window at all. Cheapest rung, so the first thing money buys is a grill
+		-- that behaves.
 		CookInstability = 0.5,
+		CookSpeed = 0.9,
 	},
 
 	{
@@ -125,7 +127,9 @@ Structures.Data = {
 		Name = "Iron Grill",
 		Category = "Grillers",
 		Cost = 2_500,
-		Description = "The good ol' trusted grill! Turns your skewers into juicy BBQ",
+		-- Carries no CookSpeed or CookInstability on purpose -- this is the baseline every other rung is
+		-- written against. The line only reads as an upgrade because the Rusty rung sits under it.
+		Description = `The good ol' trusted grill! Burns <font color="{SPEED_COLOR}">steady</font> and at <font color="{SPEED_COLOR}">full speed</font>, so the bar is easy to time`,
 		Icon = "rbxassetid://118980874997825",
 		TextColor = Color3.fromRGB(255, 120, 60),
 		StrokeColor = Color3.fromRGB(70, 30, 12),

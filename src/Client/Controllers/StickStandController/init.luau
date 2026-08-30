@@ -45,6 +45,8 @@ local StickStandController = {
 	ToggleStickEvent = Network.Event("ToggleStickOnStand"),
 
 	_stands = {}, -- [model: Model] = StickStand
+	_takeLocked = false, -- while true, no stand offers what it's holding back (see SetTakeLocked)
+	_placeLocked = false, -- while true, no empty stand offers to seat anything (see SetPlaceLocked)
 	_cleaner = Trove.new(),
 }
 
@@ -89,12 +91,62 @@ function StickStandController:RequestToggle(uid: string)
 	self.ToggleStickEvent:FireServer(uid)
 end
 
--- Re-checks every stand's prompt (ownership + text). Cheap, and the prompt text depends on what the
--- local player is holding, so it's called whenever their base or equipped tool changes.
+-- The stick model seated on a placed stand, or nil if the stand holds none (or isn't one we track).
+-- The stand renders it client side as a sibling of itself rather than a child, so it can't be found by
+-- walking the stand model -- and it's re-created on every change, so this is re-resolved, not held.
+function StickStandController:GetPlacedStickModel(model: Model): Model?
+	local stand = self._stands[model]
+	return stand and stand:GetStickModel()
+end
+
+-- Re-checks every stand's prompt (ownership, text and whether the action it's offering is held off).
+-- Cheap, and what it says depends on what the local player is holding, so it's called whenever their
+-- base or equipped tool changes.
 function StickStandController:_refreshPrompts()
 	for _, stand in self._stands do
 		stand:RefreshPrompt()
 	end
+end
+
+-- Holds every stand's take off, so a stick that's been put down stays put. Gates the eligibility the
+-- class already computes rather than reaching in and disabling prompts, because one prompt covers
+-- place, add and take -- shutting the instance would take the "Add {Ingredient}" the tutorial is about
+-- to ask for down with it.
+--
+-- Set by the tutorial from the moment the stick goes down until the beat that asks for it back: the
+-- three beats in between all read the stand as loaded, and handing the stick over drops the player
+-- behind a beat that has already passed, with no way to say so.
+function StickStandController:SetTakeLocked(locked: boolean)
+	if self._takeLocked == locked then
+		return
+	end
+
+	self._takeLocked = locked
+	self:_refreshPrompts()
+end
+
+-- Whether taking is currently held off. Read by StickStand when it works out what its prompt offers.
+function StickStandController:IsTakeLocked(): boolean
+	return self._takeLocked
+end
+
+-- Holds every stand's place off, so an empty stand takes nothing back.
+--
+-- Set by the tutorial once the loaded BBQ is in the player's hands: a stand accepts a filled skewer as
+-- readily as a bare stick (see StickStandManager.getEquippedStickPlacement), so the one prompt in reach
+-- on the way to the griller is the one that undoes the step they just finished.
+function StickStandController:SetPlaceLocked(locked: boolean)
+	if self._placeLocked == locked then
+		return
+	end
+
+	self._placeLocked = locked
+	self:_refreshPrompts()
+end
+
+-- Whether placing is currently held off. Read by StickStand when it works out what its prompt offers.
+function StickStandController:IsPlaceLocked(): boolean
+	return self._placeLocked
 end
 
 -- Watches the local character's tools so the "Add {Ingredient}" prompt tracks what they equip.

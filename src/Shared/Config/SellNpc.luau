@@ -63,10 +63,10 @@ SellNpc.DECIDE_DURATION_MAX = 3
 SellNpc.DECIDE_INITIAL_WAIT = 0.04
 SellNpc.DECIDE_MAX_WAIT = 0.35
 
--- Chance out of 1 that the customer wants to buy. 0.8 means 8 in 10 buy, 2 walk off.
+-- Chance out of 1 that the customer wants to buy. 0.85 means roughly 6 in 7 buy, 1 walks off.
 -- Higher = nearly everyone buys and the thinking moment stops mattering. Lower = tenser but slower.
 -- What an established player faces -- a new one's walk-off share is cut by EarlyBoost.MAX_DECLINE_REDUCTION.
-SellNpc.INTERESTED_CHANCE = 0.8
+SellNpc.INTERESTED_CHANCE = 0.85
 
 -- Seconds a customer that said no stands there before walking off.
 -- Higher = the player has time to read it. Lower = they leave right away.

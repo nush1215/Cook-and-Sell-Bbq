@@ -143,8 +143,10 @@ function StickShopController:GetSelectedStickId(): string?
 end
 
 -- Syncs the shared ButtonChoices buy buttons to the currently selected stick: both show that stick's
--- price, Robux is only offered once the stick has a real dev product, and currency-buy is disabled when
--- this window's stock is gone.
+-- price, and Robux is only offered once the stick has a real dev product.
+--
+-- Currency-buy is deliberately left pressable even with no stock left and no cash to pay with -- the
+-- server rejects it and says why. A dead button just swallows the press with nothing to read.
 function StickShopController:_refreshSelectionButtons()
 	local stickId = self._selectedStickId
 	if not stickId then
@@ -154,7 +156,6 @@ function StickShopController:_refreshSelectionButtons()
 	local stick = Sticks.GetStickFromId(stickId)
 	local buttonChoices = self._buttonChoices
 
-	buttonChoices.CurrencyPurchase.Active = self:GetRemaining(stickId) > 0
 	buttonChoices.CurrencyPurchase.Title.Text = `${GuiUtil.ConvertNumberWithSuffix(stick.Price)}`
 
 	local hasProduct = stick.RobuxProductId ~= nil and stick.RobuxProductId ~= 0
@@ -426,8 +427,8 @@ function StickShopController:_setupDiamondDisplay()
 	self:_refreshDiamondPrompt()
 end
 
--- Re-reads each row's remaining stock and keeps the open ButtonChoices' buy state in sync. Runs on the
--- shop restock (replica change) and on this player's own purchases (StickShop data change).
+-- Re-reads each row's remaining stock. Runs on the shop restock (replica change) and on this player's
+-- own purchases (StickShop data change).
 function StickShopController:_refreshRows()
 	if not next(self._rows) then
 		return
@@ -435,10 +436,6 @@ function StickShopController:_refreshRows()
 
 	for stickId, row in self._rows do
 		row.Details.Stock.Text = `x{self:GetRemaining(stickId)} Stock`
-	end
-
-	if self._selectedStickId then
-		self:_refreshSelectionButtons()
 	end
 end
 

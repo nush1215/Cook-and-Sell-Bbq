@@ -220,6 +220,10 @@ function GrillerManager:_renderGrills(player: Player)
 				model:SetAttribute("CookStartedAt", if cooking then record.CookStartedAt else nil)
 				model:SetAttribute("ModelKey", skewerModelKey(record))
 
+				-- Whole or not at all, as with a placed structure (see Base:BuildStructure): the client hangs
+				-- the take prompt on the skewer's first part, which the default mode can deliver a frame late.
+				model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
+
 				-- Seated off where the griller *belongs*, not where it is: the server leaves a freshly built
 				-- one PLACE_DROP_HEIGHT above its cell (only the client springs it down), so a skewer
 				-- pivoted onto the live attachment would hang in the air. Re-seating the attachment's model
