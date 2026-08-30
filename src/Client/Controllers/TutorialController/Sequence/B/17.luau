@@ -128,6 +128,13 @@ return function(self)
 	highlight.Destroy()
 	StickShopController:SetOnlySelectableStick(nil)
 
+	-- Shut on the player's behalf, as if they'd pressed Exit. The next beat brings the top bar back and
+	-- asks for the Base button on it, and on a phone the shop sits right over that bar -- so left open it
+	-- blocks the one thing the tutorial is about to point at. Closed after the cues come down rather than
+	-- the moment the buy lands, since both of them read holder.Visible and would flash back onto the stall
+	-- the player is stood at. Nothing holds it shut: walking out and back in re-opens it as it always did.
+	StickShopController:Close()
+
 	self:LogStep("BuyStick")
 
 	self.SequenceFinish:Fire()

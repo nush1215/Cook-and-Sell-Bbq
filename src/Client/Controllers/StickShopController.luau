@@ -136,6 +136,13 @@ function StickShopController:Buy(stickId: string)
 	self.PurchaseStickEvent:FireServer(stickId)
 end
 
+-- Shuts the shop UI, exactly as pressing Exit does. Public because the tutorial closes it on the
+-- player's behalf once the stick is bought: the shop covers the top bar on a phone, and the very next
+-- beat asks them to press the Base button behind it. Walking back into the zone re-opens it as usual.
+function StickShopController:Close()
+	UIController:CloseFrame(self.UI.Holder)
+end
+
 -- Returns the stick whose row is currently expanded, or nil if nothing is selected. The buy buttons act
 -- on whichever stick this is, so anything that wants to know what a press would buy reads it from here.
 function StickShopController:GetSelectedStickId(): string?
@@ -488,11 +495,11 @@ function StickShopController:OnStart()
 		UIController:OpenFrame(self.UI.Holder)
 	end)
 	zone.localPlayerExited:Connect(function()
-		UIController:CloseFrame(self.UI.Holder)
+		self:Close()
 	end)
 
 	UIController:BindButtonClick(self.UI.Holder.Exit, function()
-		UIController:CloseFrame(self.UI.Holder)
+		self:Close()
 	end, true)
 
 	-- Collapse the choices with the shop itself, so re-opening never starts on a leftover selection.

@@ -483,8 +483,10 @@ function HudController:OnInit()
 	self.UI = PlayerGui:WaitForChild("HudUI")
 	UIController = require(script.Parent.UIController)
 
+	-- Adjust the top HUD frame position for touch devices
 	if UserInputService.TouchEnabled then
-		self.UI.IgnoreGuiInset = false
+		HUD_FRAMES_POSITIONS.Top.Hide = UDim2.fromScale(0.5, -0.5)
+		HUD_FRAMES_POSITIONS.Top.Show = UDim2.fromScale(0.5, 0.22)
 	end
 end
 
