@@ -36,8 +36,9 @@ local BaseManager
     hasn't bought, or on top of something else -- the worst a hacked client manages is picking a legal
     cell it wasn't looking at.
 
-    There's nowhere to buy a structure yet: players start with one of each (see the data template) and
-    GrantStructure is what a shop will call when there is one.
+    Players start with one griller and one stand (see the data template), which is what the tutorial's
+    first two beats teach them to put down; past that, structures are bought at the Grill & Stand Shop,
+    which grants them through GrantStructure.
 ]]
 
 -- The tag every structure tool wears, and the attributes carrying which structure it places and how
@@ -176,11 +177,22 @@ end
 -- duplicates. Kept apart from the reconcile above because it isn't something the player owns any
 -- number of -- they either can take structures back up or they can't.
 --
+-- Held back until the tutorial is done, which is what makes the hammer the thing finishing it pays
+-- out. It also stops the sequence being undone from under itself: the first two beats walk the player
+-- through putting a griller and a stand up, and every beat after that waits on those still standing.
+-- The flag is read here rather than asked of TutorialManager, which is awaiting the same read at the
+-- moment this first runs -- a manager-side flag would be a race, where the data can't be.
+--
 -- Cloned from the authored hammer rather than built from nothing, unlike the structure tools above:
 -- those are one per kind and would each need a model, where this is the single tool every player
 -- carries. So RequiresHandle is deliberately left alone -- the template comes with its handle, and
 -- forcing it off is what would leave the hammer invisible in hand.
-function BuildManager:_givePickupTool(player: Player)
+function BuildManager:GivePickupTool(player: Player)
+	local hasData, completed = PlayerDataManager:GetPlayerDataKey(player, "TutorialCompleted"):await()
+	if not hasData or not completed then
+		return
+	end
+
 	local backpack = player:FindFirstChildOfClass("Backpack")
 	if not backpack then
 		return
@@ -258,15 +270,15 @@ function BuildManager:_setupPlayer(player: Player)
 	-- CharacterAutoLoads is off and Base drives every respawn through LoadCharacterAsync, which clears
 	-- the backpack. Runtime tools aren't in StarterGear, so rebuild them on each spawn.
 	--
-	-- The pickup tool goes in first, ahead of the reconcile that yields on player data: it claims the
-	-- first slot either way, but arriving first means the structure tools fill in behind it rather than
-	-- one of them being bumped along to make room.
+	-- The pickup tool goes in first: it claims the first slot either way, but arriving first means the
+	-- structure tools fill in behind it rather than one of them being bumped along to make room. Both
+	-- yield on the same player data, so the order they're called in is the order they land in.
 	player.CharacterAdded:Connect(function()
-		self:_givePickupTool(player)
+		self:GivePickupTool(player)
 		self:_reconcileTools(player)
 	end)
 
-	self:_givePickupTool(player)
+	self:GivePickupTool(player)
 	self:_reconcileTools(player)
 end
 

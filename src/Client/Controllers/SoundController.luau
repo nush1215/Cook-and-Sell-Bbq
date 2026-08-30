@@ -269,6 +269,7 @@ function SoundController:OnStart()
 	local muteButton = TopbarPlus.new()
 	muteButton:setImage("rbxassetid://105660815548502", "Deselected")
 	muteButton:setImage("rbxassetid://97396994687957", "Selected")
+	muteButton:setOrder(2)
 
 	muteButton.selected:Connect(function()
 		self:MuteBGM(true)

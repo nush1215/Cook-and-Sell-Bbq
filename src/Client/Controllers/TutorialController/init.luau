@@ -23,6 +23,7 @@ local SpotlightUI = require(Modules.SpotlightUI)
 
 -- Assets
 local Assets = ReplicatedStorage.Assets
+local UI = Assets.UI
 
 -- Controllers
 local PlayerDataController
@@ -30,26 +31,30 @@ local UIController
 local HudController
 local SoundController
 local ConfettiController
+local InventoryController
+local GrillStandShopController
+local GrillerController
 
 -- Local Player
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer.PlayerGui
 
 --[[
-    Drives the onboarding sequence. Everything the player is told and everything that decides they've
-    done it lives here and in Sequence/1..14 -- the server only owns the finished flag, the funnel, and
-    the two things a client can't be trusted with (what the first roll lands on, and that the customer
-    at the end turns up and buys).
+    Drives the onboarding sequence, together with Sequence/<Variant>/1..N. The server only owns the
+    finished flag, the funnel, the hammer payout, and what a client can't be trusted with (the first
+    roll's result, and the closing customer).
 
-    A step is a ModuleScript under Sequence named for its position, returning one function that gets
-    this controller as `self` and runs imperatively until it fires SequenceFinish. Steps own their own
-    teardown: every effect factory here hands back a { Destroy } the step is expected to call.
+    The tutorial ships as named variants -- one folder of steps each -- so a reworked onboarding can be
+    built alongside the one that works rather than over it. Which one a player runs is decided server
+    side (TutorialManager, off an experience config) and read back here from the replica. Everything
+    below is shared: only the step list differs between variants.
 
-    The one primitive worth understanding is AwaitGoal. A step isn't "wait for event X" -- it's an
-    ordered list of conditions re-checked every frame, showing the prompt for the first one that isn't
-    met. Walk away from the griller and the banner goes back to telling you to come back to it; unequip
-    the stick and it goes back to telling you to hold it. That's what stops the tutorial reading as a
-    checklist that's lost track of where the player actually is.
+    A step is a ModuleScript under the active variant's folder named for its position, returning one
+    function that takes this controller as `self` and runs imperatively until it fires SequenceFinish.
+    Steps own their own teardown: every effect factory here hands back a { Destroy }.
+
+    The key primitive is AwaitGoal -- an ordered list of conditions re-checked every frame, prompting for
+    the first unmet one, so walking away from the griller puts the banner back to "come back to it".
 ]]
 
 --
@@ -58,40 +63,49 @@ local NEAR_DISTANCE = 12
 -- A prompt is either a fixed string or a function evaluated each frame for live text.
 type Prompt = string | (() -> string)
 
--- Gold pulsing fill used to mark tutorial goals. Fill only -- the grills and stands already carry the
--- game's own BreathingHighlight, and a second opaque outline on top of it reads as a bug.
+-- Gold pulsing fill marking tutorial goals. Fill only: grills and stands already carry the game's own
+-- BreathingHighlight, and a second opaque outline over it reads as a bug.
 local HIGHLIGHT_COLOR = Color3.fromRGB(255, 200, 40)
 local HIGHLIGHT_MIN_FILL = 0.35
 local HIGHLIGHT_MAX_FILL = 0.8
 local HIGHLIGHT_PULSE_SPEED = 3
 
--- The prompt's own outline cue. BreathingHighlight must never share an adornee with it -- two Highlights
--- on one instance is undefined, and Roblox renders whichever of them it likes -- so anything the tutorial
--- sets breathing has this taken off it.
+-- Never shares an adornee with BreathingHighlight -- two Highlights on one instance is undefined -- so
+-- anything the tutorial sets breathing has this taken off it.
 local PROMPT_HIGHLIGHT_TAG = "PromptSubjectHighlight"
 
--- Breathing room left around a spotlit HUD button, in pixels.
+-- Padding around a spotlit HUD button, in pixels. Shared with the hotbar slot cue.
 local HUD_SPOTLIGHT_PADDING = 12
+
+-- Where the server parks each base's tutorial guides, keyed by base name (see Base.new).
+local GUIDES_FOLDER_NAME = "TutorialGuides"
+
+-- The label over a guide saying what the ghost is for. Drifts wider and quicker than the griller's knob
+-- billboard, having to catch the eye of someone who doesn't yet know what they're looking for.
+local PLACE_HERE_LABEL_NAME = "TutorialPlaceHere"
+local PLACE_HERE_FLOAT_AMPLITUDE = 0.5
+local PLACE_HERE_FLOAT_SPEED = 5
 
 -- The banner's text swap: drop the line this far below where it was authored, then spring it back up.
 local TEXT_SLIDE_OFFSET = 0.052
 local TEXT_SLIDE_DAMPING = 0.5
 local TEXT_SLIDE_FREQUENCY = 3.5
 
--- How long to wait on an authored asset before giving up on it. These are built in the place file, so
--- a miss is a build problem rather than slow replication -- warn and carry on without that one effect
--- instead of hanging the whole sequence waiting for something that is never coming.
+-- These are authored in the place file, so a miss is a build problem, not slow replication -- warn and
+-- carry on rather than hanging the sequence on something that's never coming.
 local ASSET_TIMEOUT = 10
 
--- A no-op handle, handed back by the effect factories when their asset is missing so a step can still
--- call Destroy on it without checking.
+-- The attribute TutorialManager publishes this player's assigned variant on, once it has resolved the
+-- experience config behind it.
+local VARIANT_ATTRIBUTE = "TutorialVariant"
+
+-- Handed back when an effect's asset is missing, so a step can call Destroy without checking.
 local EMPTY_HANDLE = {
 	Destroy = function() end,
 }
 
--- Resolved tutorial assets, including the misses. A miss is cached too: without it every step that
--- wanted the same absent asset would sit through its own timeout, turning one build mistake into a
--- tutorial that crawls rather than one that plainly says what's missing.
+-- Resolved tutorial assets, misses included -- otherwise every step wanting the same absent asset would
+-- sit through its own timeout, turning one build mistake into a tutorial that crawls.
 local assetCache = {}
 
 -- Resolves an authored tutorial asset, warning the first time one isn't there.
@@ -113,27 +127,24 @@ local function getTutorialAsset(name: string): Instance?
 	return asset
 end
 
--- Resolves a beam endpoint down to whatever carries its world position: an attachment or part as-is, a
--- model by its primary part, anything else by the first part under it.
---
--- An attachment resolves to itself rather than through to the part it sits on, because marking a spot on
--- that part is the entire point of aiming at one. The grill's prompt hangs off an attachment at the
--- corner the player has to stand at, while the griller model's own centre is somewhere they can't reach
--- it from -- so a beam that resolved through would land them next to the thing rather than at it.
+-- Resolves a beam endpoint to whatever carries its world position: an attachment or part as-is, a model
+-- by its primary part, anything else by the first part under it. An attachment resolves to *itself*,
+-- since marking that exact spot is the point -- resolving through would aim at the model's centre.
 local function resolveBeamAnchor(target: Instance): (BasePart | Attachment)?
 	if target:IsA("BasePart") or target:IsA("Attachment") then
 		return target
 	end
 
+	-- Descendants, not children: a structure is a model of models (a griller keeps its Grill inside it),
+	-- so a direct-children search comes back empty on the things most worth pointing at.
 	if target:IsA("Model") then
-		return target.PrimaryPart or target:FindFirstChildWhichIsA("BasePart")
+		return target.PrimaryPart or target:FindFirstChildWhichIsA("BasePart", true)
 	end
 
 	return target:FindFirstChildWhichIsA("BasePart", true)
 end
 
--- Where a resolved anchor sits in the world. An attachment carries a world position of its own; a part
--- is its own position.
+-- Where a resolved anchor sits in the world.
 local function getAnchorPosition(anchor: BasePart | Attachment): Vector3
 	return if anchor:IsA("Attachment") then anchor.WorldPosition else anchor.Position
 end
@@ -144,12 +155,18 @@ local TutorialController = {
 	LogStepEvent = Network.Event("LogTutorialStep"),
 
 	SequenceFinish = Signal.new(),
+
+	-- Every variant's steps, keyed by variant then position, alongside each one's step count. All of them
+	-- load: which one this player runs isn't known until their assignment replicates, and requiring a step
+	-- only defines its function -- nothing in the step body runs until Start spawns it.
 	_sequences = {},
+	_sequenceCounts = {},
 }
 
 -- Runs each tutorial sequence in order, waiting for the active one to fire SequenceFinish before
 -- moving on to the next, then plays the finish.
-function TutorialController:Start()
+-- @param variant: The variant to run, as assigned by the server
+function TutorialController:Start(variant: string)
 	local tutorialUI = PlayerGui:WaitForChild("TutorialUI", ASSET_TIMEOUT)
 	if not tutorialUI then
 		warn("TutorialController: PlayerGui.TutorialUI is missing -- the tutorial cannot run")
@@ -160,29 +177,40 @@ function TutorialController:Start()
 	self.TutorialUI.Holder.Description.RichText = true
 	UIController:OpenFrame(self.TutorialUI.Holder, true)
 
-	-- Everything but the top bar goes: that one keeps the Store and Base teleports, which the tutorial
-	-- walks the player through pressing. A claim rather than HideHud on purpose -- HideHud also sets the
-	-- flag that makes every HUD button ignore its click, which would leave those two teleports looking
-	-- pressable and doing nothing. The claim only hides frames, and holds them hidden through any
-	-- unrelated ShowHud elsewhere.
-	HudController:KeepHudHidden(self, { "Top" })
+	-- The whole HUD, top bar included. The two teleports up there are the only part of it the tutorial
+	-- ever wants, and taking one in the middle of a beat that didn't ask for it just strands the player
+	-- away from whatever they were being told to do -- so the bar comes down too, and the two steps that
+	-- do want it let it back up for as long as they need it. A claim rather than HideHud: HideHud leaves
+	-- every button sitting there and merely swallows the click, which looks pressable and does nothing.
+	HudController:KeepHudHidden(self)
 
-	-- Every step reads off the local player's own base, and BaseId lands after the client has built, so
-	-- the banner says something while that's still in flight rather than opening blank.
+	-- Hidden until the base is built, so nothing on screen invites a press before the tutorial has said
+	-- anything.
+	InventoryController:HideInventory()
+
+	-- Shut for the whole run: the store trip walks past this one's zone and it has nothing they need.
+	GrillStandShopController:SetLocked(true)
+
+	-- Held start to finish rather than across the cooking beat alone. On one shared lock it came back for
+	-- the tail of the very cook it was hidden through, offering to sell the player out of the lesson.
+	GrillerController:SetSkipLocked(true)
+
+	-- BaseId lands after the client has built, so say something rather than opening blank.
 	self:SetText("Tutorial", "Getting your stall ready...")
 	self:GetBase()
 
+	-- Back as soon as there's a stall: step 1 asks them to equip a griller off it.
+	InventoryController:ShowInventory()
+
 	self:LogStep("Start")
 
-	local sequenceCount = #script.Sequence:GetChildren()
-	for i = 1, sequenceCount do
-		local sequence = self._sequences[tostring(i)]
+	local steps = self._sequences[variant]
+	for i = 1, self._sequenceCounts[variant] do
+		local sequence = steps[tostring(i)]
 		if sequence then
-			-- Listen before the step is spawned, rather than waiting on the signal after. task.spawn runs
-			-- the step synchronously up to its first yield, and a step whose goal is already met never
-			-- yields at all -- the stick beat passes on the spot, because a bought stick is already in the
-			-- player's hands. Such a step fires SequenceFinish before a :Wait() here could have been
-			-- reached, the fire lands on nobody, and the tutorial sits forever on a beat it has passed.
+			-- Connect before spawning, not :Wait() after: task.spawn runs the step synchronously to its
+			-- first yield, so a step whose goal is already met fires SequenceFinish before a Wait could
+			-- be reached -- and the tutorial would sit forever on a beat it had passed.
 			local finished = false
 			local connection = self.SequenceFinish:Connect(function()
 				finished = true
@@ -202,9 +230,8 @@ function TutorialController:Start()
 	self.FinishTutorialEvent:FireServer()
 	self:SetText(nil, "Tutorial Complete!")
 
-	-- Handed back here rather than by the step that took it: step 1 shuts the lever on the pull that ends
-	-- it and nothing between there and the finish wants it open, so the whole run is one lock rather than
-	-- each beat taking and releasing its own.
+	-- Released here, not by the step that took it: step 1 shuts the lever and nothing before the finish
+	-- wants it open, so the run holds one lock rather than each beat taking its own.
 	if self.LeverLock then
 		self.LeverLock.Destroy()
 		self.LeverLock = nil
@@ -212,6 +239,10 @@ function TutorialController:Start()
 
 	HudController:ReleaseHud(self)
 	HudController:ShowHud()
+
+	-- Both held from the top of the run, so they come off here with the HUD.
+	GrillStandShopController:SetLocked(false)
+	GrillerController:SetSkipLocked(false)
 
 	ConfettiController:FireSidesConfetti({
 		Images = {
@@ -233,8 +264,7 @@ function TutorialController:Start()
 	end
 end
 
--- Returns the local player's own base model, blocking until it's been assigned. Every step's targets
--- hang off this, and it never changes for the life of the session, so it's resolved once and kept.
+-- The local player's base model, blocking until assigned. Resolved once and kept -- it never changes.
 function TutorialController:GetBase(): Model
 	local base = self:GetBaseIfPresent()
 	if base then
@@ -251,13 +281,9 @@ function TutorialController:GetBase(): Model
 	return self.Base
 end
 
--- The local player's base if it is currently streamed in, else nil. Non-blocking, so a per-frame check
--- can test against it without stalling inside a WaitForChild for a base that isn't there -- which would
--- hold the check's whole thread and leave it unable to notice anything else finishing the beat.
---
--- Re-resolves whenever the model it kept has left the world: a base the player travelled away from
--- streams out and comes back as a brand-new instance, leaving the old one parentless and every
--- reference taken into it dead.
+-- The local player's base if streamed in, else nil. Non-blocking, so a per-frame check can't stall its
+-- thread inside a WaitForChild. Re-resolves when the kept model has left the world: a base streams back
+-- in as a brand-new instance, leaving every reference into the old one dead.
 function TutorialController:GetBaseIfPresent(): Model?
 	if self.Base and self.Base.Parent then
 		return self.Base
@@ -270,17 +296,11 @@ function TutorialController:GetBaseIfPresent(): Model?
 	return self.Base
 end
 
--- Returns one of the player's structures of the given kind, blocking until there is one. Grillers and
--- stands are things the player builds rather than slots authored into a base (see Config.Structures),
--- so a step can't reach for a fixed path -- it asks for a griller and gets whichever one they have.
+-- One of the player's structures of the given kind. Keyed on category, not a structure id, so it still
+-- finds their only griller when that's a later model of one.
 --
--- Keyed on the category rather than a structure id, so a step still finds the player's only griller
--- when that griller is some later model of one.
---
--- BEWARE: this blocks until the player has one, and nothing gives them a starting build any more --
--- so a step calling it before the player has built the thing it wants waits forever, and the funnel
--- stops dead there. Whatever re-enables the tutorial (data.TutorialCompleted starts true today, so it
--- doesn't run) has to make building a griller and a stand steps of its own, ahead of steps 8-14.
+-- BEWARE: blocks until the player has one. Steps 1 and 2 are what make that safe -- a beat calling this
+-- ahead of them waits forever and stops the funnel dead. That block IS the goal in those two steps.
 function TutorialController:GetStructure(category: string): Model
 	local base = self:GetBase()
 	local folder = base:WaitForChild(Structures.FOLDER_NAME)
@@ -292,11 +312,30 @@ function TutorialController:GetStructure(category: string): Model
 			end
 		end
 
-		-- The tag goes on last, after the model is parented and its attributes are set, so a structure
-		-- arriving is not the same moment as it becoming findable. Waiting on the tag rather than the
-		-- child is what makes sure the one handed back is ready to be pointed at.
+		-- The tag goes on last, after parenting and attributes, so waiting on it rather than on ChildAdded
+		-- is what guarantees the model handed back is ready to be pointed at.
 		CollectionService:GetInstanceAddedSignal(category):Wait()
 	end
+end
+
+-- The build tool the player is carrying for a kind of structure -- the counterpart to GetStructure, which
+-- finds what they've already put down. Non-blocking and re-resolved rather than held, since BuildManager
+-- rebuilds the backpack on every spawn. Both containers are scanned: an equipped tool sits in the character.
+-- @param category: a Structures Category ("Grillers", "StickStands")
+function TutorialController:GetStructureTool(category: string): Tool?
+	for _, container in { LocalPlayer:FindFirstChildOfClass("Backpack"), LocalPlayer.Character } do
+		if not container then
+			continue
+		end
+
+		for _, child in container:GetChildren() do
+			if child:IsA("Tool") and Structures.IsCategory(child:GetAttribute("StructureId") or "", category) then
+				return child
+			end
+		end
+	end
+
+	return nil
 end
 
 -- Logs an onboarding funnel step. The server owns the ordering and names; the client only sends the
@@ -315,16 +354,10 @@ function TutorialController:GetSpotlight()
 	return self.Spotlight
 end
 
--- Colours a keyword for the banner, so a line can name the thing to go and find without spelling out
--- which of its words matters. Every step's text goes through this rather than styling its own.
---
--- A keyword that names an object takes that object's colour from Config.Keywords, looked up here rather
--- than passed in by each step: "BBQ" is written in six places and "Griller" in four, and a colour they
--- each carried their own copy of would drift the first time one of them was retuned. The same table is
--- what notifications colour themselves from, so a word reads the same in the banner and in a toast.
--- @param color: Optional override, for a keyword whose colour is already authored somewhere. An
---   ingredient or a stick is named in the same colour its own labels carry everywhere else, so the
---   banner and the thing it is pointing at read as one item rather than two that share a name.
+-- Colours a keyword for the banner. Object keywords take their colour from Config.Keywords, looked up
+-- here rather than passed per step, so "BBQ" and "Griller" can't drift across the places they're written
+-- -- and the same table is what notifications use, so a word reads alike in a banner and a toast.
+-- @param color: Optional override, for a keyword whose colour is already authored elsewhere
 function TutorialController:Emphasize(text: string, color: Color3?): string
 	return GuiUtil.Colorize(text, color or Keywords.Colors[text] or Keywords.EMPHASIS)
 end
@@ -338,8 +371,7 @@ function TutorialController:SetText(title: string?, description: string)
 		holder.Title.Text = title
 	end
 
-	-- Where the label was authored is where it rests, so the banner can be moved in Studio without the
-	-- slide needing to be retuned here.
+	-- The authored position is the rest pose, so the banner can be moved in Studio without retuning here.
 	if not self._descriptionPosition then
 		self._descriptionPosition = label.Position
 	end
@@ -352,17 +384,12 @@ function TutorialController:SetText(title: string?, description: string)
 	label.Text = description
 end
 
--- Drives an ordered list of guard conditions, always showing the prompt of the first one that is
--- currently unsatisfied. Guards are re-checked every frame, so if the player undoes an earlier
--- requirement (walks away, unequips, leaves the shop, ...) the matching prompt is shown again. Once
--- every guard holds, the optional goal prompt is shown and AwaitGoal returns when the goal is reached.
--- A Description may be a function so the prompt can change with live state.
+-- Shows the prompt of the first unsatisfied guard, re-checked every frame, so undoing an earlier
+-- requirement brings its prompt back. Once every guard holds, the optional goal prompt shows and this
+-- returns when the goal is reached. A Description may be a function, for prompts that read live state.
 --
--- Getting past a guard plays the same sound finishing a step does, because it is the same thing from the
--- player's side -- "Go to your Stall" giving way to "Place your BBQ" is them having done what was asked.
--- Only ever on the way forward, and only the first time each one is passed: guards are re-checked every
--- frame and the player is free to undo them, so without that a walk out of range and back would sound
--- like a fresh win every lap.
+-- Passing a guard plays the step-finish sound, but only going forward and only once per guard -- guards
+-- can be undone, so otherwise walking out of range and back would sound like a fresh win every lap.
 -- @param guards: ordered { { Description: Prompt, Check: () -> boolean } }
 -- @param goal: optional { Description: Prompt, Wait: () -> () } milestone
 function TutorialController:AwaitGoal(
@@ -381,9 +408,8 @@ function TutorialController:AwaitGoal(
 
 	local shownDescription
 
-	-- How far into the beat the player has got: the index of the guard they're held on, or one past the
-	-- last guard once they're on the goal. Tracked by stage rather than by the text shown, because a
-	-- Description that reads off live state rewrites itself without anything having been achieved.
+	-- Tracked by stage index rather than by the text shown: a Description reading live state rewrites
+	-- itself without anything having been achieved.
 	local furthestStage = 0
 
 	while true do
@@ -411,8 +437,7 @@ function TutorialController:AwaitGoal(
 		end
 
 		if stage > furthestStage then
-			-- Silent on the first stage: arriving at it is the step opening, and the step before it has
-			-- already played its own finish.
+			-- Silent on the first stage -- that's the step opening, and the previous step already chimed.
 			if furthestStage > 0 then
 				SoundController:PlaySound("TutorialProgress")
 			end
@@ -433,14 +458,9 @@ function TutorialController:AwaitGoal(
 	end
 end
 
--- Returns whether the local character is currently within distance of the target. Measured from the
--- target's pivot, so a whole griller or stand model can be passed as-is rather than each step having to
--- pick a representative part out of it.
---
--- An attachment may be passed instead, and is measured from where it sits in the world. That's for beats
--- whose "are they there yet" is really "are they close enough to press the prompt" -- the prompt hangs
--- off an attachment somewhere on the model, and a model wide enough for that to differ (the griller) has
--- a pivot the player can be well within while standing nowhere near the part they interact with.
+-- Whether the local character is within distance of the target, measured from its pivot so a whole model
+-- can be passed as-is. Pass an attachment instead where the real question is "close enough to press the
+-- prompt": a griller's pivot can be well within range while the player is nowhere near its prompt.
 function TutorialController:IsNear(target: PVInstance | Attachment, distance: number?): boolean
 	local character = LocalPlayer.Character
 	local root = character and character:FindFirstChild("HumanoidRootPart")
@@ -455,14 +475,10 @@ function TutorialController:IsNear(target: PVInstance | Attachment, distance: nu
 	return (root.Position - position).Magnitude <= (distance or NEAR_DISTANCE)
 end
 
--- Adorns a gold pulsing highlight onto a part or model to mark a goal. Only the fill is shown, and it
--- breathes between HIGHLIGHT_MIN_FILL and HIGHLIGHT_MAX_FILL until the handle's Destroy is called.
---
--- A resolver may be passed in place of a fixed adornee, for a goal that isn't there yet or is rebuilt
--- while the step runs -- the rolled ingredient is both. The highlight then lives on Terrain and re-points
--- its Adornee rather than being parented into the goal: parented there it would be destroyed along with
--- it, and the rolling cycle destroys and re-clones a model per step before the real one settles. It
--- simply hides itself while the resolver has nothing to point at.
+-- Adorns a gold pulsing fill onto a part or model to mark a goal, until the handle's Destroy is called.
+-- Pass a resolver for a goal that isn't there yet or is rebuilt mid-step (the rolled ingredient is both);
+-- the highlight then lives on Terrain and re-points its Adornee, since parenting it into the goal would
+-- destroy it with each re-clone.
 -- @param adornee: The BasePart or Model to glow, or a resolver evaluated each frame
 -- @param shouldHide: Optional predicate; while it returns true the glow is hidden
 function TutorialController:CreateHighlight(
@@ -512,13 +528,9 @@ function TutorialController:CreateHighlight(
 	}
 end
 
--- Sets the game's own breathing highlight on a goal, rather than the tutorial's gold pulse. Used where
--- the goal is a thing the player is about to act on rather than somewhere they have to walk to, so the
--- tutorial marks it the way the rest of the game already marks everything actionable instead of teaching
--- a second visual language for the same idea.
---
--- Takes a resolver like CreateBeam, and moves the tag as the resolved goal changes: the rolled ingredient
--- is destroyed and re-cloned once per cycle step before the real one settles.
+-- Marks a goal with the game's own breathing highlight rather than the tutorial's gold pulse -- used
+-- where the goal is something to act on, so the tutorial doesn't teach a second visual language for it.
+-- Takes a resolver like CreateBeam, moving the tag as the resolved goal is destroyed and re-cloned.
 -- @param target: The goal instance, or a resolver evaluated each frame
 function TutorialController:CreateBreathingHighlight(target: Instance | (() -> Instance?)): { Destroy: () -> () }
 	-- Wrap a plain Instance so the heartbeat always resolves through a function.
@@ -548,17 +560,16 @@ function TutorialController:CreateBreathingHighlight(target: Instance | (() -> I
 			end
 		end
 
-		-- Taken off every frame rather than once on tagging: the owning system recomputes its prompt cue
-		-- off world state and puts this back whenever that changes, and the two can't share an adornee.
+		-- Every frame, not once on tagging: the owning system re-adds its prompt cue whenever world state
+		-- changes, and the two can't share an adornee.
 		if tagged then
 			tagged:RemoveTag(PROMPT_HIGHLIGHT_TAG)
 		end
 	end)
 
 	return {
-		-- The prompt's cue isn't handed back, because there is nothing to hand it back to: the goals this
-		-- marks are gone by the time their step ends -- a bought ingredient leaves the stand with the
-		-- purchase that ended the step -- and the owning system re-tags anything that isn't.
+		-- The prompt cue isn't restored: these goals are gone by the time their step ends, and the owning
+		-- system re-tags anything that isn't.
 		Destroy = function()
 			heartbeat:Disconnect()
 			untag()
@@ -566,16 +577,12 @@ function TutorialController:CreateBreathingHighlight(target: Instance | (() -> I
 	}
 end
 
--- Draws a beam from the local character to a goal, pointing the way to it. The beam hides itself once
--- the player is within hideDistance and shows again when they wander back out. Handles respawns by
--- re-binding to the new character.
+-- Draws a beam from the character to a goal, hiding within hideDistance and re-binding across respawns.
 --
--- The beam and its goal-side attachment are anchored to Terrain -- always streamed in, and stable
--- across respawns -- rather than to the goal part, and that attachment is pinned onto the goal each
--- frame. Under StreamingEnabled a part (and every client instance parented beneath it) is wiped when
--- it streams out, so a beam parented to the goal would vanish precisely when the goal is far enough to
--- need pointing at, never to return (the goal streams back in as a brand-new instance). Anchoring to
--- Terrain keeps the beam alive; it merely hides while the goal is absent and re-acquires it on return.
+-- Both the beam and its goal-side attachment live on Terrain, with the attachment pinned onto the goal
+-- each frame. Parented to the goal instead, StreamingEnabled would wipe the beam exactly when the goal
+-- got far enough to need pointing at, and it would never come back -- the goal streams in as a new
+-- instance. On Terrain it survives, merely hiding while the goal is absent.
 -- @param target: The goal instance, or a resolver evaluated each frame to re-acquire a goal that
 --   streams out and back in as a new instance, or that only appears part way through the step
 -- @param hideDistance: The distance at which the beam disappears
@@ -595,8 +602,8 @@ function TutorialController:CreateBeam(
 			return target :: Instance
 		end
 
-	-- A static target with nothing to anchor to is a wiring bug; warn once. A resolver may legitimately
-	-- return nil while the goal is streamed out, so it is not checked here.
+	-- A static target with nothing to anchor to is a wiring bug. A resolver may legitimately return nil
+	-- while the goal is streamed out, so it isn't checked.
 	if type(target) ~= "function" and not resolveBeamAnchor(target :: Instance) then
 		warn(`CreateBeam: no BasePart or Attachment found for {(target :: Instance):GetFullName()}`)
 	end
@@ -632,10 +639,8 @@ function TutorialController:CreateBeam(
 	end
 	local characterAdded = LocalPlayer.CharacterAdded:Connect(bindCharacter)
 
-	-- Cache the anchor resolved for a goal, so the per-frame work is the resolver call rather than a walk
-	-- down the goal's descendants. Re-resolved whenever the resolver hands back a different instance --
-	-- a goal that streamed out and came back as a new one, or a step that points somewhere else until its
-	-- real goal appears -- and whenever the anchor cached for it has gone.
+	-- Cached so the per-frame cost is the resolver call, not a walk of the goal's descendants. Re-resolved
+	-- when the resolver hands back a different instance, or when the cached anchor has gone.
 	local goalInstance: Instance? = nil
 	local goalAnchor: (BasePart | Attachment)? = nil
 	local function currentGoalAnchor(): (BasePart | Attachment)?
@@ -676,6 +681,64 @@ function TutorialController:CreateBeam(
 	}
 end
 
+-- Puts one of the tutorial's ghost structures back into the world, suggesting where to build, and hands
+-- back the Model so a step can aim its beam and glow at it (nil if the guide wasn't authored).
+--
+-- Guides are authored per base and parked in ReplicatedStorage.TutorialGuides at load (see Base.new), so
+-- this is a purely local reparent onto the exact authored spot. Nothing enforces building there -- the
+-- step finishes on a structure going down anywhere legal.
+-- @param name: the guide's name under its base's folder ("Grill", "StickStand")
+function TutorialController:ShowGuide(name: string): { Destroy: () -> (), Model: Model? }
+	local baseName = self:GetBase().Name
+	local holder = ReplicatedStorage:WaitForChild(GUIDES_FOLDER_NAME, ASSET_TIMEOUT)
+	local baseGuides = holder and holder:WaitForChild(baseName, ASSET_TIMEOUT)
+	local guide = baseGuides and baseGuides:FindFirstChild(name)
+
+	if not guide then
+		warn(`TutorialController: base {baseName} has no {GUIDES_FOLDER_NAME}.{name} guide`)
+		return EMPTY_HANDLE
+	end
+
+	guide.Parent = workspace
+
+	-- The label saying what the ghost is for, hung on the guide so it travels with it. Bobbed by PartFloat
+	-- like every other floating label; no spin, since a billboard already faces the camera.
+	local labelTemplate = UI:FindFirstChild(PLACE_HERE_LABEL_NAME)
+	local label
+	if labelTemplate then
+		-- Parented to the model, not a part inside it: guides are hand-built and carry no PrimaryPart, so
+		-- any part found would be arbitrary and the attachment would inherit its transform. On the model
+		-- the attachment's CFrame is already world space.
+		label = labelTemplate:Clone()
+		label.Parent = guide
+
+		-- The template's authored offset is kept rather than computed from the model's box, since label
+		-- height over a ghost is a thing to nudge in Studio. A template left at 0,0,0 therefore lands
+		-- inside the ghost and is occluded -- the asset wants some height on it.
+		label:SetAttribute("CanSpin", false)
+		label:SetAttribute("HoverAmplitude", PLACE_HERE_FLOAT_AMPLITUDE)
+		label:SetAttribute("HoverSpeed", PLACE_HERE_FLOAT_SPEED)
+		label:AddTag("PartFloat")
+	else
+		warn(`TutorialController: ReplicatedStorage.Assets.UI.{PLACE_HERE_LABEL_NAME} is missing`)
+	end
+
+	return {
+		Model = guide,
+		Destroy = function()
+			-- Before the guide is parked, or it rides back into ReplicatedStorage and the next ShowGuide
+			-- hangs a second label alongside it.
+			if label then
+				label:Destroy()
+			end
+
+			-- Parked, not destroyed: the reparent above was local, so destroying would take the base's
+			-- copy out for the whole session and leave a second run with nothing to point at.
+			guide.Parent = baseGuides
+		end,
+	}
+end
+
 -- Dims the screen down to a single HUD button, for a beat that asks the player to press one. FocusUI
 -- binds its own follow loop, so this is set once and lifted by the returned Destroy handle.
 -- @param buttonName: The HUD button's frame name, as HudController knows it
@@ -686,9 +749,8 @@ function TutorialController:SpotlightHudButton(buttonName: string): { Destroy: (
 	end
 
 	local spotlight = self:GetSpotlight()
-	-- Rectangle, always, for a UI target. It's the only shape that sizes the cutout to the element's
-	-- width *and* height -- every other one takes the larger of the two and squares it, which turns a
-	-- wide button into a hole several times taller than the thing it's meant to be pointing at.
+	-- Rectangle, always, for a UI target: it's the only shape that sizes the cutout to width *and*
+	-- height, where the others square off the larger and turn a wide button into a tall hole.
 	spotlight:SetShape("Rectangle")
 	spotlight:FocusUI(frame, HUD_SPOTLIGHT_PADDING)
 	spotlight:Show()
@@ -700,17 +762,50 @@ function TutorialController:SpotlightHudButton(buttonName: string): { Destroy: (
 	}
 end
 
--- Forces a set of prompts off and holds them there against anything that re-enables them, so a beat
--- the player isn't meant to be able to take yet can't be taken. The owning controller recomputes its
--- prompts off world state whenever that state changes, and nothing changes while the player is being
--- held back -- so the caller passes an onRelease that hands control back rather than this guessing
--- what each prompt's state should be by the time it lets go.
+-- Dims the screen to the hotbar slot a tool is in. The slot belongs to the backpack, so the frame is
+-- asked for rather than worked out here. Takes a resolver because neither end holds still: a respawn
+-- rebuilds the tool as a new instance, and a just-parented tool has no slot for a frame or two.
+-- Returning nil hides the light, which is how a step drops it once the tool is in hand.
+--
+-- Re-aimed only when the frame changes -- FocusUI re-locks ancestors and rebinds its follow loop per call.
+-- @param resolveTool: evaluated each frame for the tool whose slot to light, or nil for none
+function TutorialController:SpotlightHotbarSlot(resolveTool: () -> Tool?): { Destroy: () -> () }
+	local spotlight = self:GetSpotlight()
+	local currentFrame
+
+	local heartbeat = RunService.Heartbeat:Connect(function()
+		local tool = resolveTool()
+		local frame = tool and InventoryController:GetSlotFrame(tool)
+		if frame == currentFrame then
+			return
+		end
+		currentFrame = frame
+
+		if not frame then
+			spotlight:Hide()
+			return
+		end
+
+		-- Rectangle for the same reason SpotlightHudButton uses one.
+		spotlight:SetShape("Rectangle")
+		spotlight:FocusUI(frame, HUD_SPOTLIGHT_PADDING)
+		spotlight:Show()
+	end)
+
+	return {
+		Destroy = function()
+			heartbeat:Disconnect()
+			spotlight:Hide()
+		end,
+	}
+end
+
+-- Forces a set of prompts off and holds them there against anything re-enabling them. The caller passes
+-- an onRelease so the owning controller recomputes their real state, rather than this guessing it.
 -- @param prompts: The prompts to hold disabled
 -- @param onRelease: Called by Destroy, to let the prompts' owner recompute them
--- @param glows: Optional instances whose breathing highlight is held off for as long as the prompts are.
---   The systems that own these tie the two together deliberately -- the glow is what says the prompt is
---   up -- so a beat that shuts one without the other leaves an interactable lit for something the player
---   can't actually do.
+-- @param glows: Optional instances whose breathing highlight is held off alongside -- the glow is what
+--   says a prompt is up, so shutting one without the other lights an interactable that does nothing
 function TutorialController:DisablePrompts(
 	prompts: { ProximityPrompt },
 	onRelease: () -> (),
@@ -731,13 +826,9 @@ function TutorialController:DisablePrompts(
 		)
 	end
 
-	-- A tag has no per-instance changed signal to hold against the way Enabled does, so the held glows are
-	-- swept instead. Per frame rather than off CollectionService's added signal, which is what this used
-	-- to listen to: that signal is deferred, so every re-tag got a frame or two on screen before the
-	-- handler could take it back off -- and the owning systems re-tag off world state, which for the
-	-- roller's lever means every time the player puts something down. The result was a lever that blinked
-	-- through the run rather than one that was dark. Sweeping is a handful of instances a frame while a
-	-- lock is held, and it can't be beaten to the draw.
+	-- A tag has no per-instance changed signal, so the glows are swept per frame. Not off
+	-- CollectionService's added signal: it's deferred, so every re-tag got a frame or two on screen and
+	-- the lever blinked through the run rather than staying dark.
 	local heartbeat
 	if glows then
 		heartbeat = RunService.Heartbeat:Connect(function()
@@ -769,22 +860,48 @@ function TutorialController:OnInit()
 	HudController = require(script.Parent.HudController)
 	SoundController = require(script.Parent.SoundController)
 	ConfettiController = require(script.Parent.ConfettiController)
+	InventoryController = require(script.Parent.InventoryController)
+	GrillStandShopController = require(script.Parent.GrillStandShopController)
+	GrillerController = require(script.Parent.GrillerController)
 
-	for _, sequence in script.Sequence:GetChildren() do
-		if not sequence:IsA("ModuleScript") then
-			continue
+	for _, variantFolder in script.Sequence:GetChildren() do
+		local steps, count = {}, 0
+		for _, sequence in variantFolder:GetChildren() do
+			if not sequence:IsA("ModuleScript") then
+				continue
+			end
+
+			steps[sequence.Name] = require(sequence)
+			count += 1
 		end
 
-		self._sequences[sequence.Name] = require(sequence)
+		self._sequences[variantFolder.Name] = steps
+		self._sequenceCounts[variantFolder.Name] = count
 	end
 end
 
 function TutorialController:OnStart()
 	PlayerDataController:GetReplica()
 		:andThen(function(replica)
-			if not replica.Data.TutorialCompleted then
-				self:Start()
+			if replica.Data.TutorialCompleted then
+				return
 			end
+
+			-- Lands once the server has resolved the config behind it, a beat after the profile loads.
+			while LocalPlayer:GetAttribute(VARIANT_ATTRIBUTE) == nil do
+				LocalPlayer:GetAttributeChangedSignal(VARIANT_ATTRIBUTE):Wait()
+			end
+
+			-- A variant the server assigned that this build has no steps for. Sitting it out beats
+			-- running an empty sequence: Start with no steps walks its prologue straight into the finish,
+			-- and TutorialCompleted is written for good.
+			local variant = LocalPlayer:GetAttribute(VARIANT_ATTRIBUTE)
+			if not self._sequences[variant] then
+				warn(`TutorialController: no Sequence folder for variant "{variant}"`)
+				return
+			end
+
+			self:Start(variant)
 		end)
 		:catch(warn)
 end

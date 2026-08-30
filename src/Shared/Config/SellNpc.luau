@@ -1,44 +1,35 @@
 --[[
-    All the numbers that control the sell-stand customers.
+    All the numbers controlling the sell-stand customers.
 
-    How a sale goes: the player puts a skewer on the stand -> a customer walks over -> it thinks about it
-    -> if it's not interested it leaves and another one comes -> if it is, it offers a price -> the player
-    accepts or declines -> declining might get a better price, up to MAX_COUNTER_ROUNDS times -> it pays,
-    steps back, and eats.
+    A sale: skewer goes on the stand -> a customer walks over -> thinks about it -> leaves (and another
+    comes) or offers -> the player accepts or declines -> declining may get a better price, up to
+    MAX_COUNTER_ROUNDS times -> it pays, steps back, and eats.
 
-    A skewer a customer walks away from goes back on the stand and another comes for it, so turning an
-    offer down is a reroll rather than a loss. What stops that reroll being free is the REFUSAL_ block
-    below: refusals are remembered for a while and drag later customers' opening offers down toward the
-    skewer's plain worth. Selling at a sensible price never touches any of it.
+    Declining is a reroll rather than a loss, since the skewer goes back on the stand. The REFUSAL_ block
+    is what stops that reroll being free: refusals are remembered and drag later opening offers down.
 
-    Anything ending in MIN and MAX is one setting with a random range, not two settings. A 5/8 pair means
-    "somewhere between 5 and 8, picked at random each time".
+    A MIN/MAX pair is one setting with a random range, not two settings.
 
-    What isn't here: the opening offer, the haggle chance and the haggle ceiling, all of which vary by
-    how well the skewer was cooked and so live on CookStates.Data instead.
-
-    One gotcha: INTERESTED_CHANCE is out of 1 (0.8 = 80%), but the cook states' CounterChance is out of
-    100 (80 = 80%).
+    Not here: the opening offer, haggle chance and haggle ceiling, which vary by cook state and so live on
+    CookStates.Data. Gotcha: INTERESTED_CHANCE is out of 1, but CounterChance there is out of 100.
 ]]
 
 --
 local SellNpc = {}
 
--- Seconds before a customer shows up after a skewer is put on the stand.
+-- Seconds before a customer shows up after a skewer is placed.
 -- Higher = slower money. Lower = customers appear almost instantly.
+-- What an established player waits -- a new one's is scaled by EarlyBoost.MAX_SPAWN_SPEEDUP.
 SellNpc.SPAWN_DELAY_MIN = 8
 SellNpc.SPAWN_DELAY_MAX = 15
 
--- What a guaranteed customer waits instead of the range above (SellNpcManager:SetCustomersGuaranteed).
--- Its own number rather than the range's floor: the floor is balance -- how long money should take --
--- and this is pacing, for a player sat watching a banner that has told them to wait and given them
--- nothing to do. Short enough not to read as the tutorial having hung, long enough that the customer
--- still walks up rather than materialising on the spot.
+-- What a guaranteed customer waits instead (SellNpcManager:SetCustomersGuaranteed). Its own number
+-- because the range above is balance and this is pacing: short enough not to read as the tutorial
+-- hanging, long enough that the customer still walks up rather than materialising.
 SellNpc.GUARANTEED_SPAWN_DELAY = 3
 
--- Seconds before the next customer tries, after one leaves without buying. Someone always comes back for
--- it, so a rejection only costs time. This is the floor rather than the whole wait: REFUSAL_RETRY_DELAY
--- below adds to it for a player who's been turning offers down.
+-- Seconds before the next customer tries, after one leaves without buying. The floor rather than the
+-- whole wait -- REFUSAL_RETRY_DELAY adds to it for a player who's been declining.
 -- Higher = rejections hurt more. Lower = barely noticeable.
 SellNpc.RETRY_DELAY_MIN = 4
 SellNpc.RETRY_DELAY_MAX = 7
@@ -52,9 +43,8 @@ SellNpc.ARRIVE_DISTANCE = 4
 -- Higher = the line spreads out and might run past the stand. Lower = they overlap.
 SellNpc.STAND_SPACING = 8
 
--- Odd customers in the line sit this far back toward the customer side, forming a second row.
--- The zig-zag pulls their billboard UIs apart by depth so a full line doesn't stack them flat.
--- Higher = a deeper stagger between the two rows. Lower = the rows flatten back into one line.
+-- Odd customers sit this far back, forming a second row so a full line's billboards don't stack flat.
+-- Higher = a deeper stagger. Lower = the rows flatten into one line.
 SellNpc.STAND_ROW_OFFSET = 2.5
 
 -- Give-up time for a customer that can't reach the stand. Just a safety net for one stuck on scenery.
@@ -73,9 +63,9 @@ SellNpc.DECIDE_DURATION_MAX = 3
 SellNpc.DECIDE_INITIAL_WAIT = 0.04
 SellNpc.DECIDE_MAX_WAIT = 0.35
 
--- Chance out of 1 that the customer wants to buy. 0.8 means 8 out of 10 buy, 2 walk off.
--- Higher = nearly everyone buys and the thinking moment stops mattering. Lower = more rejections and
--- slower sales, but the wait feels tenser.
+-- Chance out of 1 that the customer wants to buy. 0.8 means 8 in 10 buy, 2 walk off.
+-- Higher = nearly everyone buys and the thinking moment stops mattering. Lower = tenser but slower.
+-- What an established player faces -- a new one's walk-off share is cut by EarlyBoost.MAX_DECLINE_REDUCTION.
 SellNpc.INTERESTED_CHANCE = 0.8
 
 -- Seconds a customer that said no stands there before walking off.
@@ -85,24 +75,17 @@ SellNpc.LEAVE_DELAY = 2.5
 -- Where the skewer sits in the customer's hand once it's picked it up. Purely visual.
 SellNpc.SKEWER_HOLD_OFFSET = CFrame.identity
 
--- The first price offered, the chance that declining gets a better one, and the most a customer can ever
--- be pushed to all live per cook state, on CookStates.Data (OfferMin, OfferMax, CounterChance and
--- CounterCap) -- how well a skewer was cooked changes how a customer haggles over it, not just what it's
--- worth. They're not repeated here, so there's only ever one place to tune them.
+-- The opening offer, the counter chance and the haggle ceiling live per cook state on CookStates.Data
+-- (OfferMin/OfferMax/CounterChance/CounterCap), so there's one place to tune them.
 --
--- Worth knowing: a skewer's sell value is what its ingredients cost in the shop plus a slice of what
--- the stick under them cost (Sticks.SALE_RETURN_FACTOR), times that stick's tier boost
--- (Sticks.ValueBoost), times its sauce, times its cook state. So $1,000 of ingredients on a $2,500 gold
--- stick (+$250, then +85%) makes a $4,163 skewer cooked perfectly (1.8), and $1,850 if it's left on
--- until it chars (0.8). No sauce in that sum because there's nothing to put on one yet -- Sauces.Data
--- ships empty and GetMultiplier returns 1 for everything, so the flavour band is a no-op today.
+-- A skewer's sell value: its ingredients' shop cost, plus a slice of the stick's (Sticks.SALE_RETURN_FACTOR),
+-- times the stick's tier boost, its sauce and its cook state. So $1,000 of ingredients on a $2,500 gold
+-- stick is $4,163 cooked perfectly and $1,850 charred. Sauce is a no-op today -- Sauces.Data ships empty.
 
--- The guess shown on the billboard over a held skewer, as a multiple of its sell value. Both numbers
--- sit at or below 1 on purpose, and every state's OfferMin sits at or above it, so a customer's opening
--- offer always beats the guess and the sale reads as a win rather than a letdown. Each skewer's spot in
--- this range is fixed by its own id, so the number never changes on re-equip.
--- Higher = the guess creeps toward the real price and the sale stops feeling like a bonus. Push either
--- past 1 and skewers start selling for less than the player was promised.
+-- The billboard guess over a held skewer, as a multiple of sell value. Kept at or below 1 while every
+-- state's OfferMin sits at or above it, so an opening offer always beats the guess. Each skewer's spot in
+-- the range is fixed by its own id, so the number never changes on re-equip.
+-- Higher = the guess creeps toward the real price. Past 1, skewers sell for less than they were promised.
 SellNpc.ESTIMATE_MIN_FACTOR = 0.98
 SellNpc.ESTIMATE_MAX_FACTOR = 1.05
 
@@ -111,34 +94,23 @@ SellNpc.ESTIMATE_MAX_FACTOR = 1.05
 -- Higher (closer to 1) = long haggles stay possible. Lower = the second decline nearly always ends it.
 SellNpc.COUNTER_CHANCE_FALLOFF = 0.8
 
--- How much each better price adds, as a fraction of the distance still left between what's on the table
--- and the cook state's CounterCap -- not as a multiple of the skewer's sell value. Closing a share of the
--- remaining gap is what makes a haggle decelerate: a customer gives ground readily on the first push and
--- grudgingly on the third, because there's less left to give. On a $1,000 perfect skewer opening at $1,225
--- against a $1,550 ceiling that runs +$36-$59, then +$31-$50, then +$26-$43 -- so the badge steps roughly
--- +23% -> +27% -> +31% -> +34%, a few points at a time and shrinking. It also can't overshoot the ceiling,
--- so nothing needs clamping off it.
+-- What each better price adds, as a fraction of the distance left to the cook state's CounterCap -- not a
+-- multiple of sell value. Closing a share of the remaining gap makes a haggle decelerate, and it can't
+-- overshoot the ceiling, so nothing needs clamping.
 --
--- Sized against the REFUSAL_OFFER_PENALTY below rather than picked on feel: a push that lands has to be
--- worth more than a push that doesn't costs, or haggling is a losing move at every cook state and the
--- whole mechanic is decoration. At these numbers a landed push averages +$47 on that skewer against the
--- $30 a refusal takes off the next opening range.
+-- Sized against REFUSAL_OFFER_PENALTY below rather than on feel: a push that lands has to be worth more
+-- than a push that misses costs, or haggling is a losing move and the whole mechanic is decoration.
 --
--- Keep the pair low even so. The old flat-slice-of-value version added a fixed 8-12% every round no matter
--- how far in it was, which is what made a haggle leap instead of inching; a share this size of the gap is
--- what keeps each step to a few points. The chance a push lands (CookStates.CounterChance) is the dial to
--- reach for first -- it makes haggling reliable without making any one round bigger.
--- Higher = bigger, jumpier rounds that eat most of the gap at once. Lower = pushing barely moves the
--- number and the haggle stops being worth the risk.
+-- Keep the pair low. Reach for CookStates.CounterChance first -- it makes haggling reliable without
+-- making any one round bigger.
+-- Higher = jumpier rounds that eat most of the gap at once. Lower = pushing barely moves the number.
 SellNpc.COUNTER_INCREASE_MIN = 0.11
 SellNpc.COUNTER_INCREASE_MAX = 0.18
 
--- How many times one customer will ever sweeten its offer. CounterChance decaying by
--- COUNTER_CHANCE_FALLOFF already makes a long haggle unlikely, but unlikely isn't never -- and an
--- unbounded haggle is one a patient player can ride to the ceiling. Three is also what gives the haggle
--- sounds somewhere to go: the first counter plays Haggle1, the rest play Haggle2 pitched up a step each.
--- Higher = rare long runs are possible again and the top of the ceiling comes back into reach.
--- Lower = the ceiling stops being reachable at all and CounterCap turns decorative.
+-- How many times one customer will sweeten its offer. The decaying CounterChance makes a long haggle
+-- unlikely, but unlikely isn't never, and an unbounded one is something a patient player rides to the
+-- ceiling. Three also gives the haggle sounds somewhere to go (Haggle1, then Haggle2 pitched up).
+-- Higher = the ceiling comes back into reach. Lower = it stops being reachable and CounterCap is decorative.
 SellNpc.MAX_COUNTER_ROUNDS = 3
 
 -- How much higher each counter-offer past the first is pitched, so a customer being pushed sounds
@@ -152,62 +124,38 @@ SellNpc.HAGGLE_PITCH_STEP = 0.2
 -- offers they wanted.
 SellNpc.OFFER_TIMEOUT = 30
 
--- Seconds a pending offer goes unanswered before it nudges the player again, repeating until they answer
--- or the window shuts. The opening toast is easy to miss -- only four fit on screen at once -- and the
--- offer's own billboard is no use from the grill, so without this a sale can lapse purely because nobody
--- saw it. The rich customer shares this rather than carrying its own; a shorter window doesn't want a
--- different reminder rhythm.
--- Higher = fewer reminders, and more offers quietly lost. Lower = nagging, and the toast crowds the rest
--- of the screen out.
+-- Seconds before a pending offer nudges again, repeating until answered. The opening toast is easy to
+-- miss and the billboard is no use from the grill, so without this a sale can lapse unseen. Shared with
+-- the rich customer -- a shorter window doesn't want a different rhythm.
+-- Higher = fewer reminders and more offers lost. Lower = nagging, and the toast crowds the screen.
 SellNpc.OFFER_NUDGE_INTERVAL = 10
 
--- The red flash the waiting customer wears alongside each nudge, so the toast points at someone rather
--- than just saying one of them is waiting. Fed straight to the HighlightPulse effect: START_TRANSPARENCY
--- is where the fill begins before it tweens out, and COUNT is how many times it does so across DURATION.
+-- The red flash on the waiting customer, so the toast points at someone. Fed to HighlightPulse:
+-- START_TRANSPARENCY is where the fill begins, COUNT how many times it tweens out across DURATION.
 -- Higher COUNT = a faster, more urgent blink. 1 is a single slow fade.
 SellNpc.NUDGE_PULSE_COLOR = Color3.fromRGB(255, 0, 0)
 SellNpc.NUDGE_PULSE_START_TRANSPARENCY = 0.35
 SellNpc.NUDGE_PULSE_DURATION = 2
 SellNpc.NUDGE_PULSE_COUNT = 3
 
--- What turning offers down costs. Without these it costs nothing at all: the skewer goes straight back on
--- the stand, the next customer prices it from the full range again, and a player who declines everything
--- eventually accepts near the ceiling for the price of a few seconds' waiting. So a refusal is remembered
--- against the player, and every one still standing does two things -- shifts the next customer's whole
--- opening range down by PENALTY of the skewer's sell value, and adds RETRY_DELAY seconds to the wait
--- before that customer arrives. Two small costs rather than one harsh one: the money side is what removes
--- the reason to reroll, and the time side is the part that can't feel unfair.
+-- What declining costs. Without it a reroll is free: the skewer goes back on the stand and the next
+-- customer prices it from the full range again. Each standing refusal shifts the next opening range down
+-- by PENALTY of sell value and adds RETRY_DELAY to the wait -- money removes the reason to reroll, time is
+-- the half that can't feel unfair. The shifted range is floored at plain sell value, so declining stops
+-- paying a bonus but never a loss.
 --
--- The shifted range is floored at the skewer's plain sell value, so declining stops paying a bonus but
--- never pays out a loss -- and the offer still can't come in under the estimate the player was shown.
--- A well-cooked skewer therefore runs from +10-35% clean down to +1-26% at the full penalty, and a
--- charred one (opening at 1-1.05) is squeezed almost flat, so rerolling a burnt skewer is worth next to
--- nothing.
+-- Deliberately smaller than a landed counter-offer pays (COUNTER_INCREASE above): if a refusal cost more
+-- than a push earns, the arithmetic would tell the player never to haggle. What it must still beat is the
+-- free reroll -- declining everything to fish for a high opening roll.
 --
--- Deliberately smaller than what one landed counter-offer pays (see COUNTER_INCREASE above). A refusal has
--- to cost less than a successful push earns, or the arithmetic tells the player never to haggle -- which
--- is the opposite of what the stand is built around. What it still has to beat is the *free* reroll: a
--- player declining everything to fish for a high opening roll.
+-- GRACE is how many refusals cost nothing. Declining once is the mechanic working as the onboarding taught
+-- it, so charging for that would teach them not to; the penalty is aimed at repeat refusals. GRACE and
+-- PENALTY_MAX move together -- the most anyone pays is (PENALTY_MAX - GRACE). A completed sale sheds one
+-- (ForgiveSaleRefusal). Stored in player data on the synced clock, so a rejoin can't wipe the slate.
 --
--- GRACE is how many standing refusals cost nothing at all. Declining once is the mechanic working exactly
--- as the onboarding taught it -- the toast on the first counter-offer tells them declining can get a
--- better price -- so a player who takes that advice and has the counter roll go against them has done
--- nothing but use the stand as intended. Charging for that teaches them not to. What the penalty is
--- actually aimed at is the player declining over and over, and that still lands from the second one on.
--- GRACE and PENALTY_MAX move together: the most anyone ever pays is (PENALTY_MAX - GRACE) of the numbers
--- below, so raising one without the other shifts the ceiling rather than the forgiveness.
---
--- A completed sale also sheds one (SellNpcManager:ForgiveSaleRefusal), since a sale is the plainest
--- evidence the player isn't fishing -- without it, turning down one lowball and selling the next five
--- still costs a full DECAY.
---
--- Refusals are stored in player data on the synced clock rather than a session timer, for the same reason
--- the rich customer's cooldown is: rejoining or hopping servers would otherwise wipe the slate.
--- Higher PENALTY = a couple of refusals gut the offer and the mechanic reads as punishing. Lower = the
--- reroll is profitable again.
--- Higher DECAY = the penalty hangs over a session for much longer. Lower = waiting it out beats selling.
--- Higher GRACE = declining is free for longer, and the reroll comes back for a player who spaces them out.
--- Lower = the first no costs, and haggling is punished for going the way it usually goes.
+-- Higher PENALTY = a couple of refusals gut the offer. Lower = the reroll is profitable again.
+-- Higher DECAY = the penalty hangs over a session. Lower = waiting it out beats selling.
+-- Higher GRACE = declining stays free for longer. Lower = the first no costs.
 -- Higher PENALTY_MAX = the floor is reached and there's nothing left to lose by declining forever.
 SellNpc.REFUSAL_OFFER_PENALTY = 0.03
 SellNpc.REFUSAL_GRACE = 1
@@ -215,17 +163,14 @@ SellNpc.REFUSAL_PENALTY_MAX = 4
 SellNpc.REFUSAL_DECAY = 60
 SellNpc.REFUSAL_RETRY_DELAY = 2
 
--- The narrowest the penalty is allowed to squeeze an opening range. Without it the two ends converge --
--- OfferMax is floored to OfferMin, and the states that open at 1 reach that floor first -- so a charred or
--- raw skewer stops being offered a range at all and comes back the same number every single time. A dead
--- identical price reads as a broken customer rather than a penalised one, so a sliver of spread is kept
--- even at PENALTY_MAX. The penalty still lands; it just can't flatten the roll out of existence.
--- Higher = the penalty stops biting on the states that open near 1. Lower = those states go deterministic.
+-- The narrowest the penalty may squeeze an opening range. Without it the ends converge and the states
+-- opening at 1 quote the same number every time, which reads as a broken customer rather than a penalised
+-- one. The penalty still lands; it just can't flatten the roll out of existence.
+-- Higher = the penalty stops biting on states opening near 1. Lower = those states go deterministic.
 SellNpc.MIN_OFFER_SPREAD = 0.02
 
--- How far the customer steps back after buying, and how long it eats there. Each eater picks a random
--- back distance in this range plus a random sideways offset (up to EAT_SPREAD either way), so finished
--- customers scatter into a loose crowd instead of lining up behind the stand.
+-- Where a customer eats after buying: a random back distance in this range plus up to EAT_SPREAD either
+-- way, so finished customers scatter into a crowd rather than lining up behind the stand.
 -- Higher DISTANCE = they get out of the way properly. Lower = they eat right in front of the stand.
 -- Higher SPREAD = eaters fan out wider sideways. Lower = they stay closer to straight behind.
 -- Higher DURATION = they hang around and the place looks busy. Lower = they clear out fast.

@@ -1,5 +1,5 @@
--- Step 14: Take the cooked BBQ off the griller.
-local EquippedItem = require(script.Parent.Parent.Parent.Parent.Modules.EquippedItem)
+-- Step 12: Take the cooked BBQ off the griller.
+local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 
 local NEAR_DISTANCE = 12
 

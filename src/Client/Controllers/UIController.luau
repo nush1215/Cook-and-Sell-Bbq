@@ -146,7 +146,7 @@ function UIController:BindButtonClick(
 
 	if bindEffect then
 		bindEffectProperties = bindEffectProperties or {}
-		cleaner:Add(self:BindButtonEffect(button, bindEffectProperties))
+		cleaner:Add(self:BindButtonEffect(button, bindEffectProperties, activateOnPress))
 	end
 
 	return {
@@ -166,7 +166,8 @@ function UIController:BindButtonEffect(
 		OnHoverEndCallback: () -> ()?,
 		ClickSoundName: string?,
 		ButtonNormalScale: number?,
-	}?
+	}?,
+	activateOnPress: boolean?
 )
 	--
 	local cleaner = Trove.new()
@@ -217,8 +218,16 @@ function UIController:BindButtonEffect(
 
 	cleaner:Add(button.MouseButton1Down:Connect(function()
 		isPressed = true
-		SoundController:PlaySound(clickSoundName or "ButtonClick")
 		buttonSprings.Press()
+	end))
+
+	-- The click sound answers on the same edge the callback does, so what the player hears is only
+	-- ever a click that actually landed -- pressing and sliding off cancels both. The press spring
+	-- above stays on the way down: that's the button being held, not the click registering.
+	local soundSignal = if activateOnPress then button.MouseButton1Down else button.Activated
+
+	cleaner:Add(soundSignal:Connect(function()
+		SoundController:PlaySound(clickSoundName or "ButtonClick")
 	end))
 
 	cleaner:Add(UserInputService.InputEnded:Connect(function(input: InputObject)

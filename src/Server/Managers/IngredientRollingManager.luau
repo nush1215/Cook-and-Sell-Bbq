@@ -39,14 +39,13 @@ local IngredientRollingManager = {
 	-- granted. method is "Currency" or "Robux"; price is the Bux paid, 0 on a Robux buy.
 	OnIngredientPurchased = Signal.new(),
 
-	-- The rolls themselves live in player data (data.PendingRolls), so one landed on but not bought is
-	-- still sitting on its stand after a rejoin rather than thrown away.
+	-- The rolls live in player data (data.PendingRolls), so one landed on but not bought survives a rejoin.
 	_inCooldown = {}, -- [player] = true, held until the roll animation has had time to finish
 	_purchasing = {}, -- [player] = true, held across the CanAfford -> DeductCurrency window
 	_forcedIngredients = {}, -- [player] = ingredientId, consumed by the next roll's first stand
-	_pendingRobuxStand = {}, -- [player] = { StandId, IngredientId } their open ingredient Robux prompt
-	-- was raised for. The ingredient is stamped as well as the stand so a pull that lands while the
-	-- dialog sits open can't be handed over at the price the old one was quoted at.
+	-- [player] = { StandId, IngredientId } their open Robux prompt was raised for. The ingredient is
+	-- stamped too, so a pull landing while the dialog sits open can't be handed over at the old price.
+	_pendingRobuxStand = {},
 }
 
 --
@@ -54,11 +53,9 @@ local function validatePlayer(player: Player?): boolean
 	return player ~= nil and player:IsDescendantOf(Players)
 end
 
--- Mirrors a player's pending rolls onto their base's stand models, which is what every client renders
--- the stands from. Player data only replicates to the player it belongs to, so a visitor's client has
--- no way to read the rolls themselves -- these attributes are the only thing it can see them through.
--- Written across the whole folder rather than one stand, so a stand the table no longer covers is
--- cleared by the same pass that stamps the ones it does.
+-- Mirrors a player's pending rolls onto their stand models, which is what every client renders from --
+-- data reaches only its owner, so these attributes are a visitor's only view of them. Written across the
+-- whole folder, so a stand the table no longer covers is cleared by the same pass.
 function IngredientRollingManager:WritePendingRollsToBase(player: Player, pending: { [string]: any })
 	-- A server with more players than bases leaves someone without one until a base frees up.
 	local baseId = player:GetAttribute("BaseId")
@@ -69,20 +66,17 @@ function IngredientRollingManager:WritePendingRollsToBase(player: Player, pendin
 	for _, standModel in workspace.Base[baseId].Rolling.Stands:GetChildren() do
 		local roll = pending[standModel.Name]
 
-		-- Set on the one instance so the three replicate together: the client reads them to tell a roll
-		-- it should animate from one it should just land, and how fast to cycle it, and a stand handed
-		-- only some of them would pick the wrong one. The speed level rides along here rather than off
-		-- the owner's data for the same reason as the rest -- data reaches only its owner, and a visitor
-		-- cycling at their own speed would land the roll somewhere the server won't let it be bought.
+		-- All three on one instance so they replicate together -- a stand handed only some of them would
+		-- pick the wrong animation. SpeedLevel rides along for the same reason as the rest: a visitor
+		-- cycling at their own speed would land the roll outside the window the server allows.
 		standModel:SetAttribute("RolledIngredient", roll and roll.IngredientId)
 		standModel:SetAttribute("RolledAt", roll and roll.RolledAt)
 		standModel:SetAttribute("RollSpeedLevel", roll and roll.SpeedLevel)
 	end
 end
 
--- Puts a player's saved rolls back onto the base they've just been handed. A base builds its stands
--- from scratch on assignment, so a roll their last session landed but never bought has nothing to sit
--- on until it's stamped back -- and it's the stamp, not their data, that every client draws from.
+-- Puts saved rolls back onto a freshly handed-over base. Its stands are built from scratch on assignment,
+-- so an unbought roll has nothing to sit on until it's stamped back -- and the stamp is what clients draw.
 function IngredientRollingManager:RestorePendingRollsToBase(player: Player)
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
@@ -92,12 +86,9 @@ function IngredientRollingManager:RestorePendingRollsToBase(player: Player)
 	self:WritePendingRollsToBase(player, data.PendingRolls)
 end
 
--- Rolls one weighted-random ingredient per active stand and stores them as pending claims in player
--- data, so a pull nobody bought from is still on the stands when they come back.
--- Returns the server time the pull landed on and how long it runs for, which the caller waits out
--- before re-arming its lever, or nil if the player is invalid or still in the roll debounce. What each
--- stand rolled goes out on the stand attributes instead, so every client gets it rather than only the
--- puller.
+-- Rolls one weighted-random ingredient per active stand and stores them as pending claims in player data.
+-- Returns the pull's server time and duration for the caller to wait out before re-arming its lever, or
+-- nil if invalid or debounced. What each stand rolled goes out on the stand attributes, not here.
 function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (number?, number?)
 	if not validatePlayer(player) then
 		return nil
@@ -108,15 +99,12 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 		return nil
 	end
 
-	-- Raised before the read below rather than after it, since that read yields and a lever spammed
-	-- across the yield would otherwise get several pulls through. How long it's held for depends on
-	-- their roll speed, so the release is scheduled once the read has landed -- and the failed-read
-	-- path has to drop it by hand, or a bad read would strand the player unable to roll ever again.
+	-- Raised before the read, which yields -- a lever spammed across it would get several pulls through.
+	-- The hold length depends on their roll speed, so the release is scheduled after the read lands, and
+	-- the failed-read path must drop it by hand or the player can never roll again.
 	self._inCooldown[player] = true
 
-	-- How many stands they've unlocked is how many ingredients one pull rolls, and how fast they roll
-	-- is the other level on here. Read before the timestamp below so the wait can't eat into the window
-	-- PurchaseIngredientFromStand gates the claim on.
+	-- Read before the timestamp below, so the wait can't eat into the window the claim is gated on.
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
 		self._inCooldown[player] = nil
@@ -130,9 +118,8 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 		self._inCooldown[player] = nil
 	end)
 
-	-- Build the weighted pool from the shared ingredient config. Weight is the reciprocal of each
-	-- ingredient's authored "1 in X", and the config corrects the label to what that weight really rolls
-	-- at once normalised here -- so these are the odds on the label, not something kept in step with it.
+	-- Weight is the reciprocal of each ingredient's authored "1 in X". The config corrects each label to
+	-- what that weight really rolls at once normalised here, so these *are* the odds on the label.
 	local weighted = {}
 	for _, ingredient in Ingredients.Data do
 		table.insert(weighted, { ingredient.Id, ingredient.Weight })
@@ -143,17 +130,16 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 	local rolledAt = workspace:GetServerTimeNow()
 	local pending = {}
 
-	-- Never roll more stands than the base actually shows: the render caps at this same limit, so a
-	-- level nudged past it (e.g. from the command bar) can't leave rolls with no stand to land on.
+	-- Never more stands than the base shows: the render caps at the same limit, so a level nudged past it
+	-- from the command bar can't leave rolls with no stand to land on.
 	local standCount = math.min(data.Unlocks.RollingStands, BaseUnlocks.GetUnlockFromId("RollingStands").Limit)
 
 	for standIndex = 1, standCount do
 		local standId = tostring(standIndex)
 		local ingredientId = RandomUtil.GetResultFromWeight(weighted, rng)
 
-		-- An ingredient forced from the command bar lands on the first stand and leaves the rest to roll
-		-- normally. Consumed here rather than up top so the early returns above -- the debounce and a failed
-		-- data read -- can't eat it on a pull that never rolled anything.
+		-- A forced ingredient lands on the first stand, the rest roll normally. Consumed here rather than
+		-- up top, so the early returns above can't eat it on a pull that never rolled anything.
 		if standIndex == 1 and self._forcedIngredients[player] then
 			ingredientId = self._forcedIngredients[player]
 			self._forcedIngredients[player] = nil
@@ -166,8 +152,8 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 		}
 	end
 
-	-- Written whole rather than per stand: a pull replaces everything the last one left, so a stand the
-	-- new roll doesn't cover (the player having lost a level) shouldn't keep its old claim.
+	-- Written whole: a pull replaces everything the last left, so a stand the new roll doesn't cover
+	-- (having lost a level) shouldn't keep its old claim.
 	PlayerDataManager:SetPlayerDataKey(player, "PendingRolls", pending)
 	self:WritePendingRollsToBase(player, pending)
 
@@ -178,18 +164,16 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 	return rolledAt, duration
 end
 
--- Pins what the player's next pull lands on their first stand, replacing that one weighted draw. Fired off
--- the command bar. Held until a pull actually rolls, then cleared, so it's worth exactly one ingredient.
+-- Pins what the next pull lands on the first stand, replacing that one weighted draw. Fired off the
+-- command bar, and cleared by the pull that uses it, so it's worth exactly one ingredient.
 function IngredientRollingManager:ForceNextIngredient(player: Player, ingredientId: string)
 	self._forcedIngredients[player] = ingredientId
 end
 
--- Claims the pending roll sitting on one stand: gates on the roll timing, charges the player, and
--- grants the ingredient into their data. Returns true only when the ingredient was actually
--- granted, so the client can gate clearing the stand on a real, server-verified purchase.
--- @param skipCurrencyCost Grant the roll without charging for it, for one already paid for in Robux
--- (see the ingredient products in Config/Products). Everything else -- the roll check, the time gate,
--- the grant, the stat and the emptying of the stand -- is wanted on both paths, so only the charge differs.
+-- Claims one stand's pending roll: gates on the roll timing, charges, grants. Returns true only on an
+-- actual grant, so the client can gate clearing the stand on a server-verified purchase.
+-- @param skipCurrencyCost Grant without charging, for one already paid for in Robux. Everything else --
+-- the roll check, the time gate, the grant, the stat, the emptying -- is wanted on both paths.
 function IngredientRollingManager:PurchaseIngredientFromStand(
 	player: Player,
 	standId: string,
@@ -199,16 +183,15 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 		return false
 	end
 
-	-- The reads below yield, so without this guard two purchases landing together could both pass the
-	-- affordability check before either of them deducts. A currency buy that loses the race is simply not
-	-- made; a Robux one has already been charged, so it waits its turn rather than being dropped.
+	-- The reads below yield, so without this two purchases landing together could both pass the
+	-- affordability check before either deducts. A currency buy that loses the race is dropped; a Robux
+	-- one has already been charged, so it waits its turn.
 	if self._purchasing[player] then
 		if not skipCurrencyCost then
 			return false
 		end
 
-		-- Leaving is checked as well as the guard clearing, so a guard stranded by an error can't hold
-		-- this thread spinning past the session it belongs to.
+		-- Leaving is checked too, so a guard stranded by an error can't spin this thread past its session.
 		repeat
 			task.wait()
 		until not self._purchasing[player] or not player:IsDescendantOf(Players)
@@ -219,8 +202,7 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 	end
 	self._purchasing[player] = true
 
-	-- Read once the guard is held: the claim, the affordability check and the grant all work off this one
-	-- read, and the roll it holds is what says there's anything on the stand to buy.
+	-- Read once the guard is held: the claim, the affordability check and the grant all work off it.
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
 		self._purchasing[player] = nil
@@ -239,10 +221,9 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 		return false
 	end
 
-	-- Time gate: a rolled ingredient can only be claimed once the animation window has passed. Measured
-	-- at the speed the pull was made at rather than the player's speed now, so it's the same window
-	-- every client is animating -- and a roll saved before RollSpeed existed carries no level, which
-	-- reads as the slowest rung and is long past it anyway.
+	-- Claimable only once the animation window has passed, measured at the speed the pull was *made* at
+	-- rather than the player's speed now, so it matches what every client is animating. A roll saved
+	-- before RollSpeed existed carries no level, which reads as the slowest rung.
 	if (workspace:GetServerTimeNow() - roll.RolledAt) < RollingConfig.GetRollDuration(roll.SpeedLevel) then
 		self._purchasing[player] = nil
 		NotificationManager:NotifyNormal(player, {
@@ -254,8 +235,8 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 		return false
 	end
 
-	-- A roll now outlives the session that made it, so data can hold an ingredient the config no longer
-	-- has. Clear it rather than leaving a stand that can never be bought from.
+	-- A roll outlives its session, so data can name an ingredient the config no longer has. Cleared rather
+	-- than left as a stand that can never be bought from.
 	local ingredient = Ingredients.GetIngredientFromId(roll.IngredientId)
 	if not ingredient then
 		PlayerDataManager:SetPlayerDataKey(player, { "PendingRolls", standId }, nil)
@@ -269,9 +250,8 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 		if not canAfford then
 			self._purchasing[player] = nil
 
-			-- Said out loud before the dialog goes up: the prompt names the band's product rather than
-			-- what it was raised over, so without this a player who just can't afford it is handed a
-			-- Robux price with nothing telling them why.
+			-- Said before the dialog goes up: the prompt names the band's product rather than what it was
+			-- raised over, so without this the player gets a Robux price with nothing telling them why.
 			NotificationManager:NotifyNormal(player, {
 				Text = `You can't afford {ingredient.Name}`,
 				Duration = 3,
@@ -279,11 +259,9 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 				Effect = "Error",
 			})
 
-			-- The roll stays on the stand, and now there's somewhere for a broke player to go with it:
-			-- the price band this ingredient is sold in, prompted for Robux while they're stood in front
-			-- of it. Which stand the prompt went up on is remembered here rather than carried on the
-			-- product -- a band is shared by every ingredient costing about the same, and its receipt
-			-- arrives with nothing but the buyer on it.
+			-- The roll stays on the stand and the player is offered its price band for Robux. Which stand
+			-- is remembered here rather than carried on the product: a band is shared by every ingredient
+			-- costing about the same, and its receipt names only the buyer.
 			self._pendingRobuxStand[player] = { StandId = standId, IngredientId = roll.IngredientId }
 			ShopManager:AttemptProductPurchase(player, Ingredients.GetProductStringIdForPrice(ingredient.Price))
 			return false
@@ -302,7 +280,7 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 		if skipCurrencyCost then "Robux" else "Currency"
 	)
 
-	-- The claim is spent, so the stand goes empty until the next pull -- and stays empty across a rejoin.
+	-- The claim is spent, so the stand empties until the next pull and stays empty across a rejoin.
 	-- Clearing the attribute is what empties it on every client, the buyer's included.
 	PlayerDataManager:SetPlayerDataKey(player, { "PendingRolls", standId }, nil)
 	self:WritePendingRollsToBase(player, data.PendingRolls)
@@ -310,15 +288,13 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 	return true, discovered
 end
 
--- Grants an ingredient once one of the band products clears (fired by ShopManager from the product's
--- callback). It goes to the stand the prompt was raised from, which is why every band can share one
--- handler -- but only while that stand still holds what it held when the prompt went up, so a pull that
--- landed during the open dialog can't sell a Salmon at a Corn's price.
+-- Grants an ingredient once a band product clears (fired by ShopManager). Goes to the stand the prompt was
+-- raised from, but only while it still holds what it held then -- so a pull landing during the open dialog
+-- can't sell a Salmon at a Corn's price.
 --
--- A receipt Roblox never got an answer for is re-processed on a later join, where nothing raised a prompt
--- and there's no pending stand to read. That falls back to the dearest roll still on their stands the band
--- covers -- rolls outlive the session, so there almost always is one -- and past that to the dearest
--- ingredient the band sells outright, rather than dropping a purchase the player has already paid for.
+-- An unanswered receipt is re-processed on a later join with no pending stand to read. That falls back to
+-- the dearest roll the band covers, and past that to the dearest ingredient the band sells outright,
+-- rather than dropping a purchase already paid for.
 function IngredientRollingManager:GrantIngredientFromProduct(player: Player, tier: number)
 	local pending = self._pendingRobuxStand[player]
 	self._pendingRobuxStand[player] = nil
@@ -355,8 +331,8 @@ function IngredientRollingManager:GrantIngredientFromProduct(player: Player, tie
 		return
 	end
 
-	-- Nothing on the stands the band reaches, so pay it out as the dearest ingredient the band is sold
-	-- for. They've been charged either way, and that is exactly what the product says it buys.
+	-- Nothing on the stands the band reaches, so pay out its dearest ingredient -- which is exactly what
+	-- the product says it buys, and they've been charged either way.
 	local ingredient = Ingredients.GetDearestIngredientInProductTier(tier)
 	if ingredient then
 		local discovered = IngredientManager:GrantIngredient(player, ingredient.Id)
@@ -376,30 +352,26 @@ function IngredientRollingManager:OnInit()
 end
 
 function IngredientRollingManager:OnStart()
-	-- Request/response: the client invokes this and waits out the roll it stamps before re-arming its
-	-- lever. What each stand landed on rides the stand attributes, so it reaches visitors too.
+	-- The client waits out the roll this stamps before re-arming its lever. What each stand landed on
+	-- rides the stand attributes instead, so it reaches visitors too.
 	self.RequestRollFunction:OnInvoke(function(player: Player)
 		return self:RollIngredientsForPlayer(player)
 	end)
 
-	-- One-way claim of a pending roll. Emptying the stand is the attribute's job, since that reaches
-	-- every client at once -- this reply just tells the buyer whether the ingredient was new to them,
-	-- which decides whether their purchase sound would land on top of a discovery notification.
+	-- Emptying the stand is the attribute's job, since that reaches every client. This reply only tells
+	-- the buyer whether the ingredient was new, so their purchase sound doesn't land on a discovery toast.
 	self.PurchaseIngredientEvent:OnServerEvent(function(player: Player, standId: string)
 		local success, discovered = self:PurchaseIngredientFromStand(player, standId)
 		self.OnPurchasedEvent:FireClient(player, success, standId, discovered)
 	end)
 
-	-- The base rebuilds its stands as it's assigned, so anything the player's last session left on them
-	-- has to be stamped back on once they're there.
+	-- The base rebuilds its stands on assignment, so last session's rolls have to be stamped back on.
 	BaseManager.OnBaseAssigned:Connect(function(player: Player)
 		self:RestorePendingRollsToBase(player)
 	end)
 
-	-- BaseManager sweeps the players already in the server as it loads, which can hand someone a base
-	-- before the connect above exists -- so sweep them here as well. Spawned because the data read
-	-- yields, and harmless to double up on: a player still waiting on a base has no BaseId yet, so the
-	-- write bails and the signal covers them instead.
+	-- BaseManager's own load sweep can hand someone a base before the connect above exists. Spawned
+	-- because the read yields, and harmless to double up on -- a player with no BaseId yet just bails.
 	for _, player in Players:GetPlayers() do
 		task.spawn(function()
 			self:RestorePendingRollsToBase(player)

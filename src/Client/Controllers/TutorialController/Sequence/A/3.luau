@@ -1,6 +1,6 @@
--- Step 1: Pull the rolling lever. Ends by locking the lever, which stays shut for the rest of the run --
+-- Step 3: Pull the rolling lever. Ends by locking the lever, which stays shut for the rest of the run --
 -- see TutorialController:Start, which is what hands it back.
-local IngredientRollingController = require(script.Parent.Parent.Parent.IngredientRollingController)
+local IngredientRollingController = require(script.Parent.Parent.Parent.Parent.IngredientRollingController)
 
 local NEAR_DISTANCE = 14
 local BEAM_HIDE_DISTANCE = 14

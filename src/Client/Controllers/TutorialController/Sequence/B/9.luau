@@ -1,7 +1,7 @@
--- Step 11: Get the BBQ onto the griller. Ends by holding the take off, which step 12 releases once the
+-- Step 9: Get the BBQ onto the griller. Ends by holding the take off, which step 14 releases once the
 -- stove is lit -- see there.
-local EquippedItem = require(script.Parent.Parent.Parent.Parent.Modules.EquippedItem)
-local GrillerController = require(script.Parent.Parent.Parent.GrillerController)
+local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
+local GrillerController = require(script.Parent.Parent.Parent.Parent.GrillerController)
 
 local NEAR_DISTANCE = 12
 local BEAM_HIDE_DISTANCE = 12

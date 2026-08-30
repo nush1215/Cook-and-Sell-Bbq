@@ -1,4 +1,4 @@
--- Step 16: Serve the customer. Declining is a real part of the game -- it's how a player holds out for
+-- Step 14: Serve the customer. Declining is a real part of the game -- it's how a player holds out for
 -- a better price -- but not here: the sale is the payoff the whole sequence has been building to, and
 -- a first-time player turning it down has no idea what they've just done. So the Decline button is
 -- taken off this one offer, leaving Accept as the only thing to press, and the spotlight dims the world
@@ -6,12 +6,21 @@
 -- interested, so the beat can't stall waiting for one that never makes an offer.
 local RunService = game:GetService("RunService")
 
-local PlayerDataController = require(script.Parent.Parent.Parent.PlayerDataController)
-local SellNpcController = require(script.Parent.Parent.Parent.SellNpcController)
-local SkewerStandController = require(script.Parent.Parent.Parent.SkewerStandController)
+local HudController = require(script.Parent.Parent.Parent.Parent.HudController)
+local PlayerDataController = require(script.Parent.Parent.Parent.Parent.PlayerDataController)
+local SellNpcController = require(script.Parent.Parent.Parent.Parent.SellNpcController)
+local SkewerStandController = require(script.Parent.Parent.Parent.Parent.SkewerStandController)
 
 -- Pixels of breathing room left around the lit button.
 local SPOTLIGHT_PADDING = 14
+
+-- The HUD frame holding the currency total, hidden for the rest of the run.
+local CURRENCY_FRAME = "BottomLeft"
+
+-- How long the total stays up once the sale lands. The count springs up to its new value and a floating
+-- +$ label rises off it rather than either snapping, so taking the frame away the instant the goal passes
+-- would pull the payoff off screen halfway through it.
+local CURRENCY_HOLD_DURATION = 2.5
 
 -- Where the Accept button sits in the world, and how wide it is once it gets there, so FocusWorld can be
 -- pointed at the button itself rather than at the customer holding it.
@@ -72,6 +81,11 @@ local function buttonFocusPoint(button: GuiObject): (Vector3?, number?)
 end
 
 return function(self)
+	-- Dropped just for this beat, out of the run-long claim Start took over the whole HUD. Everything up
+	-- to here has been spending -- the stall, the stick, the ingredient -- with the total kept off screen,
+	-- so this is the first time the player sees a number for any of it, at the moment it goes up.
+	HudController:SetHudFrameHiddenFor(self, CURRENCY_FRAME, false)
+
 	local spotlight = self:GetSpotlight()
 	spotlight:SetShape("Circle")
 
@@ -144,12 +158,20 @@ return function(self)
 		decline.Visible = true
 	end
 
-	-- Step 15 held this from the moment the skewer went out; the sale is what it was holding out for. The
+	-- Step 13 held this from the moment the skewer went out; the sale is what it was holding out for. The
 	-- stand is empty by now, so there's nothing for this to put back -- it just means the hold ends with
 	-- the sequence rather than outliving it.
 	SkewerStandController:SetTakeLocked(false)
 
 	spotlight:Hide()
+
+	-- Put back on a delay rather than by waiting here. Blocking on it held the whole step open while the
+	-- count finished climbing, which read as the Accept press not registering: the sale had gone through,
+	-- the banner still said to press Accept, and the next beat sat behind the animation. The step ends
+	-- now and the total slides away on its own underneath whatever comes next.
+	task.delay(CURRENCY_HOLD_DURATION, function()
+		HudController:SetHudFrameHiddenFor(self, CURRENCY_FRAME, true)
+	end)
 
 	self:LogStep("AcceptOffer")
 

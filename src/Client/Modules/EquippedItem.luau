@@ -9,6 +9,7 @@ local STICK_TOOL_TAG = "StickTool"
 local FILLED_TOOL_TAG = "FilledStickTool"
 local SAUCE_TOOL_TAG = "SauceTool"
 local CRATE_TOOL_TAG = "CrateTool"
+local STRUCTURE_TOOL_TAG = "StructureTool"
 
 --[[
     What the local player is currently holding.
@@ -69,6 +70,14 @@ end
 -- callers can read its Cooked attribute -- raw and cooked skewers go to different places.
 function EquippedItem.GetSkewer(): Tool?
 	return findEquippedTool(FILLED_TOOL_TAG)
+end
+
+-- The id of the structure the local player has a build tool out for, or nil. Holding one is what puts
+-- them in build mode -- BuildController hooks the tool's Equipped -- so this doubles as "are they
+-- placing something right now".
+function EquippedItem.GetStructureId(): string?
+	local tool = findEquippedTool(STRUCTURE_TOOL_TAG)
+	return tool and tool:GetAttribute("StructureId")
 end
 
 -- The crate tool the local player is holding, or nil. Returns the tool rather than an id because

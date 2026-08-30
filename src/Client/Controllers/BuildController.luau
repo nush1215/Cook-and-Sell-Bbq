@@ -24,127 +24,103 @@ local NotificationController = require(script.Parent.NotificationController)
 -- Modules
 local Modules = script.Parent.Parent.Modules
 
--- Required on first use rather than at the top of the file. On a touch device this module yields at
--- require time waiting on Roblox's TouchGui, which doesn't exist until the player's touch controls are
--- up -- later than the Loader requires its controllers. A top-level require would therefore hold the
--- whole client boot behind it on mobile. By the time a build tool is equipped there's a character, so
--- the wait is already over and this resolves instantly.
+-- Required on first use: on touch this module yields at require time waiting on Roblox's TouchGui, which
+-- doesn't exist until after the Loader runs -- a top-level require would hold the whole client boot.
 local ContextActionUtility
 
 --
 local LocalPlayer = Players.LocalPlayer
 
--- What BuildManager marks its tools with. The tag is on the ones that place a structure and the
--- attribute beside it says which; the pickup tool wears its own attribute instead, being a mode
--- rather than something the player owns any number of.
+-- What BuildManager marks its tools with. The tag and attribute go on structure tools; the pickup tool
+-- wears its own attribute instead, being a mode rather than an owned item.
 local STRUCTURE_TOOL_TAG = "StructureTool"
 local STRUCTURE_TOOL_ATTRIBUTE = "StructureId"
 local PICKUP_TOOL_ATTRIBUTE = "PickupTool"
 
 local VALID_COLOR = Color3.fromRGB(0, 255, 0)
 local INVALID_COLOR = Color3.fromRGB(220, 70, 70)
--- The ghost keeps its own colours and wears the verdict as an outline around them, so what the player
--- is judging the fit of is the structure itself rather than a tinted silhouette of one. The fill only
--- takes the flatness off the outline.
+-- The ghost keeps its own colours and wears the verdict as an outline, so the player judges the fit of
+-- the structure itself rather than a tinted silhouette.
 local GHOST_FILL_TRANSPARENCY = 0.3
 local GHOST_OUTLINE_TRANSPARENCY = 0
 
--- The calm pass the pickup tool puts over every structure it could take back. Faint on purpose, and
--- occluded rather than drawn through walls: a whole base outlined at once should read as outlined,
--- not washed white.
+-- The calm pass over every structure the pickup tool could take back. Faint and occluded on purpose, so
+-- a whole base outlined at once reads as outlined rather than washed white.
 local PICKUP_COLOR = Color3.fromRGB(255, 255, 255)
 local PICKUP_FILL_TRANSPARENCY = 0.85
 local PICKUP_OUTLINE_TRANSPARENCY = 0.25
 
--- The one under the cursor. Sits between the white above and the red below on the way to warm, so
--- pointing at a structure and then picking it reads as one action getting closer rather than as two
--- unrelated colours -- and stronger than the calm pass, because there's only ever one of these.
+-- The one under the cursor. Sits between the white above and the red below, so pointing then picking
+-- reads as one action getting closer.
 local HOVER_COLOR = Color3.fromRGB(255, 150, 45)
 local HOVER_FILL_TRANSPARENCY = 0.7
 local HOVER_OUTLINE_TRANSPARENCY = 0
 
--- The one that's been picked and is waiting on a second click. Left at a Highlight's default
--- AlwaysOnTop, unlike the two passes above: the structure a click would take down has to be
--- unmistakable even with something standing in front of it. The fill is kept faint so its own colours
--- still show through -- you're picking one of several near-identical things out of a row.
+-- Picked, waiting on a second click. Left at a Highlight's default AlwaysOnTop, unlike the two passes
+-- above: what a click would take down has to be unmistakable even from behind something.
 local ARMED_COLOR = Color3.fromRGB(220, 70, 70)
 local ARMED_FILL_TRANSPARENCY = 0.6
 local ARMED_OUTLINE_TRANSPARENCY = 0
 
--- Roblox renders at most 31 Highlights at once and silently drops the rest, so a big enough base would
--- otherwise push the red one out of the pool and leave the click that matters unmarked. The calm pass
--- is therefore a fixed number of highlights handed to whichever structures are nearest the camera,
--- with headroom left for the game's own outlines (BreathingHighlight, PromptSubjectHighlight).
+-- Roblox renders at most 31 Highlights and silently drops the rest, so a big base would push the red one
+-- out of the pool. The calm pass is capped and handed to whichever structures are nearest the camera,
+-- with headroom for the game's own outlines (BreathingHighlight, PromptSubjectHighlight).
 local PICKUP_HIGHLIGHT_BUDGET = 24
--- Seconds between re-picking which structures wear them. Lower = the pass keeps up with a fast camera
--- more closely; each one walks every structure on the base.
+-- Seconds between re-picking which structures wear them; each pass walks every structure on the base.
 local PICKUP_REFRESH_INTERVAL = 0.2
 
 local RAY_LENGTH = 1000
 local ROTATE_KEY = Enum.KeyCode.R
 
--- Which way round a structure's model is built, in quarter-turns from -Z, so a ghost raised facing the
--- player faces them with its front rather than with its side or its back. Zero, because everything under
--- Assets.Structures is authored to Roblox's own convention: a structure's face is -Z, the way its pivot
--- looks. This is the one thing about a structure the code below can't measure for itself -- the models
--- live in the place file and nothing in them says which side is the front -- so a template that comes up
--- backwards, or a quarter-turn out, is this number turned rather than the maths rewritten.
+-- Which way round a structure's model is built, in quarter-turns from -Z. Zero because everything under
+-- Assets.Structures follows Roblox's convention. Nothing in a model says which side is its front, so a
+-- template that comes up backwards is this number turned rather than the maths rewritten.
 local FACING_FRONT_OFFSET = 0
 
--- Where a touch player's ghost sits, there being no cursor to point with. Clearance is the ground left
--- between the player and the structure's *near edge* rather than its middle -- half the structure's
--- own depth is added on top, so the gap looks the same whatever is being placed and however it's been
--- turned. A character is about two studs across, so this leaves roughly three studs of visible floor.
---
--- Height is how far above that spot the ray starts, so it comes down onto the floor rather than into
--- the player's own back.
+-- Where a touch player's ghost sits, there being no cursor: a phone aims with the camera (see
+-- _getCameraAimSpot) and the aim is held between these two ends. Clearance is measured to the
+-- structure's near edge, not its middle, so the gap looks the same whatever is being placed. Reach is
+-- kept short so swinging the camera moves the ghost by an amount a thumb can aim.
 local TOUCH_AIM_CLEARANCE = 5
+local TOUCH_AIM_REACH = 40
 local TOUCH_AIM_HEIGHT = 12
 
--- How much room a character needs around them before the block they're standing in counts as taken. A
--- character is about two studs across, so this is roughly their own width -- measured out from the
--- block's edges rather than from its middle, so somebody stands as close to a big structure as to a
--- small one before they're in the way.
+-- Room a character needs before the block they're in counts as taken -- roughly their own width,
+-- measured out from the block's edges so a big structure isn't harder to stand clear of than a small one.
 local PLAYER_CLEARANCE = 2
 
--- What a refused click says, one per reason a ghost goes red. Written out together rather than at the
--- point each check fails, so everything placement can turn somebody down for is one list to read and to
--- reword. The ghost going red is the standing answer and these are only the click that argues with it,
--- so they're worded as what to do about it rather than as what went wrong.
+-- One per reason a ghost goes red, listed together so everything placement refuses reads as one set.
+-- Worded as what to do about it, since the red ghost has already said what went wrong.
 local REFUSAL_NO_SPOT = "Aim at ground you own"
 local REFUSAL_OFF_GROUND = "It won't fit on ground you own"
 local REFUSAL_OCCUPIED = "Something's already built there"
 local REFUSAL_SELF = "You're standing there"
 local REFUSAL_PLAYER = "Someone's standing there"
 
--- How long a refusal stays up, and what it sounds like. Both taken from the game's existing rejections
--- (see CodeController, CrateController) rather than picked afresh, so being told no while building
--- lands the same way as being told no anywhere else.
+-- Matched to the game's existing rejections (CodeController, CrateController), so being told no while
+-- building lands the same way as anywhere else.
 local REFUSAL_DURATION = 3
 local REFUSAL_SOUND = "Reject"
 
--- The two actions a player drives placement with. Both are bound through ContextActionUtility, which
--- pairs the binding with an on-screen button on touch devices and does nothing extra anywhere else --
--- so these are what gives a phone a way to rotate at all, there being no key to press.
+-- Bound through ContextActionUtility, which pairs each with an on-screen button on touch -- the only way
+-- a phone gets a rotate at all.
 local PLACE_ACTION = "BuildPlace"
 local ROTATE_ACTION = "BuildRotate"
 
--- The guide telling a desktop player what to press while they're placing -- the counterpart to the
--- touch buttons above, since on a keyboard the controls exist but nothing on screen says so. Authored
--- in the place file under StarterGui, so these are the names it's found by.
+-- The desktop counterpart to those touch buttons, since on a keyboard nothing on screen says what to
+-- press. Authored in the place file under StarterGui, so these are the names it's found by.
 local GUIDE_GUI_NAME = "BuildingUI"
 local GUIDE_FRAME_NAME = "PCGuide"
 local GUIDE_PLACE_ENTRY = "Place"
 local GUIDE_ROTATE_ENTRY = "Rotate"
 local GUIDE_TIMEOUT = 10
 
--- Stands in for the guide while there's nowhere to put anything. Its own frame beside the guide rather
--- than an entry inside it, so it's laid out and styled on its own terms -- and so it can go up on a
--- phone, which never sees the guide.
+-- Stands in for the guide while there's nowhere to put anything. Its own frame rather than an entry
+-- inside the guide, so it can also go up on a phone, which never sees the guide.
 local INVALID_FRAME_NAME = "Invalid"
 
--- Lifted from UIController's own button springs, so holding a key presses its hint exactly the way
--- clicking presses a button anywhere else in the game, rather than in a second, nearly-identical way.
+-- Lifted from UIController's button springs, so holding a key presses its hint the same way clicking
+-- presses a button anywhere else.
 local GUIDE_PRESS_SCALE = 0.93
 local GUIDE_NORMAL_SCALE = 1
 local GUIDE_DAMPING = 0.45
@@ -152,40 +128,25 @@ local GUIDE_FREQUENCY = 6
 
 -- Higher = the guide catches up to the cursor faster.
 local GUIDE_FOLLOW_SPEED = 25
--- Higher = the ghost catches up to the cell under the cursor faster. Eased rather than snapped so
--- dragging across the grid glides instead of stepping cell to cell.
+-- Higher = the ghost catches up to the cell under the cursor faster. Eased so dragging across the grid
+-- glides instead of stepping cell to cell.
 local GHOST_FOLLOW_SPEED = 30
--- Seconds between placements the client will send. The server rate-limits and re-checks besides; this
--- is only so holding the button down doesn't spend the whole balance in a frame.
+-- The server rate-limits too; this is only so holding the button down doesn't spend a balance in a frame.
 local PLACE_DEBOUNCE = 0.15
 
 -- How long to wait for the backpack on a spawn before giving up on this life's tools.
 local BACKPACK_TIMEOUT = 10
 
 --[[
-    Placement, client half.
+    Placement, client half. A build tool raises a translucent ghost that follows the cursor (or the
+    camera on touch), snapped to the grid and coloured by whether it fits; clicking sends the cell.
 
-    Equipping a build tool raises a translucent copy of what it builds, which follows the cursor
-    snapped to the grid of whichever plot it's over -- green where it fits and red where it doesn't.
-    Clicking sends the cell to the server, which decides.
+    Nothing here is authoritative -- the server re-checks everything (BaseManager:PlaceStructureOnBase).
+    Only two integers cross the wire, never a position. Owned plots are read as one region rather than
+    one grid each (Shared.GridUtil), so a structure can straddle the seam between two.
 
-    Nothing here is authoritative. Every check this makes, the server makes again off its own copy of
-    the player's build (see BaseManager:PlaceStructureOnBase); the point of making them here at all is
-    that the player can see the answer before they pay for it. What crosses the wire is two integers,
-    never a position -- so there's nothing in the message for a hacked client to bend that the server
-    doesn't work out for itself.
-
-    Which ground is buildable is the plots the player owns, and it changes under them: buying a plot
-    clears it and it becomes buildable in the same moment, without re-equipping. That's what the data
-    listener is for. The plots they own are read as one region rather than one grid each (see
-    Shared.GridUtil), so a structure can straddle the seam between two of them like any other spot.
-
-    The pickup tool is the other half of that, and works by pointing rather than dragging. Equipping it
-    outlines every structure on the base as something that can be taken back; the one under the cursor
-    warms to orange; and it takes two clicks on one to send it -- the first picks it and turns it red,
-    the second commits. So a structure says it can go, then that it's the one being aimed at, then that
-    it's about to, and the click that removes something is never the click that found it -- which
-    matters, because a griller's contents don't come back with it.
+    The pickup tool points rather than drags, and needs two clicks on a structure to remove it, so the
+    click that removes is never the click that found it -- a griller's contents don't come back with it.
 ]]
 
 --
@@ -210,11 +171,8 @@ function BuildController:_getBase(): Model?
 	return baseFolder and baseFolder:FindFirstChild(baseId) :: Model?
 end
 
--- Re-reads which of the base's plots the player owns, and so where they may build. The floors are
--- both the raycast target list -- aiming at one is what makes a spot a candidate at all -- and what
--- the buildable region is built from: one grid across the whole base, with the owned plots' floors
--- saying which of its cells count. Two plots that touch hand off cell for cell, so a structure can sit
--- across the seam between them.
+-- Re-reads which plots the player owns. The floors are both the raycast target list and what the
+-- buildable region is built from: one grid across the whole base, with owned floors marking valid cells.
 function BuildController:_refreshGround()
 	self._ground = nil
 
@@ -232,9 +190,8 @@ function BuildController:_refreshGround()
 		return
 	end
 
-	-- Read before clearing below, because this yields until the replica lands: emptying the floors
-	-- first would blank the ghost for however long that took, on a refresh that mostly ends up putting
-	-- back what was already there.
+	-- Read before the clear below: this yields until the replica lands, and clearing first would blank
+	-- the ghost for that whole time.
 	local unlocked = PlayerDataController:GetKey("Plots") or {}
 
 	table.clear(self._floors)
@@ -257,8 +214,7 @@ function BuildController:_refreshGround()
 			continue
 		end
 
-		-- The ghost finds its spot by raycasting the floor, so one the ray passes through is ground the
-		-- player can see and stand on but never build on. Invisible is fine; unqueryable isn't.
+		-- The ghost finds its spot by raycasting the floor, so an unqueryable one can never be built on.
 		if not floor.CanQuery then
 			warn(`[Build] plot {plotModel.Name}'s {Plots.FLOOR_NAME} has CanQuery off, so it can't be built on`)
 			continue
@@ -276,8 +232,7 @@ function BuildController:_refreshGround()
 		return
 	end
 
-	-- The starting plot's floor anchors the whole base's grid, so without it there are no cells to snap
-	-- to even where the player does own ground.
+	-- The starting plot's floor anchors the whole base's grid, so without it there are no cells to snap to.
 	if not startFloor then
 		warn(
 			`[Build] {base.Name} has no {Plots.START} {Plots.FLOOR_NAME}, `
@@ -289,8 +244,8 @@ function BuildController:_refreshGround()
 	self._ground = GridUtil.BuildGround(startFloor, self._floors, Structures.CELL_SIZE)
 end
 
--- Points the active placement's raycast at the floors the player currently owns. Called again when
--- they buy a plot, so ground that has just been cleared can be built on without re-equipping.
+-- Re-points the placement raycast at the floors the player owns, so a plot bought mid-session becomes
+-- buildable without re-equipping.
 function BuildController:_refreshRaycastParams()
 	if not self._raycastParams then
 		return
@@ -299,19 +254,9 @@ function BuildController:_refreshRaycastParams()
 	self._raycastParams.FilterDescendantsInstances = self._floors
 end
 
--- Whether the block of cells under the cursor is clear of everything already built on the base. The
--- same integer overlap the server runs, so the two agree about what's free.
---
--- Every structure on a base is measured in the same cells whichever plot it stands over, so one met
--- across a seam is in the way like any other.
---
--- The cells each standing structure claimed are read off the models rather than player data, because
--- the models are what every client can see -- data only ever reaches its owner, and the ghost has to
--- be right on a base you're visiting too.
---
--- Walked rather than cached: this runs every frame the ghost moves, so it's written to allocate
--- nothing, and a build is a few dozen models at most. Caching it would mean invalidating on every
--- placement, removal and base handover for no measurable gain.
+-- Whether the block of cells under the cursor is clear, using the same integer overlap the server runs.
+-- Read off the placed models rather than player data, since data only reaches its owner and the ghost
+-- has to be right on a base you're visiting. Walked, not cached: a build is a few dozen models.
 function BuildController:_isBlockFreeLocally(
 	cellX: number,
 	cellZ: number,
@@ -324,11 +269,8 @@ function BuildController:_isBlockFreeLocally(
 		return true
 	end
 
-	-- Only what's streamed in, which is what makes this local read a hint rather than an answer: a
-	-- structure is streamed whole (see Base:BuildStructure), so one at the far end of the base isn't in
-	-- here at all and its cells read as free. That's tolerable because it's only ever wrong further away
-	-- than the player is building -- the cell under the cursor is by definition streamed in -- and the
-	-- server's own check is what actually decides (see Base:IsBlockFree).
+	-- Only what's streamed in, so a structure at the far end of the base reads as free. Tolerable: it's
+	-- only wrong further off than the player is building, and Base:IsBlockFree is what decides.
 	for _, model in folder:GetChildren() do
 		local placedX = model:GetAttribute(Structures.CELL_X_ATTRIBUTE)
 		local placedZ = model:GetAttribute(Structures.CELL_Z_ATTRIBUTE)
@@ -359,26 +301,12 @@ function BuildController:_isBlockFreeLocally(
 	return true
 end
 
--- Whoever is standing in the block of cells under the cursor, or nil if it's clear. The other half of
--- _isBlockFreeLocally: that one keeps two structures off the same cells, this one keeps one from being
--- dropped on somebody -- your own character, with a desktop cursor aimed at your own feet, or another
--- player who has walked onto the base you're building on.
+-- Whoever is standing in the block under the cursor, or nil. Returns the player, not just a boolean, so
+-- the refusal can tell "you" from "someone else". Measured in studs in grid space rather than whole
+-- cells, since a character is half a cell across. Height is ignored -- a jump still counts as standing.
 --
--- The player rather than just the fact of one, because being told you're standing in your own way reads
--- as nonsense when it's phrased as somebody else (see the refusals above). Whoever is found first is
--- whoever gets named; with two people crowding one spot, moving either of them re-runs this anyway.
---
--- Measured in studs in the grid's own space rather than in whole cells, because a character is half a
--- cell across: rounding them to the cell they stand in would block the whole of it for someone at its
--- far edge, and let someone straddling a seam through.
---
--- The one check the server doesn't make again (see the header): where a player is standing has already
--- changed by the time a message about it lands, so re-testing it there would only refuse placements
--- that looked fine when they were made. What that costs is a forged packet being able to build under
--- someone, which spends the structure and lands it on a legal cell either way.
---
--- Height is deliberately not looked at -- someone jumping over the spot is still standing in it as far
--- as this cares, and anyone on another base is already far enough off in X and Z to miss.
+-- The one check the server doesn't repeat: where a player stands has already changed by the time the
+-- message lands, so re-testing there would only refuse placements that looked fine when made.
 -- @param ground The grid the block is measured in, which is the space the players are tested in
 function BuildController:_getPlayerInBlock(
 	ground: GridUtil.Ground,
@@ -411,21 +339,16 @@ function BuildController:_getPlayerInBlock(
 	return nil
 end
 
--- An inert copy of what the tool builds, left looking exactly as it will once it's down. Whether the
--- spot is any good is said by a Highlight around it rather than by recolouring it, so the player is
--- always looking at the real thing.
---
--- Stripped of anything that would make it act like that real thing: it can't be collided with, can't
--- be raycast against (or it'd block its own placement ray), and carries no tag, so no controller
--- mistakes it for a structure that exists.
+-- An inert copy of what the tool builds, kept looking exactly as it will once down -- the verdict is a
+-- Highlight around it, not a recolour. Stripped of collision, raycasts (or it'd block its own placement
+-- ray), scripts and tags, so nothing mistakes it for a real structure.
 function BuildController:_createGhost(structure: Structures.Structure): Model
 	local ghost = structure.Model:Clone()
 
 	local parts = {}
 	for _, descendant in ghost:GetDescendants() do
 		if descendant:IsA("BasePart") then
-			-- Kept alongside the part so hiding the ghost can put it back: one authored invisible on
-			-- purpose (a hitbox, a mount) has to stay invisible when the ghost returns.
+			-- Kept so unhiding can restore it: a part authored invisible (a hitbox, a mount) must stay so.
 			table.insert(parts, { Part = descendant, Transparency = descendant.Transparency })
 		elseif descendant:IsA("Script") or descendant:IsA("LocalScript") then
 			descendant:Destroy()
@@ -439,8 +362,7 @@ function BuildController:_createGhost(structure: Structures.Structure): Model
 		entry.Part.CanTouch = false
 	end
 
-	-- Parented away from the thing it outlines, like the pickup ones, so it can be pointed at the
-	-- ghost without living inside it.
+	-- Parented away from what it outlines, like the pickup ones, so it isn't cloned or cleaned with it.
 	local highlight = Instance.new("Highlight")
 	highlight.FillTransparency = GHOST_FILL_TRANSPARENCY
 	highlight.OutlineTransparency = GHOST_OUTLINE_TRANSPARENCY
@@ -454,16 +376,14 @@ function BuildController:_createGhost(structure: Structures.Structure): Model
 	return ghost
 end
 
--- Marks the spot under the cursor good or bad, or takes the ghost out of sight entirely when there's
--- nowhere to put it at all -- one left standing at the last spot the cursor was over reads as a
--- placement that's still on offer.
+-- Marks the spot good or bad, or hides the ghost entirely when there's nowhere to put it -- one left
+-- standing at the last spot reads as a placement that's still on offer.
 function BuildController:_paintGhost(shown: boolean, valid: boolean?)
 	if not self._ghostParts then
 		return
 	end
 
-	-- Both halves only act on an actual change. This runs every frame the cursor moves, and a ghost is
-	-- a whole model of parts -- so a verdict that hasn't flipped shouldn't cost a write per part.
+	-- Only act on an actual change: this runs every frame the cursor moves, over every part of a model.
 	if shown ~= self._ghostShown then
 		self._ghostShown = shown
 
@@ -475,8 +395,7 @@ function BuildController:_paintGhost(shown: boolean, valid: boolean?)
 			self._ghostHighlight.Enabled = shown
 		end
 
-		-- The guide reads off the ghost rather than off the verdict: a red ghost is still a placement
-		-- being offered and refused, while no ghost at all means there's nothing to act on.
+		-- Off the ghost, not the verdict: a red ghost is still something to act on, no ghost isn't.
 		self:_setGuideAimed(shown)
 	end
 
@@ -492,15 +411,9 @@ function BuildController:_paintGhost(shown: boolean, valid: boolean?)
 	end
 end
 
--- How far ahead of a touch player the ghost sits: enough ground to see past their own body, plus half
--- of however deep the structure is toward them. So the gap to its near edge is the same for a griller
--- as for something twice the size, and turning a long structure end-on pushes it out to match.
---
--- The depth is the standard extent of a box along an arbitrary direction -- each side weighted by how
--- squarely the player is facing down it. Measured against the grid's own axes rather than the world's,
--- since a structure's sides run along the grid it snaps to and that grid can be turned (see GridUtil).
--- Read off the grid rather than off a raycast, which is what stops this needing the very ray it's
--- being used to aim.
+-- The closest to a touch player the ghost is allowed: a fixed gap plus half the structure's depth toward
+-- them, so the gap to its near edge is the same whatever size is being placed. Depth is the box extent
+-- along `look`, measured against the grid's axes rather than the world's, since a base can be turned.
 -- @param look The way the player is facing, flattened and normalised
 function BuildController:_getTouchAimDistance(look: Vector3): number
 	local structure = self._structure
@@ -510,8 +423,7 @@ function BuildController:_getTouchAimDistance(look: Vector3): number
 
 	local sizeAlongX, sizeAlongZ = Structures.GetSize(structure, self._rotation)
 
-	-- No grid known yet, on the frame before a base has been handed over: the world's own axes are the
-	-- only sensible guess, and they're right for any base that hasn't been turned.
+	-- No grid yet, before a base is handed over: the world's axes are right for any base not turned.
 	local ground = self._ground
 	local right = if ground then ground.Origin.RightVector else Vector3.xAxis
 	local forward = if ground then ground.Origin.LookVector else Vector3.zAxis
@@ -521,14 +433,57 @@ function BuildController:_getTouchAimDistance(look: Vector3): number
 	return TOUCH_AIM_CLEARANCE + depth / 2
 end
 
--- The ray the ghost is aimed down. On a desktop that's the cursor; a phone hasn't got one, so it's a
--- spot in front of the player instead -- they aim by walking and turning, which also means the ghost
--- is always somewhere they could stand rather than across the base from them.
---
--- The touch ray points straight down rather than forward, so where the ghost lands doesn't shift with
--- how the camera happens to be tilted, and so it comes down onto the floor through the same
--- owned-plots filter the cursor ray already goes through. Facing off the edge of a plot simply misses,
--- which the caller already reads as nowhere to put it.
+-- Where a touch player's camera meets the floor, which is what they aim the ghost with. Solved against
+-- the floor's plane rather than by raycasting, so aiming past the edge of the base still yields a
+-- direction -- the caller's owned-floors raycast is what decides buildability. A single plane height
+-- works because a base can be turned but not tipped (see GridUtil).
+-- @param root The player's HumanoidRootPart, which the clamped distance is measured out from
+function BuildController:_getCameraAimSpot(root: BasePart): Vector3?
+	-- No grid yet, so no floor height: the caller falls back to pointing with the body.
+	local ground = self._ground
+	if not ground then
+		return nil
+	end
+
+	local cameraCFrame = workspace.CurrentCamera.CFrame
+	local direction = cameraCFrame.LookVector
+
+	-- Flattened, since the offset and clearance below are horizontal. A camera pointing straight up or
+	-- down flattens to nothing, so the body's direction stands in.
+	local look = direction * Vector3.new(1, 0, 1)
+	look = if look.Magnitude > 0 then look.Unit else root.CFrame.LookVector
+
+	-- What a camera that never meets the floor gets: straight out from it, at the far end of the clamp.
+	local offset = look * TOUCH_AIM_REACH
+
+	-- Above the floor and pointing down is what it takes to meet the plane ahead rather than behind. A
+	-- camera under the base falls back to the reach above, which at least points where they're facing.
+	local height = cameraCFrame.Position.Y - ground.Origin.Position.Y
+
+	if direction.Y < 0 and height > 0 then
+		-- Capped before use: a camera a hair below level solves to an infinity, which survives the clamp
+		-- below only to become a NaN at .Unit.
+		local distance = math.min(height / -direction.Y, RAY_LENGTH)
+		local toSpot = (cameraCFrame.Position + direction * distance - root.Position) * Vector3.new(1, 0, 1)
+
+		-- Zero only when looking straight down at the player, which leaves no direction to push out along.
+		if toSpot.Magnitude > 0 then
+			offset = toSpot
+		end
+	end
+
+	-- A long structure turned end-on can want more room than the reach allows; it wins, since standing
+	-- inside the player is the worse end to give way at.
+	local minimum = self:_getTouchAimDistance(look)
+	local reach = math.clamp(offset.Magnitude, minimum, math.max(TOUCH_AIM_REACH, minimum))
+
+	return root.Position + offset.Unit * reach
+end
+
+-- The ray the ghost is aimed down: the cursor on desktop, the camera aim spot on touch (or a fixed
+-- distance out from the body for the pickup tool). The touch ray points straight *down* onto the floor
+-- rather than along the camera, so a nearly-level camera lands where the clamp put it rather than
+-- skidding off down a grazing ray.
 function BuildController:_getAimRay(): Ray?
 	if not UserInputService.TouchEnabled then
 		local mouse = self._mouse
@@ -543,29 +498,24 @@ function BuildController:_getAimRay(): Ray?
 		return nil
 	end
 
-	-- Flattened, because both the offset below and the depth it's measured against are horizontal --
-	-- a root part tipped back in a seat would otherwise pull the spot in toward the player.
-	local look = root.CFrame.LookVector * Vector3.new(1, 0, 1)
-	look = if look.Magnitude > 0 then look.Unit else root.CFrame.LookVector
+	-- Nil under _enterPickup, so this doubles as "should the camera be doing the aiming".
+	local spot = if self._structure then self:_getCameraAimSpot(root) else nil
 
-	local origin = root.Position + look * self:_getTouchAimDistance(look) + Vector3.new(0, TOUCH_AIM_HEIGHT, 0)
+	if not spot then
+		-- Flattened, or a root part tipped back in a seat would pull the spot in toward the player.
+		local look = root.CFrame.LookVector * Vector3.new(1, 0, 1)
+		look = if look.Magnitude > 0 then look.Unit else root.CFrame.LookVector
 
-	return Ray.new(origin, Vector3.new(0, -1, 0))
+		spot = root.Position + look * self:_getTouchAimDistance(look)
+	end
+
+	return Ray.new(spot + Vector3.new(0, TOUCH_AIM_HEIGHT, 0), Vector3.new(0, -1, 0))
 end
 
--- Which quarter-turn stands the structure's front toward the player, out of the four the grid allows.
---
--- Measured from the spot to the player rather than from the way they're facing: on a desktop the cursor
--- can be well off to one side of that, and it's where the structure is going that decides which way
--- "toward them" is. On a phone the two come out the same anyway -- the ghost's spot is a fixed distance
--- straight in front of them -- so this reads as "turn back to face the player" there for free.
---
--- Taken in the grid's own frame, since a rotation index is quarter-turns of that grid and a base can be
--- turned (see GridUtil): the placed structure's sides run along the grid's axes, which is why the angle
--- to the player only has to be rounded to the nearest quarter to name the turn. Backed off by however
--- the model is built (see FACING_FRONT_OFFSET), which is what makes the answer the front rather than a
--- LookVector. Nothing is flattened or normalised on the way -- an angle doesn't care how long the vector
--- is, and reading only X and Z is itself what keeps the turn horizontal.
+-- Which quarter-turn stands the structure's front toward the player. Measured from the spot back to the
+-- player, not from the way they're facing, since the cursor or camera can be well off to one side.
+-- Taken in the grid's frame (a base can be turned) and backed off by FACING_FRONT_OFFSET, which is what
+-- makes the answer the model's front rather than a LookVector.
 -- @param ground The grid the turn is measured in -- the quarter-turns are its axes, not the world's
 -- @param spot Where on the base the ghost has landed
 function BuildController:_getFacingRotation(ground: GridUtil.Ground, spot: Vector3): number
@@ -579,8 +529,7 @@ function BuildController:_getFacingRotation(ground: GridUtil.Ground, spot: Vecto
 
 	local toPlayer = ground.Origin:VectorToObjectSpace(root.Position - spot)
 
-	-- Rounded rather than tied, so a spot sitting exactly on a diagonal settles on one of the two turns
-	-- that are equally square to the player instead of flickering between them.
+	-- Rounded, so a spot on an exact diagonal settles on one turn instead of flickering between two.
 	return (math.round(math.atan2(-toPlayer.X, -toPlayer.Z) / (math.pi / 2)) - FACING_FRONT_OFFSET) % 4
 end
 
@@ -597,8 +546,7 @@ function BuildController:_updateGhost(deltaTime: number)
 	local result = workspace:Raycast(ray.Origin, ray.Direction * RAY_LENGTH, self._raycastParams)
 	local ground = self._ground
 
-	-- Off every plot they own -- or on a base with no grid to measure at all -- so there's nothing to
-	-- snap to.
+	-- Off every owned plot, or on a base with no grid, so there's nothing to snap to.
 	if not (result and ground) then
 		self._refusal = REFUSAL_NO_SPOT
 		self:_paintGhost(false)
@@ -624,13 +572,9 @@ function BuildController:_updateGhost(deltaTime: number)
 	local cellX, cellZ =
 		GridUtil.WorldToCenteredAnchor(ground.Origin, result.Position, footprintX, footprintZ, Structures.CELL_SIZE)
 
-	-- Pull the anchor back inside the base so the whole footprint stays on it, rather than letting it
-	-- hang off the outer edge and simply read as invalid. Something bigger than the base can't fit
-	-- either way, so it's left under the cursor to be refused.
-	--
-	-- Clamped into the box the owned plots add up to rather than into the plots themselves: over the
-	-- notch of an L-shaped base that leaves the ghost where the player is actually pointing and lets it
-	-- read red, instead of jumping it somewhere they weren't.
+	-- Pull the anchor back so the whole footprint stays on the base. Clamped into the owned plots'
+	-- bounding box rather than the plots themselves, so over an L-shaped notch the ghost stays where the
+	-- player is pointing and reads red instead of jumping somewhere they weren't.
 	local maxAnchorX, maxAnchorZ = ground.MaxX - footprintX, ground.MaxZ - footprintZ
 	if maxAnchorX >= ground.MinX then
 		cellX = math.clamp(cellX, ground.MinX, maxAnchorX)
@@ -639,11 +583,8 @@ function BuildController:_updateGhost(deltaTime: number)
 		cellZ = math.clamp(cellZ, ground.MinZ, maxAnchorZ)
 	end
 
-	-- Why this spot won't do, or nil if it will. Kept as its reason rather than as a plain verdict
-	-- because a click that gets refused has to say which of them it was, and this is the only place all
-	-- three are known -- working it out again in _tryPlace would mean re-running the same checks against
-	-- a frame that had already moved on. Chained rather than gathered so the later ones are still only
-	-- paid for on a spot the earlier ones allowed, exactly as when this was an `and`.
+	-- Kept as a reason, not a boolean, so a refused click can name which check failed -- re-deriving it
+	-- in _tryPlace would test a frame that had already moved on. Chained so later checks stay unpaid for.
 	local refusal = nil
 
 	if not GridUtil.IsBlockOnGround(ground, cellX, cellZ, footprintX, footprintZ) then
@@ -666,8 +607,7 @@ function BuildController:_updateGhost(deltaTime: number)
 		GridUtil.CellToSurfaceCFrame(ground.Origin, cellX, cellZ, footprintX, footprintZ, Structures.CELL_SIZE)
 	local target = Structures.GetPlacementPivot(ghost, surface, self._rotation)
 
-	-- Eased toward the snapped spot, so dragging glides. The first frame snaps outright, and math.exp
-	-- keeps the glide the same speed whatever the framerate.
+	-- Eased toward the snapped spot so dragging glides; math.exp keeps it framerate-independent.
 	if self._ghostCFrame then
 		self._ghostCFrame = self._ghostCFrame:Lerp(target, 1 - math.exp(-GHOST_FOLLOW_SPEED * deltaTime))
 	else
@@ -678,8 +618,8 @@ function BuildController:_updateGhost(deltaTime: number)
 	self:_paintGhost(true, refusal == nil)
 end
 
--- The pool the calm pass is drawn from, made once per equip. Fixed in size rather than one highlight
--- per structure, because Roblox renders a limited number of them at a time -- see the budget above.
+-- The pool the calm pass is drawn from, made once per equip. Fixed in size rather than one per
+-- structure, since Roblox renders a limited number at a time -- see PICKUP_HIGHLIGHT_BUDGET.
 function BuildController:_createPickupHighlights(): { Highlight }
 	local highlights = table.create(PICKUP_HIGHLIGHT_BUDGET)
 
@@ -699,10 +639,8 @@ function BuildController:_createPickupHighlights(): { Highlight }
 	return highlights
 end
 
--- Hands the pool to the structures nearest the camera, which is what keeps the outlines on the part of
--- the base the player is actually looking at once there are more structures than highlights to go
--- round. Walked rather than cached: it runs a few times a second against a few dozen models, and
--- caching would mean invalidating on every placement, pickup and camera move for no measurable gain.
+-- Hands the pool to the structures nearest the camera, so once there are more structures than
+-- highlights the outlines stay on the part of the base being looked at.
 function BuildController:_refreshPickupHighlights()
 	local origin = workspace.CurrentCamera.CFrame.Position
 	local models = {}
@@ -710,16 +648,14 @@ function BuildController:_refreshPickupHighlights()
 	for _, model in self._structureFolder:GetChildren() do
 		local uid = model:GetAttribute(Structures.UID_ATTRIBUTE)
 
-		-- The hovered and armed ones wear their own highlights instead. Two Highlights sharing an adornee
-		-- is undefined -- Roblox renders one of them and there's no saying which -- so the calm pass has
-		-- to leave those two be rather than layer over them.
+		-- The hovered and armed ones wear their own. Two Highlights on one adornee is undefined -- Roblox
+		-- renders one of them and there's no saying which.
 		if uid and uid ~= self._armedUid and uid ~= self._hoverUid then
 			table.insert(models, model)
 		end
 	end
 
-	-- Only worth ordering when there are more structures than highlights; below that every one gets an
-	-- outline whatever order they come out in.
+	-- Only worth ordering when there are more structures than highlights.
 	if #models > PICKUP_HIGHLIGHT_BUDGET then
 		local distances = {}
 		for _, model in models do
@@ -731,8 +667,7 @@ function BuildController:_refreshPickupHighlights()
 		end)
 	end
 
-	-- Disabled rather than merely unadorned past the end of the list, so a spare doesn't sit in Roblox's
-	-- limited pool of active highlights while showing nothing.
+	-- Disabled, not just unadorned, so a spare doesn't hold a slot in Roblox's active-highlight pool.
 	for index, highlight in self._pickupHighlights do
 		local model = models[index]
 
@@ -741,14 +676,9 @@ function BuildController:_refreshPickupHighlights()
 	end
 end
 
--- Turns off the own outlines of whichever structures this tool is painting, and puts back the ones it
--- no longer is. A structure's own Highlight and ours would otherwise fight over the adornee -- Roblox
--- renders one of them and there's no saying which -- and a griller with a cooked skewer on it is
--- breathing gold exactly when you'd want to take it down. So without this, hover and the red confirm
--- would both be a coin toss against the very structures they matter most on.
---
--- Recomputed from scratch on every change rather than patched: there are at most two of them, and the
--- alternative is remembering which of the pair each suppressed highlight belonged to.
+-- Switches off a painted structure's own outlines and restores them afterwards, since two Highlights on
+-- one adornee is undefined -- otherwise hover and the red confirm would be a coin toss against exactly
+-- the structures they matter most on (a griller breathing gold over a cooked skewer).
 function BuildController:_refreshSuppressedHighlights()
 	for _, highlight in self._suppressedHighlights do
 		highlight.Enabled = true
@@ -773,19 +703,14 @@ function BuildController:_refreshSuppressedHighlights()
 	end
 end
 
--- Whichever of the player's structures is under the cursor, and its uid.
---
--- Both come back nil when the cursor is off the base, and also for a structure that's just gone down
--- whose uid hasn't replicated yet: there'd be nothing to send for it, so marking it would promise a
--- click that couldn't be honoured.
+-- Whichever structure is under the cursor, and its uid. Nil off the base, and nil for one whose uid
+-- hasn't replicated yet -- marking that would promise a click with nothing to send.
 function BuildController:_getStructureUnderCursor(): (Model?, string?)
 	local ray = self._mouse.UnitRay
 	local result = workspace:Raycast(ray.Origin, ray.Direction * RAY_LENGTH, self._raycastParams)
 
-	-- The ray lands on some part deep inside a structure, so climb to the structure itself. Climbing to
-	-- the folder's own child rather than to the nearest Model: a structure has models inside it (a
-	-- griller's Grill, for one), and the nearest one up is one of those rather than the thing that
-	-- was built.
+	-- Climb to the folder's own child, not the nearest Model: a structure has models inside it (a
+	-- griller's Grill), so the nearest one up would be a part of it rather than the thing built.
 	local model = result and result.Instance
 	while model and model.Parent ~= self._structureFolder do
 		model = model.Parent
@@ -799,9 +724,8 @@ function BuildController:_getStructureUnderCursor(): (Model?, string?)
 	return model, uid
 end
 
--- Follows the cursor: warms whichever structure is under it, so what a click would pick is visible
--- before one is spent finding out. The armed structure is deliberately left out -- it's already been
--- picked and is wearing red, and pointing at it again says nothing new.
+-- Warms whichever structure is under the cursor, so what a click would pick is visible beforehand. The
+-- armed one is skipped: it's already wearing red, and pointing at it again says nothing new.
 function BuildController:_updateHoverTarget()
 	local model, uid = self:_getStructureUnderCursor()
 
@@ -809,8 +733,7 @@ function BuildController:_updateHoverTarget()
 		model, uid = nil, nil
 	end
 
-	-- Runs every frame, and both refreshes below are real work -- so a cursor that hasn't left the
-	-- structure it was on shouldn't cost anything.
+	-- Runs every frame and both refreshes below are real work, so an unchanged hover costs nothing.
 	if uid == self._hoverUid then
 		return
 	end
@@ -823,9 +746,8 @@ function BuildController:_updateHoverTarget()
 	self:_refreshPickupHighlights()
 end
 
--- Picks the structure a second click would take back, or drops the pick when given nothing. Passing
--- the model as well as its uid rather than looking it up: the caller has just raycast it, and the uid
--- is what crosses the wire while the model is what gets outlined.
+-- Picks the structure a second click would take back, or drops the pick. Takes both the model and its
+-- uid because the caller has just raycast it: the uid crosses the wire, the model gets outlined.
 function BuildController:_armPickup(model: Model?, uid: string?)
 	if self._armedUid == uid then
 		return
@@ -835,8 +757,7 @@ function BuildController:_armPickup(model: Model?, uid: string?)
 	self._armedHighlight.Adornee = model
 	self._armedHighlight.Enabled = model ~= nil
 
-	-- Red takes the structure off the hover pass. Two of our own outlines on one adornee would fight
-	-- exactly the way a structure's own does, and having just been clicked it's plainly the one meant.
+	-- Red takes it off the hover pass: two of our own outlines on one adornee fight the same way.
 	if self._hoverUid == uid then
 		self._hoverUid = nil
 		self._hoverHighlight.Adornee = nil
@@ -855,18 +776,15 @@ function BuildController:_armPickup(model: Model?, uid: string?)
 	self:_refreshPickupHighlights()
 end
 
--- Sends the cell under the cursor to be built on, or says why it won't. The ghost has been red the
--- whole time the answer was no, so the notification isn't news -- it's for the player who clicked
--- anyway, which is the moment they're actually asking what's wrong with the spot.
+-- Sends the cell under the cursor to be built on, or says why it won't. The red ghost has said so all
+-- along; the notification is for the player who clicked anyway.
 function BuildController:_tryPlace()
 	if not self._structure then
 		return
 	end
 
-	-- Ahead of the refusal rather than after it, so one window covers both: mashing the button at a red
-	-- ghost shakes the notification at the rate a placement would have gone out at, instead of once a
-	-- click. What that costs is a refused click holding the next real one up by the same fraction of a
-	-- second, which is the debounce doing its job either way.
+	-- Ahead of the refusal, so one window covers both and mashing at a red ghost doesn't shake the
+	-- notification once per click.
 	local now = os.clock()
 	if now - self._lastPlaceTime < PLACE_DEBOUNCE then
 		return
@@ -888,18 +806,16 @@ function BuildController:_tryPlace()
 	self.PlaceStructureEvent:FireServer(self._structure.Id, self._targetCellX, self._targetCellZ, self._rotation)
 end
 
--- The pickup tool's click. The first one on a structure picks it, the second one on the same structure
--- sends it, and a click on anything else -- another structure, the ground, the sky -- moves or drops
--- the pick. So nothing is ever taken back by a click that wasn't aimed at it twice.
+-- The pickup tool's click: the first on a structure picks it, the second sends it, and a click anywhere
+-- else moves or drops the pick. So nothing is taken back by a click that wasn't aimed at it twice.
 function BuildController:_tryPickup()
-	-- Nothing to point with, so the tool was equipped before the player had a base to point at.
+	-- Nothing to point with, so the tool was equipped before the player had a base.
 	if not self._mouse then
 		return
 	end
 
-	-- Raycast afresh rather than reading what the hover loop last saw. On a touch device the tap that
-	-- gets here and the frame that moves the cursor to it aren't ordered against each other, so a
-	-- remembered target could be one tap behind -- and this is the click that takes something down.
+	-- Raycast afresh, not the hover loop's last read: on touch the tap and the cursor move aren't ordered
+	-- against each other, so a remembered target could be one tap behind.
 	local model, uid = self:_getStructureUnderCursor()
 
 	if uid ~= self._armedUid then
@@ -907,7 +823,7 @@ function BuildController:_tryPickup()
 		return
 	end
 
-	-- Nothing under the cursor and nothing picked, so the click was at empty ground twice over.
+	-- Nothing under the cursor and nothing picked: the click was at empty ground twice over.
 	if not uid then
 		return
 	end
@@ -922,17 +838,9 @@ function BuildController:_tryPickup()
 	self:_armPickup(nil, nil)
 end
 
--- Raises the ghost and starts it following the cursor. Everything it sets up hangs off the placement
--- cleaner, so unequipping puts the world back exactly as it was.
--- Says so once, on equip, when this structure cannot fit on any ground the player owns. Without it
--- that case is silent and indistinguishable from bad aim: the ghost just reads red wherever it's put,
--- because the block never fits inside the grid however it's positioned.
---
--- Measured against everything they own at once rather than plot by plot, since a structure too big for
--- one plot is perfectly placeable across two of them.
---
--- Almost always a setup problem rather than a game state -- a base too small for the thing being put
--- on it, or Structures.CELL_SIZE set coarser than the floors were built for.
+-- Warns once on equip when a structure can't fit on any ground the player owns -- otherwise that case is
+-- indistinguishable from bad aim, since the ghost just reads red everywhere. Measured against all owned
+-- plots at once, and almost always a setup problem (base too small, or CELL_SIZE coarser than the floors).
 function BuildController:_warnIfUnplaceable(structure: Structures.Structure)
 	local ground = self._ground
 
@@ -955,9 +863,8 @@ function BuildController:_warnIfUnplaceable(structure: Structures.Structure)
 	)
 end
 
--- The guide frame, or nil if the place file hasn't got one. Re-resolved rather than kept, because a
--- ScreenGui with ResetOnSpawn left on is rebuilt with every character -- so a reference taken once
--- would be pointing at a destroyed frame from the first respawn onwards.
+-- The guide frame, or nil if the place file hasn't got one. Re-resolved because a ScreenGui with
+-- ResetOnSpawn on is rebuilt with every character, so a kept reference dies at the first respawn.
 function BuildController:_getGuide(): Frame?
 	if self._guide and self._guide.Parent then
 		return self._guide
@@ -968,8 +875,7 @@ function BuildController:_getGuide(): Frame?
 	return self._guide
 end
 
--- The invalid badge, or nil if the place file hasn't got one. Re-resolved for the same reason the
--- guide is: it lives under a ScreenGui the engine may have rebuilt since it was last looked up.
+-- The invalid badge, or nil if the place file hasn't got one. Re-resolved for the same reason as the guide.
 function BuildController:_getInvalid(): GuiObject?
 	if self._invalid and self._invalid.Parent then
 		return self._invalid
@@ -988,12 +894,8 @@ function BuildController:_getGuideScale(entryName: string): UIScale?
 	return entry and entry:FindFirstChildOfClass("UIScale")
 end
 
--- Puts up whichever of the two the player should be looking at. Nothing is up outside a placement; while
--- one is running, it's the guide if the ghost has found a spot and the invalid badge if it hasn't --
--- exactly one at a time, since a list of keys to press and "you can't put it there" don't both apply.
---
--- Desktop only, both of them: a phone gets the touch buttons instead, and its "cursor" is wherever a
--- finger last landed -- so either of these, chasing it, would sit under the player's own thumb.
+-- Puts up exactly one of the two during a placement: the guide if the ghost found a spot, the invalid
+-- badge if not. Desktop only -- a phone gets the touch buttons and has no pointer for these to chase.
 function BuildController:_refreshGuide()
 	local placing = self._guidePlacing and not UserInputService.TouchEnabled
 	local guide = self:_getGuide()
@@ -1007,9 +909,8 @@ function BuildController:_refreshGuide()
 		invalid.Visible = placing and not self._guideAimed
 	end
 
-	-- Dropped once neither is up, so the next placement starts on the cursor rather than gliding in
-	-- from wherever the last one was left. Kept across the swap between the two, on the other hand:
-	-- they take turns at the same spot, so the one taking over should already be standing there.
+	-- Dropped once neither is up, so the next placement starts on the cursor. Kept across the swap
+	-- between the two, since they take turns at the same spot.
 	if not placing then
 		self._guidePosition = nil
 	end
@@ -1022,13 +923,11 @@ function BuildController:_setGuideAimed(aimed: boolean)
 	self:_refreshGuide()
 end
 
--- Squashes one entry of the guide while its input is held, and lets it back out on release. Reads as a
--- button being pressed because it's the same spring UIController puts on every other button.
+-- Squashes one guide entry while its input is held, using the same spring UIController puts on buttons.
 function BuildController:_pressGuideEntry(entryName: string, pressed: boolean)
 	local uiScale = self:_getGuideScale(entryName)
 
-	-- No guide up: either the place file hasn't got one, or this is a phone, or the tool was put away
-	-- mid-press. Nothing to squash either way.
+	-- No guide up: no frame in the place file, a phone, or the tool put away mid-press.
 	if not uiScale then
 		return
 	end
@@ -1038,14 +937,11 @@ function BuildController:_pressGuideEntry(entryName: string, pressed: boolean)
 	})
 end
 
--- Hands the guide and the invalid badge over to the placement for its length, or takes both back. Both
--- are forced down on the way out rather than left alone, since either may well be authored visible in
--- the place file.
+-- Hands the guide and invalid badge to the placement for its length, or takes both back. Forced down on
+-- the way out, since either may be authored visible in the place file.
 function BuildController:_showGuide(shown: boolean)
-	-- Every entry goes back to full size as the guide goes *up* rather than as it comes down. A spring
-	-- left running on a hidden frame would still be settling if the player swapped tools quickly, so
-	-- resetting on the way in is what makes the guide crisp however it was last put away. Stopped
-	-- before it's written, since a live spring would otherwise carry on over the value.
+	-- Reset on the way *up*, not down: a spring left running on a hidden frame would still be settling
+	-- if tools were swapped quickly. Stopped before the write, or the live spring carries on over it.
 	if shown then
 		for _, entryName in { GUIDE_PLACE_ENTRY, GUIDE_ROTATE_ENTRY } do
 			local uiScale = self:_getGuideScale(entryName)
@@ -1059,18 +955,14 @@ function BuildController:_showGuide(shown: boolean)
 
 	self._guidePlacing = shown
 
-	-- Nothing has been aimed at yet this placement, so it opens on the badge and swaps to the guide on
-	-- the first frame that finds a cell.
+	-- Opens on the badge and swaps to the guide on the first frame that finds a cell.
 	self._guideAimed = false
 
 	self:_refreshGuide()
 end
 
--- Glides the guide to the cursor. Eased rather than pinned so it trails the pointer slightly and
--- settles, which reads as something following the mouse rather than something stuck to it.
---
--- Whichever of the two is up gets moved, off one shared position: they never share the screen, so the
--- swap between them happens in place rather than the one arriving having to catch up.
+-- Glides whichever frame is up to the cursor, eased so it trails and settles rather than sticking. Both
+-- share one position, so the swap between them happens in place.
 function BuildController:_updateGuide(deltaTime: number)
 	local frame = self:_getGuide()
 
@@ -1084,49 +976,37 @@ function BuildController:_updateGuide(deltaTime: number)
 
 	local mouse = UserInputService:GetMouseLocation()
 
-	-- GetMouseLocation is measured from below the topbar, and so is a ScreenGui's own origin -- unless
-	-- it ignores the inset, in which case it measures from the very top and the inset has to go back
-	-- on. Read off the gui rather than assumed, since that's a property of the place file.
+	-- GetMouseLocation excludes the topbar inset, and so does a ScreenGui's origin -- unless it ignores
+	-- the inset, in which case it must be added back. Read off the gui, since that's a place-file property.
 	local target = if self.UI.IgnoreGuiInset then mouse else mouse + GuiService:GetGuiInset()
 
-	-- The first frame snaps outright, and math.exp keeps the glide the same speed whatever the
-	-- framerate -- the same easing the ghost uses over the grid.
+	-- Same framerate-independent easing the ghost uses over the grid; the first frame snaps.
 	if self._guidePosition then
 		self._guidePosition = self._guidePosition:Lerp(target, 1 - math.exp(-GUIDE_FOLLOW_SPEED * deltaTime))
 	else
 		self._guidePosition = target
 	end
 
-	-- Position only: the anchor point is authored, and it's what decides where the frame sits relative
-	-- to the pointer.
+	-- Position only: the authored anchor point is what places the frame relative to the pointer.
 	frame.Position = UDim2.fromOffset(self._guidePosition.X, self._guidePosition.Y)
 end
 
--- Binds placing and rotating for as long as the ghost is up, and puts an on-screen button behind each
--- on a touch device -- which is the whole point, since rotation is otherwise a key a phone hasn't got.
--- Bound per placement rather than once, so the buttons are on screen exactly while there's something
--- to aim.
---
--- Place is bound to no key at all: on a desktop it's the tool's own click that commits, and on a phone
--- it's the button. Rotate takes the key as well, so one handler serves both rather than a keyboard
--- path and a touch path that can drift apart.
+-- Binds placing and rotating while the ghost is up, each with an on-screen button on touch -- the only
+-- way a phone gets a rotate. Bound per placement, so the buttons show exactly while there's something to
+-- aim. Place takes no key (desktop commits with the tool's own click); rotate takes one, so a single
+-- handler serves both paths.
 function BuildController:_bindPlacementActions()
 	ContextActionUtility = ContextActionUtility or require(Modules.ContextActionUtlity)
 
-	-- The touch buttons report the press, the drag and the release alike, so without this a tap would
-	-- count twice and a rotate would turn half a circle.
+	-- Touch buttons report press, drag and release alike, so without the Begin check a tap counts twice.
 	local function onPlace(_actionName: string, inputState: Enum.UserInputState)
 		if inputState == Enum.UserInputState.Begin then
 			self:_tryPlace()
 		end
 	end
 
-	-- Rotation carries across placements until the tool is put away, so laying out a row of things all
-	-- facing the same way is one press rather than one per copy. It starts wherever the ghost came up
-	-- facing (see _getFacingRotation), so the common case is no press at all.
-	--
-	-- The release is worth listening for even though nothing turns on it: it's what lets the hint on
-	-- screen come back out of its press, so holding the key holds the button down.
+	-- Rotation carries across placements until the tool is put away, so a row of things facing the same
+	-- way is one press. The End branch turns nothing -- it only lets the on-screen hint out of its press.
 	local function onRotate(_actionName: string, inputState: Enum.UserInputState)
 		if inputState == Enum.UserInputState.Begin then
 			self._rotation = (self._rotation + 1) % 4
@@ -1136,8 +1016,7 @@ function BuildController:_bindPlacementActions()
 		end
 	end
 
-	-- Place first, so it takes the slot nearest the jump button: it's the action being aimed at, and
-	-- rotate is the one you reach past it for.
+	-- Place first, so it takes the touch slot nearest the jump button.
 	ContextActionUtility:BindAction(PLACE_ACTION, onPlace, true)
 	ContextActionUtility:SetTitle(PLACE_ACTION, "Place")
 
@@ -1150,9 +1029,9 @@ function BuildController:_bindPlacementActions()
 	end)
 end
 
--- Deliberately doesn't re-read which plots are owned: _floors is kept current by the listeners in
--- OnStart, and reading it here would yield on the replica -- long enough for an unequip to land
--- between the teardown above and the ghost below, leaving a ghost with nothing left to clean it up.
+-- Raises the ghost and starts it following the cursor. Deliberately doesn't re-read owned plots --
+-- OnStart's listeners keep _floors current, and reading here would yield on the replica long enough for
+-- an unequip to land mid-setup, leaving a ghost with nothing left to clean it up.
 function BuildController:_enterPlacement(structure: Structures.Structure, mouse: Mouse)
 	self:_exitPlacement()
 
@@ -1164,8 +1043,7 @@ function BuildController:_enterPlacement(structure: Structures.Structure, mouse:
 	self._rotation = 0
 	self._raycastParams = raycastParams
 	self._ghostCFrame = nil
-	-- A refusal rather than nil, nil being the one value that means the spot is good: nothing has been
-	-- aimed at yet on the frame a tool is equipped, and a click landing in that gap shouldn't build.
+	-- A refusal, not nil -- nil means the spot is good, and a click on the equip frame shouldn't build.
 	self._refusal = REFUSAL_NO_SPOT
 
 	self:_refreshRaycastParams()
@@ -1180,20 +1058,17 @@ function BuildController:_enterPlacement(structure: Structures.Structure, mouse:
 
 	self:_bindPlacementActions()
 
-	-- Only for building: the pickup tool has nothing to rotate and its click picks rather than places,
-	-- so _enterPickup deliberately leaves the guide down.
+	-- Building only: the pickup tool has nothing to rotate, so _enterPickup leaves the guide down.
 	self:_showGuide(true)
 
-	-- Registered rather than called from _exitPlacement, so the guide goes down with everything else
-	-- driving the ghost -- including when the tool is destroyed out from under it.
+	-- On the cleaner rather than in _exitPlacement, so it also runs when the tool is destroyed.
 	self._placementCleaner:Add(function()
 		self:_showGuide(false)
 	end)
 end
 
--- Raises the calm pass over everything on the base that can be taken back, and stands ready for the
--- clicks. Everything it sets up hangs off the placement cleaner, so putting the tool away puts the
--- base back exactly as it was -- including any outlines a pick had turned off.
+-- Raises the calm pass over everything that can be taken back. All of it hangs off the placement
+-- cleaner, so putting the tool away restores the base -- including outlines a pick had switched off.
 function BuildController:_enterPickup(mouse: Mouse)
 	self:_exitPlacement()
 
@@ -1209,8 +1084,7 @@ function BuildController:_enterPickup(mouse: Mouse)
 	raycastParams.FilterType = Enum.RaycastFilterType.Include
 	raycastParams.FilterDescendantsInstances = { folder }
 
-	-- Occluded like the calm pass, since what's under the cursor is by definition something the player
-	-- can see.
+	-- Occluded like the calm pass: what's under the cursor is by definition visible.
 	local hoverHighlight = Instance.new("Highlight")
 	hoverHighlight.DepthMode = Enum.HighlightDepthMode.Occluded
 	hoverHighlight.FillColor = HOVER_COLOR
@@ -1236,8 +1110,7 @@ function BuildController:_enterPickup(mouse: Mouse)
 	self._armedHighlight = self._placementCleaner:Add(armedHighlight)
 	self._pickupHighlights = self:_createPickupHighlights()
 
-	-- Registered rather than called from _exitPlacement, so a structure's own outlines come back with
-	-- everything else -- including when the tool is destroyed out from under a pick.
+	-- On the cleaner rather than in _exitPlacement, so it also runs when the tool is destroyed.
 	self._placementCleaner:Add(function()
 		for _, highlight in self._suppressedHighlights do
 			highlight.Enabled = true
@@ -1246,10 +1119,8 @@ function BuildController:_enterPickup(mouse: Mouse)
 
 	self:_refreshPickupHighlights()
 
-	-- Hover is chased every frame, the way the ghost chases the cursor -- it's answering "what am I
-	-- pointing at", so a frame of lag reads as the outline sticking. Which structures are nearest the
-	-- camera can't meaningfully change that fast and costs a walk of the whole base to work out, so the
-	-- calm pass underneath it is throttled instead.
+	-- Hover runs every frame, since a frame of lag reads as the outline sticking. The calm pass under it
+	-- is throttled -- it walks the whole base, and camera distance can't change that fast.
 	local sinceRefresh = 0
 
 	self._placementCleaner:Connect(RunService.RenderStepped, function(deltaTime: number)
@@ -1293,7 +1164,7 @@ function BuildController:_exitPlacement()
 end
 
 -- Hooks one build tool, so equipping it starts placement and using it commits. Anything else in the
--- backpack -- sticks, ingredients, crates -- isn't ours and is left alone.
+-- backpack isn't ours and is left alone.
 function BuildController:_hookTool(tool: Tool)
 	local isPickup = tool:GetAttribute(PICKUP_TOOL_ATTRIBUTE) == true
 
@@ -1306,9 +1177,8 @@ function BuildController:_hookTool(tool: Tool)
 	end
 	self._hookedTools[tool] = true
 
-	-- Which structure this tool places, resolved once: a tool is built for one kind and never changes
-	-- kind, only how many of it are left. Nil for the pickup tool, and for a tool naming a structure
-	-- the config dropped for want of a model -- which leaves it inert in the hand rather than erroring.
+	-- Resolved once: a tool never changes what it places, only how many are left. Nil for the pickup tool
+	-- and for one naming a dropped structure, which leaves it inert in the hand rather than erroring.
 	local structure = Structures.GetStructureFromId(tool:GetAttribute(STRUCTURE_TOOL_ATTRIBUTE))
 
 	self._characterCleaner:Connect(tool.Equipped, function(mouse: Mouse)
@@ -1320,8 +1190,7 @@ function BuildController:_hookTool(tool: Tool)
 			return
 		end
 
-		-- Which tool the ghost belongs to, so the Destroying below can tell "the thing I'm placing has
-		-- run out" from any other tool going away.
+		-- So the Destroying below can tell this tool running out from any other tool going away.
 		self._activeTool = tool
 	end)
 
@@ -1329,9 +1198,8 @@ function BuildController:_hookTool(tool: Tool)
 		self:_exitPlacement()
 	end)
 
-	-- Putting down the last of something takes the tool out of the player's hands, since the server
-	-- rebuilds the backpack from what they own and they no longer own one. Watched as well as
-	-- Unequipped so the ghost can't outlive the tool it belongs to and hang there unplaceable.
+	-- Placing the last of something destroys the tool, so this is watched alongside Unequipped to stop
+	-- the ghost outliving it and hanging there unplaceable.
 	self._characterCleaner:Connect(tool.Destroying, function()
 		self._hookedTools[tool] = nil
 
@@ -1346,12 +1214,8 @@ function BuildController:_hookTool(tool: Tool)
 			return
 		end
 
-		-- A tap fires this as well as a click, and on a phone that's *any* tap -- including the ones
-		-- only meant to swing the camera round while lining the ghost up. So placing belongs to the
-		-- Place button alone there, and looking around can't land a structure by accident.
-		--
-		-- Picking up above is deliberately not gated the same way: that tool has no button, and tapping
-		-- the thing you want back is how it's meant to be used.
+		-- On a phone *any* tap fires this, camera swings included, so placing belongs to the Place button
+		-- alone. Pickup above isn't gated the same way -- it has no button, and tapping is how it works.
 		if UserInputService.TouchEnabled then
 			return
 		end
@@ -1360,9 +1224,8 @@ function BuildController:_hookTool(tool: Tool)
 		self:_pressGuideEntry(GUIDE_PLACE_ENTRY, true)
 	end)
 
-	-- The release half of the click, purely so the hint on screen comes back out of its press. Taken
-	-- off the tool rather than by binding the mouse button through ContextActionService, which would
-	-- swallow clicks game-wide for as long as a build tool was in hand.
+	-- Purely so the on-screen hint comes out of its press. Taken off the tool rather than binding the
+	-- mouse button through ContextActionService, which would swallow clicks game-wide.
 	self._characterCleaner:Connect(tool.Deactivated, function()
 		if not isPickup then
 			self:_pressGuideEntry(GUIDE_PLACE_ENTRY, false)
@@ -1370,12 +1233,9 @@ function BuildController:_hookTool(tool: Tool)
 	end)
 end
 
--- Watches the backpack for this life's build tools. They're handed out fresh on every spawn, so the
--- hooks are dropped and re-made with the character rather than kept.
---
--- Waited on rather than found: the backpack is replaced with the character, so on a respawn it can
--- still be on its way here -- and the server fills it from its own side, which lands later again.
--- That's what the ChildAdded below is for.
+-- Watches the backpack for this life's build tools, re-hooking them with each character. Waited on
+-- rather than found, since a respawn's backpack arrives late and the server fills it later still --
+-- which is what the ChildAdded below covers.
 function BuildController:_watchCharacter()
 	self._characterCleaner:Clean()
 	self:_exitPlacement()
@@ -1406,9 +1266,8 @@ function BuildController:OnInit()
 	self._placementCleaner = self._cleaner:Construct(Trove)
 	self._hookedTools = {}
 
-	-- Waited on with a timeout rather than indefinitely: a missing guide should cost the player their
-	-- on-screen hint and nothing else, where an open-ended wait would hold this whole controller --
-	-- and so building itself -- on a piece of UI that's only ever decoration.
+	-- Timed out rather than waited on indefinitely: the guide is decoration, and an open-ended wait
+	-- would hold building itself on it.
 	self.UI = LocalPlayer.PlayerGui:WaitForChild(GUIDE_GUI_NAME, GUIDE_TIMEOUT)
 
 	if not self.UI then
@@ -1417,8 +1276,7 @@ function BuildController:OnInit()
 end
 
 function BuildController:OnStart()
-	-- A Highlight is pointed by its Adornee rather than by where it lives, so it needs a parent that
-	-- isn't the structure it's outlining -- one the structure being taken down can't take with it.
+	-- A Highlight points by Adornee, so it needs a parent the outlined structure can't take down with it.
 	self._highlightHolder = self._cleaner:Add(Instance.new("Folder"))
 	self._highlightHolder.Name = "BuildHighlights"
 	self._highlightHolder.Parent = LocalPlayer.PlayerGui
@@ -1439,10 +1297,8 @@ function BuildController:OnStart()
 		end)
 	end
 
-	-- Being given a base is what makes any ground buildable, and buying a plot adds to it. Both can
-	-- happen with a tool already in hand, so the floors are re-read rather than resolved once.
-	--
-	-- Listening yields on the replica, so keep it off the start thread.
+	-- Getting a base and buying a plot can both happen with a tool in hand, so the floors are re-read
+	-- rather than resolved once. Listening yields on the replica, so keep it off the start thread.
 	self._cleaner:Connect(LocalPlayer:GetAttributeChangedSignal("BaseId"), function()
 		self:_refreshGround()
 		self:_refreshRaycastParams()

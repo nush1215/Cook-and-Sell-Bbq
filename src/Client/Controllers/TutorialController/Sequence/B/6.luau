@@ -1,4 +1,4 @@
--- Step 2: Buy what the roll landed on.
+-- Step 6: Buy what the roll landed on.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Ingredients = require(ReplicatedStorage.Shared.Config.Ingredients)

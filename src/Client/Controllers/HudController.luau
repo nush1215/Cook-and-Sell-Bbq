@@ -179,6 +179,44 @@ function HudController:ReleaseHud(owner: any)
 	end
 end
 
+-- Adds or drops `owner`'s hide claim on a single HUD frame -- the per-frame counterpart to the two above,
+-- for a caller that wants one frame back for a moment without giving up its claim on the rest. Releasing
+-- only brings the frame up if nobody else is still holding it down.
+-- @param owner: the same key passed to KeepHudHidden
+-- @param frameName: the HUD frame to claim or release
+-- @param hidden: true to hold it down, false to let it back up
+function HudController:SetHudFrameHiddenFor(owner: any, frameName: string, hidden: boolean)
+	local hudFrame = self.UI:FindFirstChild(frameName)
+	if not hudFrame then
+		return
+	end
+
+	local owners = self._hudFrameHideOwners[hudFrame]
+
+	if hidden then
+		if not owners then
+			owners = {}
+			self._hudFrameHideOwners[hudFrame] = owners
+		end
+
+		owners[owner] = true
+		self:_setHudFrameHidden(hudFrame, true, true)
+		return
+	end
+
+	if not owners or not owners[owner] then
+		return
+	end
+
+	owners[owner] = nil
+	if next(owners) then
+		return
+	end
+
+	self._hudFrameHideOwners[hudFrame] = nil
+	self:_setHudFrameHidden(hudFrame, false, true)
+end
+
 -- Gets the configured position for a HUD frame, or infers a matching offscreen hide position.
 function HudController:_getHudFramePosition(hudFrame: GuiObject, state: "Show" | "Hide"): UDim2
 	local positions = HUD_FRAMES_POSITIONS[hudFrame.Name]

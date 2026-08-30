@@ -73,6 +73,11 @@ Keywords.Colors = {
 	Customer = Highlights.CLAIM,
 	Customers = Highlights.CLAIM,
 
+	-- The tool that moves a build around, named once when the tutorial hands it over and in every toast
+	-- about rearranging since. A plain steel grey-blue, deliberately the dullest thing in this table --
+	-- it's the one item here that isn't bought, cooked or sold, and it shouldn't read like it is.
+	Hammer = Color3.fromRGB(175, 185, 195),
+
 	-- The only word here with no colour of its own to borrow -- each crate carries a Color in
 	-- Config.Crates, but the generic word doesn't. A cool blue, picked to sit clear of the stick tan,
 	-- the BBQ orange and the customer gold so a line naming two of them still reads as two.

@@ -137,8 +137,10 @@ function HeldItem:Start()
 	-- price, and a raw one isn't finished yet, so quoting a figure for it would just read as what it's
 	-- worth rather than as what it's worth unfinished. Cooked is the "has been through a grill" flag, so
 	-- it covers a burnt skewer too; a skewer pulled off raw carries neither it nor CookState and is
-	-- indistinguishable from one that was never lit. Every client draws it off the tool's own
-	-- attributes, and the estimate is seeded by the uid, so they all land on the same figure.
+	-- indistinguishable from one that was never lit. Every client draws it off the tool's own attributes
+	-- plus the holder's replicated boost, and the estimate is seeded by the uid rather than rolled, so
+	-- everyone watching one skewer lands on the same figure.
+	local holder = Players:GetPlayerFromCharacter(character)
 	local uid = tool:GetAttribute("FilledStickUid")
 	local cooked = tool:GetAttribute("Cooked")
 	if uid and cooked then
@@ -151,22 +153,32 @@ function HeldItem:Start()
 			Mutation = tool:GetAttribute("Mutation"),
 		}
 
-		local estimate = StickModel.GetEstimatedValue(record, uid)
-
 		-- The root is the anchor, since it's what the skewer's own height was measured off above -- so
 		-- the billboard rides along without depending on the model's authored pivot. It needs the
 		-- cleaner explicitly, not being a descendant of the model that gets dropped on unequip.
-		local holder = UI.EstimatedValueAttachment:Clone()
-		holder.UI.Value.Text = `${GuiUtil.ConvertNumberWithSuffix(estimate)}`
+		local valueUI = UI.EstimatedValueAttachment:Clone()
+
+		-- The guess quotes what the sale would bank rather than the skewer's plain worth, so it carries
+		-- the holder's boosts -- the same figure the sell stand's offer frame is on. Redrawn rather than
+		-- set once, since a boost can land mid-hold: a friend joining, a gamepass finishing its check, or
+		-- EarlyBoost decaying on the sale before this one.
+		local function drawEstimate()
+			local boostFraction = holder:GetAttribute("BoostFraction") or 0
+			local estimate = StickModel.GetEstimatedValue(record, uid, boostFraction)
+			valueUI.UI.Value.Text = `${GuiUtil.ConvertNumberWithSuffix(estimate)}`
+		end
+
+		drawEstimate()
+		self._cleaner:Add(holder:GetAttributeChangedSignal("BoostFraction"):Connect(drawEstimate))
 
 		-- The state is read the same way the sell price reads it, so the figure and the badge under it
 		-- are always saying the same thing -- including on a skewer saved before cook states existed,
 		-- which resolves to Cooked rather than reading blank.
 		local stateId = StickModel.GetCookStateId(record)
-		holder.UI.CookStateIcon.Image = CookStates.GetStateFromId(stateId).Icon
+		valueUI.UI.CookStateIcon.Image = CookStates.GetStateFromId(stateId).Icon
 
-		holder.Parent = character.Head
-		self._cleaner:Add(holder)
+		valueUI.Parent = character.Head
+		self._cleaner:Add(valueUI)
 	end
 
 	-- Hide the hand handle so only the carried visual shows.
@@ -177,7 +189,7 @@ function HeldItem:Start()
 	end
 
 	-- Only the owning client plays the hold animation; it replicates to others.
-	if Players:GetPlayerFromCharacter(character) == Players.LocalPlayer then
+	if holder == Players.LocalPlayer then
 		AnimationController:PlayAnimation(HOLD_ANIMATION)
 		self._playingAnimation = true
 	end

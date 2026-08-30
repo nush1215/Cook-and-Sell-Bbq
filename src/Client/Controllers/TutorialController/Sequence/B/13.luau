@@ -1,9 +1,9 @@
--- Step 15: Put the BBQ out on the sell stall, which is what brings a customer. Ends by holding the take
--- off, which step 16 releases once the sale has gone through -- see there.
+-- Step 13: Put the BBQ out on the sell stall, which is what brings a customer. Ends by holding the take
+-- off, which step 14 releases once the sale has gone through -- see there.
 local HttpService = game:GetService("HttpService")
 
-local EquippedItem = require(script.Parent.Parent.Parent.Parent.Modules.EquippedItem)
-local SkewerStandController = require(script.Parent.Parent.Parent.SkewerStandController)
+local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
+local SkewerStandController = require(script.Parent.Parent.Parent.Parent.SkewerStandController)
 
 local NEAR_DISTANCE = 12
 local BEAM_HIDE_DISTANCE = 12

@@ -569,6 +569,11 @@ function Spotlight:FollowUI(ui: GuiObject, padding: number?, text: string?)
 end
 
 function Spotlight:FocusWorld(position: Vector3, radius: number, text: string?)
+	-- A world focus is a radius, with no width or height to it. Any rectangle a previous FocusUI left
+	-- behind has to go, or the layout below keeps using it -- the hole stays that frame's size and shape
+	-- however near or far the thing being pointed at is. FollowPart clears it for the same reason.
+	self.rectSize = nil
+
 	local v, onScreen = self.camera:WorldToScreenPoint(position)
 
 	if not onScreen or v.Z <= 0 then

@@ -32,22 +32,20 @@ local HELD_TAG = "HeldItem"
 local CRATE_TAG = "Crate"
 local SPAWNED_FOLDER_NAME = "SpawnedCrates"
 
--- The ring the crates of one batch land in, and how many fit in the inner one before the rest spill
--- out to the outer.
+-- The rings a batch's crates land in, and how many fit in the inner one before the rest spill outward.
 local INNER_RADIUS = 10
 local OUTER_RADIUS = 18
 local PER_RING_MAX = 5
 
--- Seconds an owner's crate stays hidden before the server forces it visible. Its own client unhides
--- it the moment it picks it up to throw, so this only ever fires for a client that never got there.
+-- Seconds before the server forces an owner's crate visible. Its own client unhides it on pickup, so this
+-- only fires for a client that never got there.
 local REVEAL_DELAY = 2
 
--- How long past its own animation a crate waits for its owner's claim before the server grants the
--- rewards itself.
+-- How long past its animation a crate waits for its owner's claim before the server grants the rewards.
 local CLAIM_FALLBACK_DELAY = 5
 
 -- How long a granted crate waits for the rest of its batch before the tally announces them together.
--- A batch's crates land THROW_STAGGER apart, so one window comfortably covers all ten of them.
+-- Crates land THROW_STAGGER apart, so one window covers all ten.
 local TALLY_WINDOW = 1
 
 --[[
@@ -77,9 +75,8 @@ type SpawnCrateData = {
 	Owner: number?, -- the UserId whose client throws and claims this one
 	OpenIndex: number?, -- its place in the batch, which is how long its client waits before throwing
 	OpenCount: number?,
-	-- The world-crate flags. Nothing sets these yet -- they're what the post-tutorial playtime crate
-	-- needs: one that idles in place until something opens it, rather than being thrown and opened on
-	-- arrival.
+	-- World-crate flags, unset today: what the post-tutorial playtime crate needs -- one that idles in
+	-- place until something opens it, rather than being thrown and opened on arrival.
 	AutoIdle: boolean?,
 	TimeToOpen: number?,
 }
@@ -111,8 +108,8 @@ local function validatePlayer(player: Player?): boolean
 	return player ~= nil and player:IsDescendantOf(Players)
 end
 
--- Puts a tool straight into the player's hands, swapping out whatever they were holding. Nothing to
--- do if they're mid-respawn -- the reconcile the new character kicks off rebuilds their tools anyway.
+-- Puts a tool straight into the player's hands. A no-op mid-respawn -- the new character's reconcile
+-- rebuilds their tools anyway.
 local function equipTool(player: Player, tool: Tool)
 	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 	if humanoid then
@@ -120,8 +117,8 @@ local function equipTool(player: Player, tool: Tool)
 	end
 end
 
--- Collects the player's crate tools, keyed by crate id. An equipped tool sits in the character rather
--- than the backpack, so both get scanned.
+-- The player's crate tools, keyed by crate id. Both containers are scanned: an equipped tool sits in the
+-- character rather than the backpack.
 local function getCrateTools(player: Player): { [string]: Tool }
 	local tools = {}
 	local containers = { player:FindFirstChildOfClass("Backpack"), player.Character }
@@ -146,10 +143,9 @@ local function getCrateTools(player: Player): { [string]: Tool }
 	return tools
 end
 
--- Where the crates of one batch land: a ring of up to PER_RING_MAX around the player, with the
--- overflow in a second, wider one. Every slot is dropped onto whatever ground is beneath it and
--- turned to face the player, so the row of rewards each crate reveals reads left to right across
--- their view rather than edge-on.
+-- Where a batch's crates land: a ring of up to PER_RING_MAX around the player, overflow in a wider second
+-- one. Each slot drops onto the ground beneath it and turns to face the player, so the rewards a crate
+-- reveals read left to right across their view rather than edge-on.
 local function computeFormation(origin: CFrame, count: number, raycastParams: RaycastParams): { CFrame }
 	local slots = {}
 
@@ -178,9 +174,8 @@ local function computeFormation(origin: CFrame, count: number, raycastParams: Ra
 	return slots
 end
 
--- Builds the tool for one crate: an empty tagged tool carrying its id + count. The held visual is
--- drawn client-side by the HeldItem component off these attributes, and the backpack slot pops up a
--- tooltip in the crate's own colour.
+-- An empty tagged tool carrying the crate's id and count. The held visual is drawn client-side by
+-- HeldItem off these attributes, and the backpack slot's tooltip takes the crate's colour.
 function CrateManager:_buildTool(crate: Crates.Crate, count: number): Tool
 	local tool = ToolTemplate:Clone()
 
@@ -232,8 +227,7 @@ function CrateManager:_reconcileTools(player: Player)
 		if tool then
 			tool:SetAttribute("Count", count)
 		else
-			-- Data can hold an id the config no longer has, either removed outright or dropped at load
-			-- because its model went missing from Assets.
+			-- Data can name an id the config no longer has -- removed, or dropped at load for a missing model.
 			local crate = Crates.GetCrateFromId(crateId)
 			if not crate then
 				continue
@@ -283,10 +277,9 @@ function CrateManager:ConsumeCrate(player: Player, crateId: string, amount: numb
 	PlayerDataManager:SetPlayerDataKey(player, { "Crates", crateId }, math.max(0, owned - (amount or 1)))
 end
 
--- Rolls one crate's whole payout, in the order its groups are authored -- which is the order the
--- reveal lays them out in, so the stick ends up on the end of the row and is the last thing granted.
--- One Random is drawn through every slot; passing a raw seed per call would re-seed and make every
--- draw come out the same.
+-- Rolls a crate's whole payout in authored group order, which is also the reveal's layout order -- so the
+-- stick ends the row and is granted last. One Random threads every slot: a raw seed per call would
+-- re-seed and make every draw identical.
 function CrateManager:RollCrateContents(crate: Crates.Crate, rng: Random): { Crates.Reward }
 	local rewards = {}
 
@@ -294,11 +287,10 @@ function CrateManager:RollCrateContents(crate: Crates.Crate, rng: Random): { Cra
 		local taken = {}
 
 		for _ = 1, group.Count do
-			-- A Distinct group draws without replacement, so its pool is rebuilt for each slot with what
-			-- it has already given left out. Rebuilt rather than edited because the config's own table is
-			-- shared by every crate ever opened. The entry itself is what's weighted, not its id, because
-			-- a mixed group's entries carry their own Type and an id alone couldn't say which config it
-			-- came from -- which is also what makes taken safe to key on across the two rosters.
+			-- Distinct draws without replacement, so the pool is rebuilt per slot minus what it has given.
+			-- Rebuilt rather than edited, since the config's table is shared by every crate ever opened.
+			-- The entry is weighted rather than its id: a mixed group's entries carry their own Type, so an
+			-- id alone couldn't say which roster it came from -- which is also what makes `taken` safe.
 			local weighted = {}
 			for _, entry in group.Rewards do
 				if not (group.Distinct and taken[entry]) then
@@ -333,15 +325,12 @@ function CrateManager:_getSpawnedFolder(): Folder
 	return self._spawnedFolder
 end
 
--- Hands the player everything one crate rolled, then folds what it gave into their running tally
--- instead of announcing it on its own. Reached from the owner's claim and from the fallback below,
--- so it must stay safe to reach exactly once per crate -- both callers drop the crate from _spawned
--- first.
+-- Hands over everything one crate rolled and folds it into the player's running tally rather than
+-- announcing alone. Reached from the owner's claim and from the fallback below, so it must run exactly
+-- once per crate -- both callers drop it from _spawned first.
 --
--- Granted in the order the rewards were rolled, which is the order the config authors them and the
--- order the reveal laid them out. Every grant equips what it handed over, so the player ends up
--- holding the last of them: on a crate authored as a group per kind that's the last group's reward,
--- and on a mixed pool there's no such last group to lean on, so it's whatever its final slot rolled.
+-- Granted in rolled order, which is authored order and the reveal's layout order. Every grant equips what
+-- it handed over, so the player ends up holding whatever the final slot rolled.
 function CrateManager:_grantCrateRewards(player: Player, spawnedCrate: SpawnedCrate)
 	for _, reward in spawnedCrate.Rewards do
 		if reward.Type == "Ingredient" then
@@ -354,15 +343,13 @@ function CrateManager:_grantCrateRewards(player: Player, spawnedCrate: SpawnedCr
 	self:_tallyCrateRewards(player, spawnedCrate)
 end
 
--- Adds one crate's payout to its player's tally and re-arms the summary that announces the batch.
--- The window restarts on every crate, so a whole batch reports once however many crates are in it --
--- they land THROW_STAGGER apart, well inside it. A crate that misses the window (one the claim
--- fallback had to grant seconds after the rest) simply gets a summary of its own.
+-- Adds one crate's payout to the tally and re-arms the batch summary. The window restarts per crate, so a
+-- whole batch reports once (they land THROW_STAGGER apart, well inside it). One that misses the window --
+-- granted late by the claim fallback -- simply gets a summary of its own.
 function CrateManager:_tallyCrateRewards(player: Player, spawnedCrate: SpawnedCrate)
 	local pending = self._pendingTallies[player]
 
-	-- A tally speaks for one kind of crate, so a second kind arriving mid-window flushes what's there
-	-- rather than being folded into it
+	-- A tally speaks for one kind of crate, so a second kind mid-window flushes rather than folding in
 	if pending and pending.CrateId ~= spawnedCrate.CrateId then
 		self:_announceCrateTally(player)
 		pending = nil
@@ -387,8 +374,7 @@ function CrateManager:_tallyCrateRewards(player: Player, spawnedCrate: SpawnedCr
 		end
 	end
 
-	-- Bumped so only the last crate's timer gets to announce; the earlier ones find a newer generation
-	-- and leave it alone
+	-- Bumped so only the last crate's timer announces; earlier ones find a newer generation and bail
 	pending.Generation += 1
 	local generation = pending.Generation
 
@@ -399,8 +385,8 @@ function CrateManager:_tallyCrateRewards(player: Player, spawnedCrate: SpawnedCr
 	end)
 end
 
--- Tells the player what their batch opened: one line for the crates themselves and one per distinct
--- thing they paid out, rather than a toast per crate listing every slot it rolled.
+-- One line for the crates and one per distinct thing they paid out, rather than a toast per crate
+-- listing every slot it rolled.
 function CrateManager:_announceCrateTally(player: Player)
 	local pending = self._pendingTallies[player]
 	if not pending then
@@ -463,9 +449,8 @@ function CrateManager:SpawnCrate(crateId: string, cframe: CFrame, data: SpawnCra
 	model:SetAttribute("UniqueId", uniqueId)
 	model:SetAttribute("CrateId", crateId)
 
-	-- Shipped as an attribute rather than over a remote, the same way a stand's placed skewers are: a
-	-- remote naming a freshly-parented model can beat the model itself to the client, and every client
-	-- needs the contents to draw the reveal.
+	-- An attribute rather than a remote, like a stand's placed skewers: a remote naming a freshly-parented
+	-- model can beat the model to the client, and every client needs the contents to draw the reveal.
 	model:SetAttribute("Rewards", HttpService:JSONEncode(rewards))
 
 	if owner then
@@ -492,9 +477,8 @@ function CrateManager:SpawnCrate(crateId: string, cframe: CFrame, data: SpawnCra
 		end
 	end
 
-	-- An owner's crate is thrown out of their hands, so it must not flash on its ground slot first.
-	-- Their client unhides it the moment it takes it to the throw start; this is the fallback for a
-	-- client that never got there.
+	-- An owner's crate is thrown from their hands, so it must not flash on its ground slot first. Their
+	-- client unhides it at the throw start; this is the fallback for one that never got there.
 	if owner then
 		for _, descendant in model:GetDescendants() do
 			if descendant:IsA("BasePart") then
@@ -533,9 +517,8 @@ function CrateManager:SpawnCrate(crateId: string, cframe: CFrame, data: SpawnCra
 		self._spawned[uniqueId] = nil
 	end)
 
-	-- The rewards are already the player's -- the crate came out of their data before any of this ran.
-	-- If their own client never claims (it crashed, it never loaded the model, its claim landed early
-	-- and was ignored) the server hands them over anyway rather than eating the crate.
+	-- The rewards are already theirs -- the crate left their data before any of this ran. If their client
+	-- never claims, the server hands them over rather than eating the crate.
 	if owner then
 		task.delay(Crates.GetOpenDuration(crate, openIndex) + CLAIM_FALLBACK_DELAY, function()
 			local spawnedCrate = self._spawned[uniqueId]
@@ -581,9 +564,8 @@ function CrateManager:RequestOpenCrates(player: Player, crateId: string, count: 
 		return
 	end
 
-	-- Debounced on the client too, for the instant feedback; this is the authoritative one. Both the
-	-- check and the stamp happen before the data read below, since that yields -- two requests either
-	-- side of it would otherwise both pass.
+	-- The authoritative debounce (the client's is for instant feedback). Checked and stamped before the
+	-- read below, which yields -- two requests either side of it would otherwise both pass.
 	if os.clock() < (self._openCooldowns[player] or 0) then
 		NotificationManager:NotifyNormal(player, {
 			Text = "You're opening crates too fast!",
@@ -629,10 +611,9 @@ function CrateManager:RequestOpenCrates(player: Player, crateId: string, count: 
 	end
 end
 
--- Hands a crate that was spawned without an owner over to one, and starts the clock on its claim.
--- A crate thrown out of someone's hands has an owner from the moment it exists; one that crashed in
--- and waited to be opened only gets one when somebody opens it -- which is also the first moment it's
--- worth arming the fallback, since until then it isn't going anywhere.
+-- Gives an ownerless crate an owner and starts its claim clock. A thrown crate has an owner from the
+-- moment it exists; one that crashed in only gets one when somebody opens it, which is also the first
+-- moment the fallback is worth arming.
 function CrateManager:BeginCrateOpen(uniqueId: string, player: Player): boolean
 	local spawnedCrate = self._spawned[uniqueId]
 	if not spawnedCrate or spawnedCrate.Owner then
@@ -674,22 +655,20 @@ function CrateManager:ClaimCrateRewards(player: Player, uniqueId: string)
 		return
 	end
 
-	-- UniqueId rides on the model as a replicated attribute, so every client can read every crate's.
-	-- Only the owner gets to claim theirs.
+	-- UniqueId is a replicated attribute, so every client can read every crate's -- only the owner claims.
 	if spawnedCrate.Owner ~= player.UserId then
 		return
 	end
 
-	-- A crate that crashed in holds out until its countdown is up, and the countdown is the whole
-	-- point of it -- so it's enforced here as well as at the open request. The elapsed check below
-	-- can't cover this: by the time a fifteen-minute crate is opened it passes that trivially.
+	-- The countdown is the whole point of a crashed-in crate, so it's enforced here as well as at the open
+	-- request. The elapsed check below can't cover it: a fifteen-minute crate passes that trivially.
 	local timeToOpen = spawnedCrate.Model:GetAttribute("TimeToOpen")
 	if timeToOpen and workspace:GetServerTimeNow() < timeToOpen then
 		return
 	end
 
-	-- A claim can't beat the animation it's supposed to be the end of. An early one is left where it
-	-- is rather than turned away for good -- the fallback still hands the rewards over.
+	-- A claim can't beat the animation it ends. An early one is ignored rather than refused for good --
+	-- the fallback still hands the rewards over.
 	local crate = Crates.GetCrateFromId(spawnedCrate.CrateId)
 	local elapsed = workspace:GetServerTimeNow() - spawnedCrate.SpawnedAt
 	if elapsed < Crates.GetOpenDuration(crate, spawnedCrate.OpenIndex) - Crates.CLAIM_GRACE then
@@ -707,14 +686,13 @@ function CrateManager:ClaimCrateRewards(player: Player, uniqueId: string)
 end
 
 function CrateManager:_setupPlayer(player: Player)
-	-- The signal only reports the top-level key, so it can't say which crate moved. The reconcile
-	-- re-diffs everything anyway, so it doesn't need to know.
+	-- The signal only reports the top-level key, but the reconcile re-diffs everything anyway.
 	self._listeners[player] = PlayerDataManager:ListenForChanges(player, "Crates", function()
 		self:_reconcileTools(player)
 	end)
 
-	-- CharacterAutoLoads is off and Base drives every respawn through LoadCharacterAsync, which clears
-	-- the backpack. Runtime tools aren't in StarterGear, so rebuild them on each spawn.
+	-- Base drives every respawn through LoadCharacterAsync, which clears the backpack, and runtime tools
+	-- aren't in StarterGear -- so they're rebuilt each spawn.
 	player.CharacterAdded:Connect(function()
 		self:_reconcileTools(player)
 	end)

@@ -163,7 +163,7 @@ local inventoryIcon: any = Icon.new()
 	:setCaption("Inventory")
 	:bindToggleKey(Enum.KeyCode.Backquote)
 	:autoDeselect(false)
-	:setOrder(-1)
+	:setOrder(1)
 
 inventoryIcon.toggled:Connect(function(): ()
 	if not GuiService.MenuIsOpen then
@@ -2294,6 +2294,14 @@ end
 -- Returns the BindableEvent for when the backpack state changes
 function BackpackScript:GetStateChangedEvent(): BindableEvent
 	return BackpackScript.StateChanged
+end
+
+-- Returns the hotbar or inventory frame a tool currently sits in, or nil if it has no slot. For
+-- anything that wants to point at one -- the tutorial spotlights the slot a tool it's asking the
+-- player to equip is in.
+function BackpackScript:GetSlotFrame(tool: Tool): GuiObject?
+	local slot: any = SlotsByTool[tool]
+	return slot and slot.Frame
 end
 
 -- Update every heartbeat the icon state

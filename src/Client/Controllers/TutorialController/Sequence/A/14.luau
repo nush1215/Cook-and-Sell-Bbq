@@ -1,6 +1,6 @@
--- Step 12: Light the stove. Ends by locking the stop prompts, which step 13 holds until the BBQ is
+-- Step 14: Light the stove. Ends by locking the stop prompts, which step 15 holds until the BBQ is
 -- actually cooked -- see there for why.
-local GrillerController = require(script.Parent.Parent.Parent.GrillerController)
+local GrillerController = require(script.Parent.Parent.Parent.Parent.GrillerController)
 
 local NEAR_DISTANCE = 12
 
@@ -37,19 +37,16 @@ return function(self)
 				slot:FindFirstChild("GrillAttachment", true):FindFirstChildWhichIsA("ProximityPrompt"),
 			}
 
-			-- The Robux skip isn't among them -- it's a button on the cooking bar rather than a prompt on
-			-- the grill, so there's nothing here to hold it by. It gets its own lock, taken and released
-			-- alongside these: a beat teaching the timing shouldn't be offering to sell its way out of the
-			-- thing it's teaching.
-			GrillerController:SetSkipLocked(true)
-
-			-- SetSkipLocked refreshes every grill on its way out, which is all the prompts needed handing
-			-- back too, so the release is the one call.
+			-- The Robux skip isn't among them, and isn't this beat's to take: it's held for the whole run
+			-- from TutorialController:Start. It used to be taken here and released on the same lock as
+			-- these prompts, which handed it back at the raw band -- putting it on the bar for the tail of
+			-- the very cook it was hidden through, still offering to sell the player out of the thing they
+			-- were being taught.
 			self.CookPromptLock = self:DisablePrompts(prompts, function()
-				GrillerController:SetSkipLocked(false)
+				GrillerController:RefreshInteractions()
 			end, { slot.Knob })
 
-			-- Step 11 held this from the moment the BBQ went down; the cook is what it was holding out for.
+			-- Step 13 held this from the moment the BBQ went down; the cook is what it was holding out for.
 			-- Nothing visible changes here -- a cooking grill offers no take of its own -- it just means the
 			-- hold ends with the beat that wanted it rather than outliving the tutorial.
 			GrillerController:SetTakeLocked(false)

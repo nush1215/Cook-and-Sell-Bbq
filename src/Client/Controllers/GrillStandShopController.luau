@@ -33,9 +33,8 @@ local BUY_DEBOUNCE = 0.3 -- client-side only; the server's _purchasing guard is 
 -- The dev product that re-rolls the shop's stock for the whole server (see GrillStandShopManager:RestockShop).
 local RESTOCK_PRODUCT_ID = "GrillStandShopRestock"
 
--- How close to the end of the window the restock button stops being offered. A restock bought with
--- seconds to go is money for a stock the free rollover was about to hand over anyway, so the button
--- goes inactive rather than selling that.
+-- The button goes inactive this close to the window's end, rather than selling a stock the free rollover
+-- was about to hand over anyway.
 local RESTOCK_MIN_TIME_LEFT = 15
 
 -- The colour the countdown is shown in on the shop's restock title.
@@ -44,17 +43,15 @@ local RESTOCK_TIME_COLOR = "#55ff00"
 -- The zone out in the world that opens the shop, under workspace.Core.Zones.
 local ZONE_NAME = "GrillStandShop"
 
--- The Golden Grill and the display it's sold off out in the world, under workspace.Displays. It has no
--- shop row of its own -- it isn't restockable, so it's never stocked and can't be bought with currency
--- -- which is why it gets a display and a shop card instead.
+-- Sold off a display under workspace.Displays rather than a shop row: it isn't restockable, so it's never
+-- stocked and can't be bought with currency.
 local GOLDEN_GRILL_ID = "GoldenGrill"
 local GOLDEN_GRILL_DISPLAY = "GoldenGrillDisplay"
 local GOLDEN_GRILL_PROMPT_HOLD = 0.3
 local GOLDEN_GRILL_PROMPT_DISTANCE = 10
 
--- The Holder.CategoryButtons child that shows each structure category, in tab order. The button names
--- are what the UI was authored with; the categories are what Config.Structures and the CollectionService
--- tags use, and the two don't read the same -- hence the mapping rather than matching on name.
+-- Each category's Holder.CategoryButtons child, in tab order. A mapping rather than a name match, since
+-- the authored button names and the Config.Structures categories don't read the same.
 local CATEGORY_BUTTONS = {
 	{ Button = "Grills", Category = "Grillers" },
 	{ Button = "StickStand", Category = "StickStands" },
@@ -85,8 +82,21 @@ local GrillStandShopController = {
 	_choicesToken = 0, -- bumped on every expand/collapse so a stale spring callback can't hide a re-opened frame
 	_restockButton = nil, -- the buy-a-restock button, once the shop UI has one authored
 	_goldenGrillPrompt = nil, -- the buy prompt on the Golden Grill's world display, once it's up
+	_locked = false, -- while set, walking into the zone doesn't open the shop
 	_uiCleaner = Trove.new(),
 }
+
+-- Holds the shop shut, zone and all. Set by the tutorial, whose store trip walks the player past this
+-- zone -- popping open would cover the banner and sell them a second griller before they've placed one.
+-- @param locked: true to hold it shut, false to hand it back
+function GrillStandShopController:SetLocked(locked: boolean)
+	self._locked = locked
+
+	-- Closes anything already open, so the hold covers the shop as it stands rather than only later walk-ins.
+	if locked and self.UI then
+		UIController:CloseFrame(self.UI.Holder)
+	end
+end
 
 -- The shared rolled stock for this window, { [structureId] = amount }, or an empty table before the shop
 -- replica has arrived.
@@ -104,9 +114,8 @@ function GrillStandShopController:GetTimeLeft(): number
 	return ReplicatedStorage:GetAttribute(TIME_LEFT_ATTRIBUTE) or 0
 end
 
--- How many of a structure this player can still buy this window: the shared stock minus their own
--- purchases. Their Bought only counts while it belongs to the current window (matching Seed); a stale
--- window reads as zero bought, so the full stock is available again after a re-roll.
+-- How many the player can still buy this window: shared stock minus their own purchases. Bought only
+-- counts while its Seed matches the current window, so a re-roll makes the full stock available again.
 function GrillStandShopController:GetRemaining(structureId: string): number
 	local stock = self:GetStock()[structureId] or 0
 
@@ -122,8 +131,8 @@ function GrillStandShopController:GetRemaining(structureId: string): number
 	return stock - (grillStandShop.Bought[structureId] or 0)
 end
 
--- Requests a purchase of one of the given structure. The server validates stock, currency and the grant;
--- feedback comes back over StructurePurchaseResultEvent and the player-data replica (Bought) updating.
+-- Requests a purchase. The server validates stock, currency and the grant; feedback arrives over
+-- StructurePurchaseResultEvent and the replica's Bought updating.
 function GrillStandShopController:Buy(structureId: string)
 	if self._buyDebounce then
 		return
@@ -137,15 +146,14 @@ function GrillStandShopController:Buy(structureId: string)
 	self.PurchaseStructureEvent:FireServer(structureId)
 end
 
--- Returns the structure whose row is currently expanded, or nil if nothing is selected. The buy buttons
--- act on whichever structure this is, so anything that wants to know what a press would buy reads it here.
+-- The structure whose row is expanded, or nil. The buy buttons act on it, so anything asking what a press
+-- would buy reads it here.
 function GrillStandShopController:GetSelectedStructureId(): string?
 	return self._selectedStructureId
 end
 
--- Syncs the shared ButtonChoices buy buttons to the currently selected structure: both show that
--- structure's price, Robux is only offered once it has a real dev product, and currency-buy is disabled
--- when this window's stock is gone.
+-- Syncs the shared ButtonChoices buttons to the selected structure. Robux is only offered once it has a
+-- real dev product, and currency-buy is disabled when this window's stock is gone.
 function GrillStandShopController:_refreshSelectionButtons()
 	local structureId = self._selectedStructureId
 	if not structureId then
@@ -168,9 +176,8 @@ function GrillStandShopController:_refreshSelectionButtons()
 	end
 end
 
--- Writes the Golden Grill's Robux price onto its display prompt. The prompt goes up before the price
--- lookup has landed, so this runs again once _cacheRobuxPrices has it -- "-" until then, matching every
--- other Robux label in the game.
+-- Writes the Golden Grill's price onto its display prompt. The prompt goes up before the lookup lands, so
+-- this runs again once _cacheRobuxPrices has it -- "-" until then, like every other Robux label.
 function GrillStandShopController:_refreshGoldenGrillPrompt()
 	if not self._goldenGrillPrompt then
 		return
@@ -179,12 +186,11 @@ function GrillStandShopController:_refreshGoldenGrillPrompt()
 	self._goldenGrillPrompt.ObjectText = `{GuiUtil.ROBUX_ICON}{ShopController:GetCachedPrice(GOLDEN_GRILL_ID) or "-"}`
 end
 
--- Puts the buy prompt on the Golden Grill display standing out in the world. Straight to the dev
--- product: there's no stock and no currency price behind it, so nothing here has to be gated the way
--- the shop's own rows are.
+-- Puts the buy prompt on the Golden Grill's world display. Straight to the dev product -- no stock and no
+-- currency price behind it, so none of the shop's row gating applies.
 function GrillStandShopController:_setupGoldenGrillDisplay()
-	-- The display lives in the place file, not this repo, so looked up rather than indexed -- a missing
-	-- one leaves the Golden Grill buyable only from the shop card, which is worth saying out loud.
+	-- Authored in the place file, so looked up rather than indexed. A missing one leaves the Golden Grill
+	-- buyable only from the shop card.
 	local displays = workspace:FindFirstChild("Displays")
 	local display = displays and displays:FindFirstChild(GOLDEN_GRILL_DISPLAY)
 	local promptAttachment = display and display:FindFirstChild("PromptAttachment")
@@ -233,9 +239,8 @@ function GrillStandShopController:_cacheRobuxPrices()
 	self:_refreshGoldenGrillPrompt()
 end
 
--- Collapses the open ButtonChoices frame, springing its UIScale back down to 0 and only hiding it once
--- the spring lands so it shrinks away instead of blinking out. `instant` skips the animation for cases
--- where the frame isn't on screen to watch it anyway (the whole shop closing).
+-- Collapses the open ButtonChoices frame, hiding it only once its UIScale spring lands so it shrinks away
+-- instead of blinking out. `instant` skips that where nothing is on screen to watch it.
 function GrillStandShopController:_clearSelection(instant: boolean?)
 	if not self._selectedStructureId then
 		return
@@ -264,9 +269,8 @@ function GrillStandShopController:_clearSelection(instant: boolean?)
 	end)
 end
 
--- Expands the shared ButtonChoices frame under the pressed structure (its LayoutOrder is that row's odd
--- order + 1, so the list lands it directly below), popping its UIScale from 0 to 1. Pressing the same
--- structure again collapses it.
+-- Expands the shared ButtonChoices frame under the pressed structure -- its LayoutOrder is that row's odd
+-- order + 1, so the list lands it directly below. Pressing the same structure again collapses it.
 function GrillStandShopController:_selectStructure(structureId: string)
 	if self._selectedStructureId == structureId then
 		self:_clearSelection()
@@ -290,14 +294,12 @@ function GrillStandShopController:_selectStructure(structureId: string)
 	self:_refreshSelectionButtons()
 end
 
--- Switches the shop to a category tab: every row is built once into the one scrolling frame and shown
--- or hidden from here, since the list layout skips invisible children -- so a tab switch costs nothing
--- and the odd/even LayoutOrder gap ButtonChoices slots into survives it.
--- Any open selection is dropped first: the row it belongs to may be one of the ones about to be hidden,
--- which would leave the buy buttons acting on something the player can't see.
+-- Switches category tabs. Every row is built once into one scrolling frame and shown or hidden from here,
+-- since the layout skips invisible children -- so a switch costs nothing and the odd/even LayoutOrder gap
+-- survives it. Any open selection is dropped first, or the buy buttons would act on a hidden row.
 function GrillStandShopController:_selectCategory(category: string)
-	-- Pressing the tab that's already showing is a no-op rather than a re-run: the rows wouldn't change,
-	-- and the clear below would shut an open row's buy buttons for no reason the player can see.
+	-- A no-op rather than a re-run: the rows wouldn't change, and the clear below would shut an open row's
+	-- buy buttons for no visible reason.
 	if self._selectedCategory == category then
 		return
 	end
@@ -312,8 +314,8 @@ function GrillStandShopController:_selectCategory(category: string)
 	self.UI.Holder.Container.ScrollingFrame.CanvasPosition = Vector2.zero
 end
 
--- Binds each category tab to the structure category it shows. Looked up rather than indexed: the buttons
--- live in the place file, and a missing one shouldn't take the rest of the tabs down with it.
+-- Binds each category tab to what it shows. Looked up rather than indexed, so a button missing from the
+-- place file can't take the rest of the tabs down with it.
 function GrillStandShopController:_bindCategoryButtons()
 	local categoryButtons = self.UI.Holder:FindFirstChild("CategoryButtons")
 	if not categoryButtons then
@@ -334,10 +336,9 @@ function GrillStandShopController:_bindCategoryButtons()
 	end
 end
 
--- Clones one row per restockable structure from the detached Template -- every category into the one
--- scrolling frame, with _selectCategory deciding which are on screen -- and binds the shared buy buttons
--- (which act on whichever structure is selected). Rows take odd LayoutOrders so ButtonChoices can slot
--- into the even gap right below the selected one. Stock text is filled by _refreshRows.
+-- Clones one row per restockable structure into the single scrolling frame (_selectCategory decides which
+-- show) and binds the shared buy buttons. Rows take odd LayoutOrders so ButtonChoices slots into the even
+-- gap below the selected one. Stock text is filled by _refreshRows.
 function GrillStandShopController:_buildRows()
 	local scrollingFrame = self.UI.Holder.Container.ScrollingFrame
 	local template = scrollingFrame.Template
@@ -406,9 +407,8 @@ function GrillStandShopController:_buildRows()
 
 		row.Details.Price.Text = `${GuiUtil.ConvertNumberWithSuffix(structure.Cost)}`
 
-		-- Straight from the config rather than composed the way the stick shop builds its descriptions:
-		-- a structure has no capacity or boost figure to write a line out of. RichText is on regardless,
-		-- so a description authored with <font> tags renders rather than showing its own markup.
+		-- Straight from the config rather than composed like the stick shop's -- a structure has no
+		-- capacity or boost figure to build a line from. RichText is on, so authored <font> tags render.
 		row.Description.RichText = true
 		row.Description.Text = structure.Description
 
@@ -424,9 +424,8 @@ function GrillStandShopController:_buildRows()
 	self:_selectCategory(CATEGORY_BUTTONS[1].Category)
 end
 
--- Paints the buy-a-restock button: whether it's offered at all. Nothing to do until the button has
--- been authored into the shop UI (see _buildRows). The price isn't written anywhere -- the button
--- carries its own art and has no label to put one in.
+-- Decides whether the buy-a-restock button is offered. No price is written -- the button carries its own
+-- art and has no label to put one in.
 function GrillStandShopController:_refreshRestockButton()
 	local button = self._restockButton
 	if not button then
@@ -436,8 +435,8 @@ function GrillStandShopController:_refreshRestockButton()
 	button.Active = self:GetTimeLeft() > RESTOCK_MIN_TIME_LEFT
 end
 
--- Writes the time left in the current restock window into the shop's title, colouring just the
--- countdown. Minutes are always shown, so the final stretch reads "0m 9s" rather than dropping the unit.
+-- Writes the window's time left into the shop title, colouring just the countdown. Minutes are always
+-- shown, so the final stretch reads "0m 9s" rather than dropping the unit.
 function GrillStandShopController:_refreshRestockTitle()
 	local timeLeft = self:GetTimeLeft()
 	local minutes = math.floor(timeLeft / 60)
@@ -499,21 +498,24 @@ function GrillStandShopController:OnStart()
 		self:_cacheRobuxPrices()
 	end)
 
-	-- The server answers every purchase attempt; a successful one is announced so anything waiting on
-	-- the structure actually landing has a signal to wait on rather than polling the player's data.
+	-- A successful attempt is announced, so anything waiting on the structure landing has a signal rather
+	-- than polling the player's data.
 	self.StructurePurchaseResultEvent:OnClientEvent(function(success: boolean, structureId: string)
 		if success then
 			self.OnStructurePurchased:Fire(structureId)
 		end
 	end)
 
-	-- Open when the local player walks into the shop zone, close when they leave (or hit Exit). Looked
-	-- up rather than waited on: the zone lives in the place file, and waiting forever on one that was
-	-- never authored would silently strand the rest of this function.
+	-- Looked up rather than waited on: waiting forever on a zone that was never authored would silently
+	-- strand the rest of this function.
 	local zonePart = workspace:WaitForChild("Core"):WaitForChild("Zones"):FindFirstChild(ZONE_NAME)
 	if zonePart then
 		local zone = Zone.new(zonePart)
 		zone.localPlayerEntered:Connect(function()
+			if self._locked then
+				return
+			end
+
 			UIController:OpenFrame(self.UI.Holder)
 		end)
 		zone.localPlayerExited:Connect(function()

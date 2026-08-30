@@ -1,5 +1,7 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
+local Players = game:GetService("Players")
 
 -- Packages
 local Packages = ReplicatedStorage.Packages
@@ -20,34 +22,33 @@ local CurrencyManager = {
 	OnCurrencyChanged = Signal.new(),
 }
 
--- What `amount` becomes once the player's boosts are folded in: the gamepasses they hold, how many
+-- The share of a base amount the player's boosts add on top of it: the gamepasses they hold, how many
 -- friends are in the server with them, and the head start a new player's income gets. Every one is
 -- figured on the base amount rather than stacking on each other, so a brand-new player holding x2Bux
 -- gets 1 + 1 + 0.5 rather than 2 x 1.5.
 --
--- Split out of IncrementCurrency rather than left inline because the sell stand has to show this number
--- before it pays it: an offer that quotes the plain figure and then banks a bigger one is the display
--- disagreeing with the payout in front of the player. Both go through here, so the number shown is the
--- number banked by construction rather than by two places agreeing to round the same way.
+-- A fraction rather than a finished amount because two surfaces need it without an amount in hand: the
+-- payout below, and the estimate on a held skewer, which every client prices off the mirrored attribute
+-- (see RefreshPlayerBoostFraction).
 --
 -- Doesn't yield, and mustn't start: this runs on every sale and on every reward grant, and a yield would
 -- change the contract of every caller.
-function CurrencyManager:GetBoostedAmount(player: Player, amount: number): number
+function CurrencyManager:GetPlayerBoostFraction(player: Player): number
 	-- These tags are gamepass ids -- ShopManager tags an owner with the Id of every pass they hold -- so
 	-- the strings have to match Config.Gamepasses exactly.
-	local addition = 0
+	local fraction = 0
 	if player:HasTag("x2Bux") then
-		addition += amount
+		fraction += 1
 	end
 
 	if player:HasTag("VIP") then
-		addition += math.round(amount * 0.25)
+		fraction += 0.25
 	end
 
 	-- Friends pay out on the base amount rather than on the gamepass subtotal, so the boost still
 	-- lands for players who own neither pass -- which is what the HUD's "+N0%" label promises.
 	local friendsAmount = player:GetAttribute("FriendsAmount") or 0
-	addition += math.round(amount * (friendsAmount / 10))
+	fraction += friendsAmount / 10
 
 	-- The head start a new player's income gets, on the base amount like the two above it. Read off the
 	-- data as it stands rather than awaited, for the no-yielding reason above. A profile that hasn't
@@ -55,10 +56,28 @@ function CurrencyManager:GetBoostedAmount(player: Player, amount: number): numbe
 	-- earned would hand the full boost to whoever it is -- established player or not.
 	local playerData = PlayerDataManager:GetLoadedPlayerData(player)
 	if playerData then
-		addition += math.round(amount * EarlyBoost.GetBonus(playerData.TotalEarned))
+		fraction += EarlyBoost.GetBonus(playerData.TotalEarned)
 	end
 
-	return amount + addition
+	return fraction
+end
+
+-- What `amount` becomes once the player's boosts are folded in.
+--
+-- Split out of IncrementCurrency rather than left inline because the sell stand has to show this number
+-- before it pays it: an offer that quotes the plain figure and then banks a bigger one is the display
+-- disagreeing with the payout in front of the player. Both go through here, so the number shown is the
+-- number banked by construction rather than by two places agreeing to round the same way.
+function CurrencyManager:GetBoostedAmount(player: Player, amount: number): number
+	return amount + math.round(amount * self:GetPlayerBoostFraction(player))
+end
+
+-- Mirrors the fraction onto the player as an attribute, which replicates to every client for every
+-- player. That's what lets a held skewer's billboard quote what the sale will actually bank -- the
+-- estimate is drawn by whoever is looking at the holder, and TotalEarned only replicates to its owner,
+-- so the fraction has to come across ready-made rather than be worked out client-side.
+function CurrencyManager:RefreshPlayerBoostFraction(player: Player)
+	player:SetAttribute("BoostFraction", self:GetPlayerBoostFraction(player))
 end
 
 -- Grants currency, folding in the player's boosts unless told not to. `source` names what paid it out
@@ -99,6 +118,50 @@ end
 function CurrencyManager:OnInit()
 	--
 	PlayerDataManager = require(script.Parent.PlayerDataManager)
+end
+
+function CurrencyManager:OnStart()
+	-- Every input to the fraction can move mid-session, and a stale mirror is a billboard quoting a
+	-- number the sale won't pay -- so each one gets a listener rather than the attribute being written
+	-- once on join.
+
+	-- EarlyBoost decays as the player earns, so the fraction shifts on every sale. Hooked on the data
+	-- rather than inside IncrementCurrency so anything else that moves TotalEarned is covered too.
+	PlayerDataManager.OnDataChanged:Connect(function(player: Player, key: string)
+		if key == "TotalEarned" then
+			self:RefreshPlayerBoostFraction(player)
+		end
+	end)
+
+	-- Gamepass tags land after ShopManager's ownership check comes back from the web, which can be well
+	-- after the player joined.
+	for _, tag in { "x2Bux", "VIP" } do
+		CollectionService:GetInstanceAddedSignal(tag):Connect(function(instance: Instance)
+			if instance:IsA("Player") then
+				self:RefreshPlayerBoostFraction(instance)
+			end
+		end)
+	end
+
+	local function watchPlayer(player: Player)
+		player:GetAttributeChangedSignal("FriendsAmount"):Connect(function()
+			self:RefreshPlayerBoostFraction(player)
+		end)
+
+		-- Seeded off the loaded profile, since EarlyBoost has nothing to read until then. Spawned so a
+		-- slow load doesn't hold up startup, and the player may have left across that wait.
+		task.spawn(function()
+			local hasData = PlayerDataManager:GetPlayerData(player):await()
+			if hasData and player:IsDescendantOf(Players) then
+				self:RefreshPlayerBoostFraction(player)
+			end
+		end)
+	end
+
+	Players.PlayerAdded:Connect(watchPlayer)
+	for _, player in Players:GetPlayers() do
+		watchPlayer(player)
+	end
 end
 
 return CurrencyManager

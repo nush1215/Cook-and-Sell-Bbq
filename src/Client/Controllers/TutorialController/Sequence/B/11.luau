@@ -1,9 +1,9 @@
--- Step 13: Take the BBQ off the heat once it's actually cooked.
+-- Step 11: Take the BBQ off the heat once it's actually cooked.
 --
 -- A cook is only ever ended by the player, and stopping inside the raw band gives them a BBQ worth
 -- almost nothing -- which, on the one sale the tutorial is teaching, reads as the game being broken
 -- rather than as their mistake. So rather than letting them stop early and telling them off for it,
--- both stop prompts are held shut (step 12 takes the lock) until the bar clears the raw band, and only
+-- both stop prompts are held shut (step 10 takes the lock) until the bar clears the raw band, and only
 -- then does the beat ask for the knob. Past that point the timing is theirs: anywhere from the window
 -- to the end of the bar is a real BBQ.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")

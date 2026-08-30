@@ -185,8 +185,10 @@ end
 -- skip is a button on the cooking bar rather than a prompt, so TutorialController:DisablePrompts has
 -- nothing to hold it by -- this is its equivalent, gating the eligibility the class already computes.
 --
--- Set by the tutorial across the beat teaching the cook's timing: a step asking the player to watch the
--- bar shouldn't be offering to sell them out of the thing it's teaching.
+-- Set by the tutorial for its whole run rather than across the beat that teaches the cook's timing: a
+-- sequence asking the player to watch the bar shouldn't be offering to sell them out of the thing it's
+-- teaching, and the one cook in it runs across two beats -- held per-beat, the skip came back on the
+-- bar halfway through it. Nothing else in the run cooks, so there's nothing narrower worth holding.
 function GrillerController:SetSkipLocked(locked: boolean)
 	if self._skipLocked == locked then
 		return

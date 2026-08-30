@@ -75,6 +75,7 @@ function CodeController:OnStart()
 	codesButton:setLabel("Codes")
 	codesButton:autoDeselect(false)
 	codesButton:oneClick(true)
+	codesButton:setOrder(3)
 
 	codesButton.selected:Connect(function()
 		UIController:OpenFrame(holder)

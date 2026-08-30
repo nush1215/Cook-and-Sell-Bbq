@@ -226,12 +226,13 @@ function AnalyticsManager:OnStart()
 		logCustom(player, "Badge Awarded", 1, badgeKey)
 	end)
 
-	-- Onboarding funnel. Its own Roblox event rather than a custom one: the funnel report wants an
-	-- ordered step number and name, which is what TutorialManager already resolves each key into.
-	TutorialManager.OnFunnelStep:Connect(function(player, stepIndex, stepName)
+	-- Onboarding funnel, one named funnel per tutorial variant rather than the single onboarding one, so a
+	-- reworked onboarding reports separately from the one it's replacing instead of averaging into it. No
+	-- session id: the tutorial runs once per player, so there's no repeat run to tell apart.
+	TutorialManager.OnFunnelStep:Connect(function(player, variant, stepIndex, stepName)
 		task.spawn(function()
 			pcall(function()
-				AnalyticsService:LogOnboardingFunnelStepEvent(player, stepIndex, stepName)
+				AnalyticsService:LogFunnelStepEvent(player, `Tutorial {variant}`, nil, stepIndex, stepName)
 			end)
 		end)
 	end)

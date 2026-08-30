@@ -28,13 +28,10 @@ local NotificationManager
 local ShopManager
 local BuildManager
 
--- The player-data key holding whatever sits on a structure of each kind, and the manager that owns
--- handing those contents back, keyed by category. Both keys are keyed by the structure's uid, so
--- taking a structure down has to take its contents with it -- and hand them back rather than bin them.
+-- Per category: the data key holding whatever sits on that kind of structure, and the manager that hands
+-- it back. Both are keyed by the structure's uid, so taking one down must return its contents rather than
+-- bin them. Delegating to the manager keeps this file from having to know what a stand or griller holds.
 -- A category that can't hold anything simply isn't listed.
---
--- The manager rather than a second lookup here so this one never has to know what a stand or a griller
--- actually holds: it asks the owner for the contents and takes its answer, including a no.
 local STRUCTURE_CONTENTS = {
 	Grillers = { Key = "Grillers", Manager = GrillerManager },
 	StickStands = { Key = "StickStands", Manager = StickStandManager },
@@ -48,18 +45,14 @@ local BaseManager = {
 
 	--
 	OnBaseAssigned = Signal.new(),
-	-- (player, unlockId, newLevel, cost, method) when a slot of an unlock group is bought. newLevel 1 is
-	-- a first unlock, anything higher an upgrade. method is "Currency" or "Robux"; cost is the currency
-	-- paid, 0 on a Robux buy.
+	-- (player, unlockId, newLevel, cost, method) when an unlock slot is bought. newLevel 1 is a first
+	-- unlock. method is "Currency" or "Robux"; cost is 0 on a Robux buy.
 	OnUnlockPurchased = Signal.new(),
-	-- (player, plotId, newCount, cost, method) when a plot is bought. newCount is how many they own
-	-- after it, which is what the next one is priced off. method is "Currency" or "Robux"; cost is the
-	-- currency paid, 0 on a Robux buy.
+	-- (player, plotId, newCount, cost, method) when a plot is bought. newCount is what the next one is
+	-- priced off. method is "Currency" or "Robux"; cost is 0 on a Robux buy.
 	OnPlotPurchased = Signal.new(),
-	-- (player, structureType) when a structure is put down, and again when one is taken back up.
-	-- Unlike the two above neither carries a level, a count or a price: a build is a set of things in
-	-- places rather than a rung on a ladder, and the structure was paid for when it was bought rather
-	-- than when it was placed -- so how many of a thing someone has is only ever read off their data.
+	-- (player, structureType) when a structure is put down or taken back up. No level, count or price:
+	-- a build is a set of things in places, and a structure was paid for when it was bought.
 	OnStructurePlaced = Signal.new(),
 	OnStructureRemoved = Signal.new(),
 
@@ -83,9 +76,8 @@ end
 
 -- Gives the player the first free base and spawns them on it.
 function BaseManager:AssignBaseToPlayer(player: Player)
-	-- The base has to know their unlocks before it goes up, so the owner never watches their stands
-	-- pop in. Read before claiming anything: this yields, and the guard below has to sit after it or
-	-- two calls both pass it and take a base each.
+	-- Read before claiming anything: the base needs their unlocks before it goes up, and since this yields
+	-- the guard below has to sit after it or two calls each take a base.
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
 		return nil
@@ -102,9 +94,8 @@ function BaseManager:AssignBaseToPlayer(player: Player)
 			continue
 		end
 
-		-- Listen before assigning: AssignOwner yields on LoadCharacterAsync. An upgrade, a plot bought or
-		-- a structure placed in that window still lands, since data is the live replica table AssignOwner
-		-- reads below.
+		-- Before assigning, since AssignOwner yields on LoadCharacterAsync. Anything bought in that window
+		-- still lands: `data` is the live replica table AssignOwner reads below.
 		self._listeners[player] = {
 			PlayerDataManager:ListenForChanges(player, "Unlocks", function()
 				self:RefreshBaseUnlocksForPlayer(player)
@@ -127,9 +118,8 @@ function BaseManager:AssignBaseToPlayer(player: Player)
 	return nil
 end
 
--- Re-renders the base the player owns from their current unlock levels. This only runs off an actual
--- change to Unlocks, so the render animates -- a slot bought here plants its sign rather than popping
--- it in, while the render a base does on assignment stays instant.
+-- Re-renders the owner's base at their current unlock levels. Only runs off an actual change, so it
+-- animates -- unlike the instant render a base does on assignment.
 function BaseManager:RefreshBaseUnlocksForPlayer(player: Player)
 	local base = self:GetBaseFromPlayer(player)
 	if not base then
@@ -144,9 +134,8 @@ function BaseManager:RefreshBaseUnlocksForPlayer(player: Player)
 	base:ApplyUnlocks(data.Unlocks, true)
 end
 
--- Re-renders the plots on the base the player owns from their current set. Like the unlocks above
--- this only runs off an actual change, so the render animates -- the plot bought here burns its
--- overgrowth back, while the render a base does on assignment stays instant.
+-- Re-renders the owner's plots. Like the unlocks above, only off an actual change, so it animates --
+-- the plot bought here burns its overgrowth back.
 function BaseManager:RefreshBasePlotsForPlayer(player: Player)
 	local base = self:GetBaseFromPlayer(player)
 	if not base then
@@ -161,30 +150,25 @@ function BaseManager:RefreshBasePlotsForPlayer(player: Player)
 	base:ApplyPlots(data.Plots, true)
 end
 
--- Buys one plot on the player's base, clearing its overgrowth and opening up whatever it touches.
--- Nothing here moves anything: the data write re-renders the base through the listener
--- AssignBaseToPlayer set up.
---
--- Which plot is the player's choice, but the price isn't -- it comes off how many they already own,
--- so every plot on offer costs the same and the decision is only where to expand.
--- @param skipCurrencyCost Grant the plot without charging for it, for one already paid for in Robux
--- (see the plot products in Config/Products). Everything else -- the reachability check, the data
--- write, the signal and the notification -- is wanted on both paths, so only the charge differs.
+-- Buys one plot, clearing its overgrowth. Nothing here moves anything: the data write re-renders the base
+-- through the listener AssignBaseToPlayer set up. The price comes off how many they already own, so every
+-- plot on offer costs the same and the only decision is where to expand.
+-- @param skipCurrencyCost Grant without charging, for a plot already paid for in Robux. Everything else
+-- -- the reachability check, the write, the signal, the toast -- is wanted on both paths.
 function BaseManager:PurchasePlot(player: Player, plotId: string, skipCurrencyCost: boolean?): boolean
 	-- The id comes off a remote, so it can be anything.
 	if not Plots.IsPlot(plotId) then
 		return false
 	end
 
-	-- Shared with the unlock purchase below on purpose: both read the player's data and then spend
-	-- against it, so letting the two interleave across their yields could double-spend one balance.
+	-- Shared with the unlock purchase below: both read data then spend against it, so interleaving them
+	-- across their yields could double-spend one balance.
 	if self._purchasing[player] then
 		if not skipCurrencyCost then
 			return false
 		end
 
-		-- Leaving is checked as well as the guard clearing, so a guard stranded by an error can't hold
-		-- this thread spinning past the session it belongs to.
+		-- Leaving is checked too, so a guard stranded by an error can't spin this thread past its session.
 		repeat
 			task.wait()
 		until not self._purchasing[player] or not player:IsDescendantOf(Players)
@@ -201,8 +185,8 @@ function BaseManager:PurchasePlot(player: Player, plotId: string, skipCurrencyCo
 		return false
 	end
 
-	-- Reachability is re-checked rather than trusted: the sign is the only way to raise this, but the
-	-- remote takes an id, so nothing stops a crafted call naming a far corner at the opening price.
+	-- Re-checked rather than trusted: the remote takes an id, so nothing stops a crafted call naming a
+	-- far corner at the opening price.
 	if not Plots.IsAvailable(plotId, data.Plots) then
 		self._purchasing[player] = nil
 		return false
@@ -238,8 +222,8 @@ function BaseManager:PurchasePlot(player: Player, plotId: string, skipCurrencyCo
 
 	PlayerDataManager:SetPlayerDataKey(player, { "Plots", plotId }, true)
 
-	-- Counted off the read above plus this one rather than re-counted, so it says how many they own
-	-- now without depending on when the write lands in the replica table.
+	-- Off the read above plus this one rather than re-counted, so it doesn't depend on when the write
+	-- lands in the replica table.
 	self.OnPlotPurchased:Fire(
 		player,
 		plotId,
@@ -260,9 +244,8 @@ function BaseManager:PurchasePlot(player: Player, plotId: string, skipCurrencyCo
 	return true
 end
 
--- Raises the Robux prompt for one of the player's reachable plots. Which plot it was is remembered
--- here rather than carried on the product, since a plot product is priced by how many they've bought
--- and its receipt arrives with nothing on it but the buyer.
+-- Raises the Robux prompt for one of the player's reachable plots. Which plot is remembered here rather
+-- than carried on the product: it's priced by how many they own, and the receipt names only the buyer.
 function BaseManager:PromptPlotProduct(player: Player, plotId: string)
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
@@ -287,13 +270,10 @@ function BaseManager:PromptPlotProduct(player: Player, plotId: string)
 	ShopManager:AttemptProductPurchase(player, Plots.GetProductStringId(count + 1))
 end
 
--- Grants a plot once one of the plot products clears (fired by ShopManager from the product's
--- callback). It goes to the plot the prompt was raised from.
---
--- A receipt Roblox never got an answer for is re-processed on a later join, where nothing raised a
--- prompt and there's no pending plot to read -- and a plot that was reachable when the prompt went up
--- can have been bought by the time it's answered. Either way it falls back to whatever is reachable
--- now rather than dropping a purchase the player has already been charged for.
+-- Grants a plot once a plot product clears (fired by ShopManager), to the plot the prompt was raised from.
+-- An unanswered receipt is re-processed on a later join with no pending plot, and a reachable plot can be
+-- bought before the answer lands -- either way it falls back to whatever is reachable now, rather than
+-- dropping a purchase already charged for.
 function BaseManager:GrantPlotFromProduct(player: Player)
 	local plotId = self._pendingPlot[player]
 	self._pendingPlot[player] = nil
@@ -328,9 +308,8 @@ function BaseManager:GrantPlotFromProduct(player: Player)
 	self:PurchasePlot(player, plotId, true)
 end
 
--- Re-renders the build on the base the player owns from their current structures. Like the unlocks
--- above this only runs off an actual change, so the render animates -- a structure placed here rises
--- into its spot rather than popping in, while the render a base does on assignment stays instant.
+-- Re-renders the owner's build. Like the unlocks above, only off an actual change, so it animates --
+-- a structure placed here drops into its spot rather than popping in.
 function BaseManager:RefreshBaseStructuresForPlayer(player: Player)
 	local base = self:GetBaseFromPlayer(player)
 	if not base then
@@ -345,16 +324,12 @@ function BaseManager:RefreshBaseStructuresForPlayer(player: Player)
 	base:RenderStructures(data.Structures, true)
 end
 
--- Puts one of the structures the player owns down on the given cell of their base. Nothing here
--- touches the world: the data write renders it through the listener AssignBaseToPlayer set up.
+-- Puts one of the player's structures on the given cell. Nothing here touches the world: the data write
+-- renders it through the listener AssignBaseToPlayer set up. Spends from their inventory rather than their
+-- balance -- a structure is paid for once and moves freely after (see BuildManager).
 --
--- Spends from their inventory rather than their balance -- a structure is paid for once, when it's
--- bought, and moves between the backpack and the base freely after that (see BuildManager).
---
--- Every argument comes off a remote, so none of it is trusted: the type has to name a structure they
--- actually own, and every cell of the block has to be free and on a plot they've bought. Only the
--- cells are stored, which is exactly what was checked -- so a build can never come back on a rejoin
--- somewhere it wouldn't have been allowed to go.
+-- Every argument comes off a remote, so none is trusted. Only the cells are stored, which is exactly what
+-- was checked, so a build can never come back on a rejoin somewhere it wouldn't have been allowed.
 function BaseManager:PlaceStructureOnBase(
 	player: Player,
 	structureType: string,
@@ -372,10 +347,9 @@ function BaseManager:PlaceStructureOnBase(
 		return false
 	end
 
-	-- Shared with the plot and unlock purchases rather than a guard of its own: all of them read the
-	-- player's data and then spend against it, so letting them interleave across their yields could
-	-- spend the same thing twice. A placement that loses the race simply isn't made -- unlike a Robux
-	-- purchase there's nothing already paid for to wait its turn.
+	-- Shared with the plot and unlock purchases: all three read data then spend against it, so
+	-- interleaving could spend the same thing twice. A placement that loses the race is simply dropped --
+	-- unlike a Robux purchase there's nothing already paid for to wait its turn.
 	if self._purchasing[player] then
 		return false
 	end
@@ -387,8 +361,8 @@ function BaseManager:PlaceStructureOnBase(
 		return false
 	end
 
-	-- Owning one is what makes this a placement rather than a way to conjure structures: the tool only
-	-- exists while the count is above zero, so a client sending this without one is a forged request.
+	-- What makes this a placement rather than a way to conjure structures: the tool only exists while the
+	-- count is above zero, so a client sending this without one is forging the request.
 	if (data.OwnedStructures[structureType] or 0) <= 0 then
 		self._purchasing[player] = nil
 		return false
@@ -404,8 +378,8 @@ function BaseManager:PlaceStructureOnBase(
 
 	BuildManager:ConsumeStructure(player, structureType)
 
-	-- Minted here and never again: it's what the structure and everything sitting on it are keyed by,
-	-- so it has to outlive the model being rebuilt on a rejoin.
+	-- Minted once: it keys the structure and everything sitting on it, so it has to outlive the model
+	-- being rebuilt on a rejoin.
 	local uid = HttpService:GenerateGUID(false)
 
 	PlayerDataManager:SetPlayerDataKey(player, { "Structures", uid }, {
@@ -422,25 +396,21 @@ function BaseManager:PlaceStructureOnBase(
 	return true
 end
 
--- Takes one of the player's structures back off their base, returning both the structure itself and
--- whatever was sitting on it to their inventory. Clearing that second record is what stops a griller
--- taken down with a BBQ on it leaving the record behind forever, keyed by a uid nothing can reach any
--- more -- and handing its contents back first is what stops that being a way to lose what you paid
--- for. So picking a structure up is how a base gets rearranged, and costs nothing either way.
+-- Takes a structure back off the base, returning both it and whatever sat on it to the inventory. Clearing
+-- that second record is what stops a griller taken down with a BBQ on it stranding the record under a uid
+-- nothing can reach; handing the contents back first is what stops that losing what they paid for.
 --
--- A lit griller comes down like any other, its cook settled where it had got to and the skewer handed
--- back at that state -- so the pickup is never a way to dodge a burn or to lose a cook. The owning
--- manager can still turn one down (a cook the player is already stopping by hand), and it gets that call
--- rather than this one, so the whole pickup is refused before anything is written rather than left half
--- done with the structure gone and the cook nowhere.
+-- A lit griller settles its cook where it had got to, so a pickup never dodges a burn nor loses a cook.
+-- The owning manager can refuse (a cook already being stopped by hand), and it's asked before anything is
+-- written -- otherwise the pickup would be left half done, structure gone and cook nowhere.
 function BaseManager:RemoveStructureFromBase(player: Player, uid: string): boolean
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
 		return false
 	end
 
-	-- The uid comes off a remote, so it can be anything. Reading it off their build rather than the
-	-- world proves the structure exists and is theirs in one.
+	-- The uid comes off a remote. Reading it off their build rather than the world proves the structure
+	-- exists and is theirs in one.
 	local structure = data.Structures[uid]
 	if not structure then
 		return false
@@ -449,9 +419,8 @@ function BaseManager:RemoveStructureFromBase(player: Player, uid: string): boole
 	local config = Structures.GetStructureFromId(structure.Type)
 	local contents = config and STRUCTURE_CONTENTS[config.Category]
 
-	-- Read before anything is written, since clearing the structure below tears its model down. A record
-	-- is a table; a legacy string-shaped entry (from before ingredients existed) has nothing to give
-	-- back, so it reads as empty rather than erroring on .Ingredients.
+	-- Read before anything is written, since clearing the structure below tears its model down. A legacy
+	-- string-shaped entry (from before ingredients existed) reads as empty rather than erroring.
 	local record = contents and data[contents.Key][uid]
 	if type(record) ~= "table" then
 		record = nil
@@ -468,9 +437,8 @@ function BaseManager:RemoveStructureFromBase(player: Player, uid: string): boole
 		PlayerDataManager:SetPlayerDataKey(player, { contents.Key, uid }, nil)
 	end
 
-	-- Back into the backpack for them to put down somewhere else. Only for a structure the config still
-	-- has: one whose model went missing can't be re-placed, so handing it back would be an item that
-	-- does nothing.
+	-- Only for a structure the config still has: one whose model went missing can't be re-placed, so
+	-- handing it back would be an item that does nothing.
 	if config then
 		BuildManager:GrantStructure(player, structure.Type)
 	end
@@ -480,11 +448,10 @@ function BaseManager:RemoveStructureFromBase(player: Player, uid: string): boole
 	return true
 end
 
--- Buys the next slot of one unlock group for the player. Nothing here touches the world: the data
--- write re-renders the base through the listener AssignBaseToPlayer set up.
--- @param skipCurrencyCost Grant the level without charging for it, for a slot already paid for in
--- Robux (see the base-unlock products in Config/Products). Everything else -- the limit check, the
--- data write, the signal and the notification -- is wanted on both paths, so only the charge differs.
+-- Buys the next slot of one unlock group. Nothing here touches the world: the data write re-renders the
+-- base through the listener AssignBaseToPlayer set up.
+-- @param skipCurrencyCost Grant without charging, for a slot already paid for in Robux. Everything else
+-- -- the limit check, the write, the signal, the toast -- is wanted on both paths.
 function BaseManager:PurchaseUnlockUpgrade(player: Player, unlockId: string, skipCurrencyCost: boolean?): boolean
 	-- The id comes off a remote, so it can be anything.
 	local unlock = BaseUnlocks.GetUnlockFromId(unlockId)
@@ -492,16 +459,15 @@ function BaseManager:PurchaseUnlockUpgrade(player: Player, unlockId: string, ski
 		return false
 	end
 
-	-- The reads below yield, so without this guard two purchases landing together could both read the
-	-- same level and write the same next one. A currency buy that loses the race simply isn't made; a
-	-- Robux one has already been charged, so it waits its turn rather than being dropped on the floor.
+	-- The reads below yield, so without this two purchases landing together would read the same level and
+	-- write the same next one. A currency buy that loses the race is dropped; a Robux one has already been
+	-- charged, so it waits its turn.
 	if self._purchasing[player] then
 		if not skipCurrencyCost then
 			return false
 		end
 
-		-- Leaving is checked as well as the guard clearing, so a guard stranded by an error can't hold
-		-- this thread spinning past the session it belongs to.
+		-- Leaving is checked too, so a guard stranded by an error can't spin this thread past its session.
 		repeat
 			task.wait()
 		until not self._purchasing[player] or not player:IsDescendantOf(Players)
@@ -558,8 +524,7 @@ function BaseManager:PurchaseUnlockUpgrade(player: Player, unlockId: string, ski
 
 	self._purchasing[player] = nil
 
-	-- Only the Sauce Dispenser starts at level 0, so a first purchase is a genuine unlock rather than
-	-- an upgrade of something the player already owned.
+	-- Only the Sauce Dispenser starts at level 0, so its first purchase is a genuine unlock.
 	NotificationManager:NotifyNormal(player, {
 		Text = if nextLevel == 1 then `{unlock.Name} Unlocked!` else `{unlock.Name} Upgraded!`,
 		Duration = 3,

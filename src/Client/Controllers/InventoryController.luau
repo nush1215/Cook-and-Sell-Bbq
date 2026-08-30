@@ -29,6 +29,13 @@ function InventoryController:HideInventory()
 	self._satchel:SetBackpackEnabled(false)
 end
 
+-- The hotbar or inventory frame a tool currently sits in, or nil if it has no slot. For anything that
+-- wants to point at the slot rather than at what's in it -- the tutorial lights the one holding the
+-- tool it's asking the player to equip.
+function InventoryController:GetSlotFrame(tool: Tool): GuiObject?
+	return self._satchel:GetSlotFrame(tool)
+end
+
 -- Rings the equip sound on every tool the local player pulls out. Equipping parents the tool to the
 -- character, so that one signal covers every kind -- sticks, skewers, ingredients and sauce bottles all
 -- land here without each having to bind its own.

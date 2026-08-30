@@ -1,6 +1,6 @@
--- Step 10: Pick the loaded BBQ back up. The stand only offers to hand it over with nothing in the
+-- Step 12: Pick the loaded BBQ back up. The stand only offers to hand it over with nothing in the
 -- player's hands -- holding an ingredient keeps its prompt on "add another" instead.
-local EquippedItem = require(script.Parent.Parent.Parent.Parent.Modules.EquippedItem)
+local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 
 local NEAR_DISTANCE = 12
 

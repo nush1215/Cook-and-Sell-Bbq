@@ -1,4 +1,4 @@
--- Step 4: Walk into the stick shop, which opens its own UI on entry.
+-- Step 16: Walk into the stick shop, which opens its own UI on entry.
 local Players = game:GetService("Players")
 
 local LocalPlayer = Players.LocalPlayer

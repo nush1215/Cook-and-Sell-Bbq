@@ -188,16 +188,22 @@ end
 -- The rough valuation shown over a held skewer: ESTIMATE_MIN/MAX_FACTOR of its sell value, with the
 -- spot in that range folded out of the skewer's own uid rather than rolled fresh. Seeding is what
 -- makes the number trustworthy -- the same skewer always estimates the same, so a player can't
--- re-equip to re-roll a nicer figure, and every client watching them draws the identical one without
--- any of it being replicated.
-function StickModel.GetEstimatedValue(record: StickRecord, uid: string): number
+-- re-equip to re-roll a nicer figure, and every client watching them lands on the identical figure
+-- without the estimate itself being replicated.
+--
+-- `boostFraction` is the holder's currency boost (CurrencyManager.GetPlayerBoostFraction, mirrored onto
+-- the player as an attribute), so the guess quotes what the sale would actually bank rather than the
+-- plain worth the customer haggles over -- the sell stand's offer frame quotes the boosted figure too,
+-- and an estimate on the other basis reads as a fraction of what the player is about to be paid. It
+-- scales the guess and the offer by the same term, so the offer still beats the guess exactly as before.
+function StickModel.GetEstimatedValue(record: StickRecord, uid: string, boostFraction: number?): number
 	local seed = 5381
 	for i = 1, #uid do
 		seed = (seed * 33 + string.byte(uid, i)) % 2147483647
 	end
 
 	local factor = RandomUtil.GetRandomFromMinMax(SellNpc.ESTIMATE_MIN_FACTOR, SellNpc.ESTIMATE_MAX_FACTOR, seed)
-	return math.round(StickModel.GetSellValue(record) * factor)
+	return math.round(StickModel.GetSellValue(record) * factor * (1 + (boostFraction or 0)))
 end
 
 return StickModel

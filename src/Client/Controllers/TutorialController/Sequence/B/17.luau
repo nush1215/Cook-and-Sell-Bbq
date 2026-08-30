@@ -1,4 +1,4 @@
--- Step 5: Buy a wooden stick. Two taps -- the stick's row, then the buy button that expands underneath
+-- Step 17: Buy a wooden stick. Two taps -- the stick's row, then the buy button that expands underneath
 -- it -- so the spotlight walks from one to the other, and back again if the row is collapsed or the
 -- player wanders out of the zone and the shop closes behind them.
 local Players = game:GetService("Players")
@@ -7,7 +7,7 @@ local RunService = game:GetService("RunService")
 
 local Sticks = require(ReplicatedStorage.Shared.Config.Sticks)
 
-local StickShopController = require(script.Parent.Parent.Parent.StickShopController)
+local StickShopController = require(script.Parent.Parent.Parent.Parent.StickShopController)
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer.PlayerGui
@@ -41,7 +41,7 @@ return function(self)
 		return StickShopController:GetSelectedStickId() == TUTORIAL_STICK_ID
 	end
 
-	-- Step 4's cues came down when the shop opened, and this beat had none of its own -- so a player who
+	-- Step 16's cues came down when the shop opened, and this beat had none of its own -- so a player who
 	-- wandered out was told to go back to the Stick Shop with nothing left pointing at it. Both are put
 	-- back whenever the shop is shut, and taken down again the moment it opens: inside it the spotlight
 	-- below is the cue, and a beam through the UI would only be in the way of it.

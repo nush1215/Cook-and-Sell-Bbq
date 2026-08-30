@@ -1,34 +1,23 @@
 --[[
-    Every ingredient in the game, and the tiers that price them.
+    Every ingredient, and the tiers that price them.
 
-    An ingredient authors three things about its balance: the tier it's in, its Chance, and its Price.
-    The tier sets the band -- cook time, sale multiplier, label colour, and the price an entry falls back
-    to if it doesn't name one; Price is where in that band this particular one sits. Chance is the odds
-    you want on its label, written the way the player reads it -- 1 in this many rolls. Put 20 and it
-    says "1 in 20".
+    An entry authors three balance knobs: its Tier (setting the band -- cook time, sale multiplier, label
+    colour, fallback price), its Price (where in that band it sits), and its Chance, written as the player
+    reads it: 1 in this many rolls.
 
-    Price climbs with rarity inside a tier, so the rarest common costs more than the commonest one. It's
-    both what the ingredient costs off a rolling stand and what its sale value is figured from, which
-    means the two always move together -- repricing an entry changes how much is riding on rolling it,
-    never whether it's a good deal. What decides that is ValueMultiplier, and that's per tier.
+    Price is both what an ingredient costs off a stand and what its sale value is figured from, so the two
+    always move together -- repricing changes how much is riding on a roll, never whether it's a good
+    deal. That's ValueMultiplier, which is per tier.
 
-    The one rule: the chances have to add up to 100%. Every roll lands on something, so 1/Chance
-    summed over every ingredient has to come to 1 -- if it comes to 1.05, there's 5% more promised than
-    a roll can hand out, and every ingredient is really 5% rarer than its number. Adding an ingredient
-    at "1 in 20" is 5% of rolls that has to come from somewhere, so bump a few others up to pay for it.
+    THE RULE: the chances must add up to 100%, i.e. 1/Chance summed over every ingredient must come to 1.
+    At 1.05 there's 5% more promised than a roll can hand out and every ingredient is really 5% rarer than
+    its number, so adding one at "1 in 20" means bumping others up to pay for it. Labels render the *real*
+    odds (authored Chance scaled by that sum) and a load-time warn says which way to nudge -- Roblox
+    requires accurate odds on random items sold for Robux, so this isn't optional.
 
-    Labels never lie about it. What renders is the real odds -- the authored Chance scaled by that
-    sum -- which is exactly the number written here whenever the config adds up, and a load-time warn
-    says by how much and which way to nudge whenever it doesn't. Roblox requires the odds shown on
-    random items to be accurate, and currency is sold for Robux, so this isn't optional.
-
-    Ballpark for a new entry -- Chance: Common 7-25, Uncommon 30-80, Rare 150-500, Epic 1K-3K,
-    Legendary ~10K, Mythic ~100K. Price: Common 75-180, Uncommon 320-580, Rare 1.3K-2K, and past
-    that the tier's own Price, since those tiers are too thin to have a band yet. Leave Price off
-    entirely and it takes the tier's, which is the right call for a tier with one entry in it.
-
-    Legendary and Mythic ship empty on purpose -- headroom for the genuinely luxurious stuff (wagyu,
-    lobster, truffle) that costs nothing to leave sitting there.
+    Ballpark for a new entry -- Chance: Common 7-25, Uncommon 30-80, Rare 150-500, Epic 1K-3K, Legendary
+    ~10K, Mythic ~100K. Price: Common 75-180, Uncommon 320-580, Rare 1.3K-2K; past that, omit Price and
+    take the tier's. Legendary and Mythic ship empty on purpose -- headroom for the luxurious stuff.
 ]]
 
 -- Services
@@ -71,28 +60,24 @@ export type Ingredient = {
 --
 local Ingredients = {}
 
--- The global economy dial, applied on top of every tier's ValueMultiplier. Raise it to make selling
--- more lucrative across the board; retier or retune ValueMultiplier to change how steeply rarity pays.
+-- The global economy dial, on top of every tier's ValueMultiplier. Raise it to make selling more
+-- lucrative across the board; retune ValueMultiplier to change how steeply rarity pays.
 Ingredients.SALE_VALUE_MULTIPLIER = 1.25
 
--- What every slot past the slowest one adds to the cook, as a fraction of its own CookTime. The skewer
--- goes on the grill in one piece, so what sets the length is the thing on it that needs the longest --
--- the rest ride along, adding heat to shift rather than a cook of their own. That's what makes capacity
--- worth paying for: a full stick isn't a full stick's worth of waiting.
+-- What each slot past the slowest adds, as a fraction of its own CookTime. The skewer cooks in one piece,
+-- so the slowest ingredient sets the length and the rest only add heat to shift -- which is what makes
+-- capacity worth paying for: a full stick isn't a full stick's worth of waiting.
 --
--- Short of 1 so filling a stick is worth doing, and well clear of 0 so it still costs something: value
--- has no falloff at all (see GetTotalValue), and at 0 an empty slot would be free money.
+-- Short of 1 so filling a stick pays, and clear of 0 so it still costs something -- value has no falloff
+-- at all (GetTotalValue), so at 0 an extra slot would be free money.
 Ingredients.ADDITIONAL_SLOT_FACTOR = 0.75
 
--- How far the chances can add up to short of or past 100% before the load-time warn fires. Small drift
--- rounds away on the labels (a 1% miss turns "1 in 20" into "1 in 20.2", which still prints 20), so
--- this is set to where it would start to show rather than at zero.
+-- How far off 100% the chances may sum before the load-time warn fires. Set to where drift would start to
+-- show rather than at zero -- a 1% miss turns "1 in 20" into "1 in 20.2", which still prints 20.
 Ingredients.CHANCE_SUM_TOLERANCE = 0.02
 
--- The Robux dev products an ingredient can be bought outright with when the player hasn't the Bux for
--- it, cheapest first. These are keyed by *band* rather than by the thing they buy: there are eighteen
--- ingredients and more coming, against ten products, so a product is a price band and whichever
--- ingredient falls into it is what that band sells.
+-- The Robux products an ingredient can be bought outright with, cheapest first. Keyed by *band* rather
+-- than by the thing they buy: eighteen ingredients and more coming, against ten products.
 Ingredients.RobuxProductIds = {
 	3709025916,
 	3709025936,
@@ -106,14 +91,11 @@ Ingredients.RobuxProductIds = {
 	3709026113,
 }
 
--- ProductPriceBands[n] is the most Bux band n covers. An ingredient is sold in the first band its Price
--- fits under, and anything dearer than the last threshold takes the top band -- so this list is one
--- shorter than RobuxProductIds, and a tier past Mythic doesn't have to mean touching it.
+-- ProductPriceBands[n] is the most Bux band n covers. An ingredient sells in the first band its Price fits
+-- under, and anything dearer takes the top band -- so this list is one shorter than RobuxProductIds.
 --
--- Thresholds rather than a tier named per entry, because a new ingredient then places itself: author its
--- Price and it's already sellable for Robux at whatever the ladder says something that dear goes for.
--- The gaps are deliberate -- T7 and T9 are the headroom Legendary and Mythic are waiting to be filled in
--- around, the same way those tiers ship empty.
+-- Thresholds rather than a band named per entry, so a new ingredient places itself from its Price alone.
+-- The gaps are deliberate: T7 and T9 are headroom for Legendary and Mythic, which ship empty.
 Ingredients.ProductPriceBands = {
 	100, -- T1: Corn - Jalapeno
 	200, -- T2: Tomato - Chicken
@@ -130,16 +112,13 @@ Ingredients.ProductPriceBands = {
 table.freeze(Ingredients.RobuxProductIds)
 table.freeze(Ingredients.ProductPriceBands)
 
--- Ordered commonest first. ValueMultiplier climbs with rarity so chasing rares pays a better return per
--- dollar spent, not just a bigger number per skewer slot. Price is the anchor the tier's entries are
--- priced around rather than the price they all pay -- move it to shift a whole tier, and reprice the
--- entries to change how far apart the cheapest and dearest of them sit.
+-- Commonest first. ValueMultiplier climbs with rarity, so chasing rares pays a better return per dollar
+-- rather than just a bigger number. Price is the anchor a tier's entries are priced *around* -- move it to
+-- shift a whole tier, reprice the entries to change how far apart they sit.
 --
--- CookTime and ValueMultiplier climb together on purpose, and steeply: the good stuff is the slow stuff,
--- so what a rare buys is a longer wait for a much better return rather than a strictly better ingredient.
--- Common is the one that doesn't move -- it's the whole of the opening loop (near enough nine rolls in
--- ten land there), so it stays quick and stays the baseline everything else is measured against. The
--- climb past it is what a player is actually chasing.
+-- CookTime and ValueMultiplier climb together, steeply: the good stuff is the slow stuff, so a rare buys a
+-- longer wait for a much better return rather than a strictly better ingredient. Common doesn't move --
+-- near enough nine rolls in ten land there, so it stays the quick baseline everything else is measured against.
 Ingredients.Tiers = {
 	{
 		Id = "Common",
@@ -179,8 +158,8 @@ Ingredients.Tiers = {
 	},
 }
 
--- Each tier takes its label colour from Shared.Colors, keyed on its own Id -- the same palette the
--- sticks tier themselves out of, so a Rare ingredient and a Rare stick read the same colour.
+-- Keyed on tier Id into Shared.Colors -- the same palette the sticks use, so a Rare ingredient and a Rare
+-- stick read the same colour.
 local tiersById = {}
 
 for _, tier in Ingredients.Tiers do
@@ -192,15 +171,12 @@ end
 table.freeze(Ingredients.Tiers)
 table.freeze(tiersById)
 
--- Grouped by tier, commonest first -- config order is the order the Index grid lays them out in, and
--- nothing else. Tiering is loosely how the real thing ranks: garden veg and the cheapest meat, then
--- the fruit and everyday cuts you'd actually throw on a barbecue, then the ones you'd save for. The
--- chances below add up to 99.997%, so every label reads exactly the number written on it.
+-- Grouped by tier, commonest first. Config order is the Index grid's layout order and nothing else. The
+-- chances add up to 99.997%, so every label reads exactly the number written on it.
 --
--- Price rises with rarity down a tier as well as across them, so the Index reads as one ladder from
--- corn to salmon rather than a set of flat blocks. Prices repeating (the two peppers, onion and garlic)
--- is fine and wanted -- round numbers a tier apart read better than eighteen forced-unique ones.
--- Salmon names no Price because it's alone in Epic, so there's nothing to fan it out against.
+-- Price rises with rarity down a tier as well as across them, so the Index reads as one ladder rather than
+-- flat blocks. Repeating prices (the two peppers, onion and garlic) are wanted -- round numbers a tier
+-- apart read better than eighteen forced-unique ones. Salmon names none, being alone in Epic.
 Ingredients.Data = {
 	--
 	{
@@ -210,7 +186,7 @@ Ingredients.Data = {
 		Chance = 7,
 		Price = 75,
 		Color = Color3.fromRGB(255, 214, 71),
-		Icon = "rbxassetid://100285505624996",
+		Icon = "rbxassetid://138967242632937",
 	},
 	{
 		Id = "Onion",
@@ -372,12 +348,10 @@ Ingredients.Data = {
 	},
 }
 
--- Each entry resolves the tier it names and pulls its raw + cooked models out of
--- Assets.Ingredients.Raw / .Cooked, matched on Id. An entry missing either model, naming a tier that
--- doesn't exist, or authored without a Chance gets dropped rather than left half-built, so a typo'd
--- entry can't be rolled (or cooked) and then error mid-animation. This runs before anything is
--- weighted on purpose: a dropped entry must not count toward the sum, or every label would be off by
--- the share of a thing that can never roll.
+-- Resolves each entry's tier and pulls its raw + cooked models out of Assets.Ingredients, matched on Id.
+-- An entry missing either model, naming an unknown tier, or lacking a Chance is dropped rather than left
+-- half-built. Runs before anything is weighted: a dropped entry must not count toward the sum, or every
+-- label would be off by the share of something that can never roll.
 local RawFolder = IngredientsFolder.Raw
 local CookedFolder = IngredientsFolder.Cooked
 
@@ -424,10 +398,9 @@ for _, ingredient in Ingredients.Data do
 	totalWeight += ingredient.Weight
 end
 
--- The roller normalises, so what an ingredient really rolls at is its authored odds scaled by that
--- sum -- exactly its number when the config adds up to 100%, and honestly off it when it doesn't.
--- Chance is corrected in place so every label in the game shows the real odds. Then say so, loudly:
--- an ingredient added at "1 in 20" without paying for it elsewhere is the mistake this catches.
+-- The roller normalises, so an ingredient really rolls at its authored odds scaled by the sum. Chance is
+-- corrected in place, so every label shows the real odds -- then warned about, since an ingredient added
+-- at "1 in 20" without paying for it elsewhere is the mistake this catches.
 for _, ingredient in Ingredients.Data do
 	ingredient.Chance *= totalWeight
 end

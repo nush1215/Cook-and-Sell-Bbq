@@ -1,5 +1,5 @@
--- Step 8: Put the stick down on the stick stand, which is where a BBQ gets built.
-local EquippedItem = require(script.Parent.Parent.Parent.Parent.Modules.EquippedItem)
+-- Step 4: Put the stick down on the stick stand, which is where a BBQ gets built.
+local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 
 local NEAR_DISTANCE = 12
 local BEAM_HIDE_DISTANCE = 12
