@@ -107,12 +107,9 @@ function CustomProximityPromptController:_createPrompt(prompt, inputType, gui)
 	local tweensForButtonHoldEnd = {}
 	local tweensForFadeOut = {}
 	local tweensForFadeIn = {}
-	local tweenInfoInFullDuration =
-		TweenInfo.new(prompt.HoldDuration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
 	local tweenInfoOutHalfSecond = TweenInfo.new(0.5, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	local tweenInfoFast = TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 	local tweenInfoQuick = TweenInfo.new(0.06, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
-	local tweenInfoInstant = TweenInfo.new(0, Enum.EasingStyle.Linear, Enum.EasingDirection.Out)
 
 	local promptUI = UIAssets.Prompt:Clone()
 	promptUI.Enabled = true
@@ -490,34 +487,47 @@ function CustomProximityPromptController:_createPrompt(prompt, inputType, gui)
 		promptUI.Active = true
 	end
 
-	if prompt.HoldDuration > 0 then
-		local circleBar = resizeableInputFrame.ProgressBar
-		setUpCircularProgressBar(circleBar)
-		table.insert(
-			tweensForButtonHoldBegin,
-			TweenService:Create(circleBar.Progress, tweenInfoInFullDuration, { Value = 1 })
-		)
-		table.insert(tweensForButtonHoldEnd, TweenService:Create(circleBar.Progress, tweenInfoInstant, { Value = 0 }))
-	end
+	local circleBar = resizeableInputFrame.ProgressBar
+	setUpCircularProgressBar(circleBar)
 
 	local holdBeganConnection
 	local holdEndedConnection
 	local triggeredConnection
 	local triggerEndedConnection
 
-	if prompt.HoldDuration > 0 then
-		holdBeganConnection = prompt.PromptButtonHoldBegan:Connect(function()
-			for _, tween in ipairs(tweensForButtonHoldBegin) do
-				tween:Play()
-			end
-		end)
+	-- Wired whatever the prompt's HoldDuration is right now, and the ring is timed per hold rather than
+	-- built once up front: HoldDuration can change while the prompt is up (the grill's knob asks to be
+	-- held only while the cook is raw), and a ring baked at show time would run at the wrong length --
+	-- or not at all -- for the rest of the show. Costs nothing on a press-to-fire prompt, since the
+	-- engine only raises these when there's a hold to run.
+	local holdTween
 
-		holdEndedConnection = prompt.PromptButtonHoldEnded:Connect(function()
-			for _, tween in ipairs(tweensForButtonHoldEnd) do
-				tween:Play()
-			end
-		end)
-	end
+	holdBeganConnection = prompt.PromptButtonHoldBegan:Connect(function()
+		for _, tween in ipairs(tweensForButtonHoldBegin) do
+			tween:Play()
+		end
+
+		holdTween = TweenService:Create(
+			circleBar.Progress,
+			TweenInfo.new(prompt.HoldDuration, Enum.EasingStyle.Linear, Enum.EasingDirection.Out),
+			{ Value = 1 }
+		)
+		holdTween:Play()
+	end)
+
+	holdEndedConnection = prompt.PromptButtonHoldEnded:Connect(function()
+		-- Cancelled and written straight back rather than tweened to 0: the ring has to be empty for the
+		-- next hold on the same frame the current one lets go.
+		if holdTween then
+			holdTween:Cancel()
+			holdTween = nil
+		end
+		circleBar.Progress.Value = 0
+
+		for _, tween in ipairs(tweensForButtonHoldEnd) do
+			tween:Play()
+		end
+	end)
 
 	triggeredConnection = prompt.Triggered:Connect(function()
 		for _, tween in ipairs(tweensForFadeOut) do

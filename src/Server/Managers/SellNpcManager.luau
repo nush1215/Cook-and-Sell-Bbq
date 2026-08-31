@@ -123,6 +123,9 @@ local SellNpcManager = {
 	-- [player] = true once a customer has given the free first counter-offer. Each visit thread reads
 	-- SeenHaggle at its own start, so without this a stand full of them would all grant it at once.
 	_grantedFirstCounter = {},
+	-- [player] = true once their guaranteed first rich customer has been sent. TrySendFirstRichVisit yields
+	-- on the data read, so the saved key alone can't stop two quick placements each sending one.
+	_grantedFirstRich = {},
 }
 
 --
@@ -1104,7 +1107,8 @@ end
 
 -- Sends one rich customer: a random RichNPC rig takes every skewer on the stand and haggles over the lot as
 -- one sum. Yields throughout. No retry loop -- a refusal puts the stand back and the roll must come round again.
-function SellNpcManager:_spawnRichCustomer(player: Player)
+-- @param firstVisit: true for a player's first rich customer ever, which explains itself as it arrives
+function SellNpcManager:_spawnRichCustomer(player: Player, firstVisit: boolean?)
 	local spawnPart, standPart = getBaseParts(player)
 	if not spawnPart or not standPart then
 		return
@@ -1145,10 +1149,14 @@ function SellNpcManager:_spawnRichCustomer(player: Player)
 	end
 
 	-- Rare enough to be worth pulling the player back to watch. The offer toast in _negotiateSale is a
-	-- separate beat, about answering in time.
+	-- separate beat, about answering in time. Their first says what a rich one actually is -- the gold UI
+	-- and dialogue show that this one is different, not why it's worth stocking up for -- and holds longer
+	-- to be read, as the first-haggle line does.
 	NotificationManager:NotifyNormal(player, {
-		Text = `A {RICH_LABEL} customer is heading to your stand!`,
-		Duration = 3,
+		Text = if firstVisit
+			then `A {RICH_LABEL} customer is heading to your stand! They buy every BBQ at once, and pay more than selling them one at a time`
+			else `A {RICH_LABEL} customer is heading to your stand!`,
+		Duration = if firstVisit then 5 else 3,
 		Sound = "RichSpawn",
 	})
 
@@ -1249,6 +1257,51 @@ function SellNpcManager:_rollRichVisits()
 	end
 end
 
+-- Sends the player's one guaranteed rich customer, if this placement is what earned it: their stand has
+-- just reached RichNpc.MIN_SKEWERS for the first time ever. Skips the timer, chance roll and cooldown, since
+-- leaving whether they ever meet one to luck is what this exists to fix. Yields.
+-- @param count: how many skewers the placement left on the stand
+-- @return true if it took the visit over, so the caller knows not to send the ordinary customer it owed
+function SellNpcManager:TrySendFirstRichVisit(player: Player, count: number): boolean
+	if count < RichNpc.MIN_SKEWERS or self._grantedFirstRich[player] then
+		return false
+	end
+
+	-- Not during the tutorial: it drives its own customers, and a rich one would take the whole stand --
+	-- including the skewer its accept-the-offer beat waits on.
+	if self._guaranteed[player] == true then
+		return false
+	end
+
+	-- Same reason the roll checks it: one already at the stand is holding the stock this one would want.
+	-- The visit stays owed, so the next placement sends it.
+	for _, record in self._npcs[player] or {} do
+		if record.isRich then
+			return false
+		end
+	end
+
+	-- Gated on hasData, as the first counter-offer is, or a profile that failed to load sends a rich
+	-- customer on every placement for the session.
+	local hasData, seen = PlayerDataManager:GetPlayerDataKey(player, "SeenRichCustomer"):await()
+	if not hasData or seen then
+		return false
+	end
+
+	-- The latch goes up before the writes, since those yield and a sibling placement would find the visit
+	-- going spare. Stamped as the roll stamps it, so the timer can't send a second one on top of this.
+	self._grantedFirstRich[player] = true
+	PlayerDataManager:SetPlayerDataKey(player, "SeenRichCustomer", true)
+	PlayerDataManager:SetPlayerDataKey(player, "LastRichVisit", workspace:GetServerTimeNow())
+
+	-- Already on the placement's own thread, so this runs inline rather than spawning another.
+	self:_runGuardedVisit(player, function()
+		self:_spawnRichCustomer(player, true)
+	end)
+
+	return true
+end
+
 -- Sends a rich customer now, skipping the timer, chance roll, cooldown and MIN_SKEWERS. Fired off the
 -- command bar. The checks it keeps are the ones that would leave the visit meaningless, not merely unlikely.
 function SellNpcManager:ForceRichVisit(player: Player): (boolean, string?)
@@ -1324,6 +1377,7 @@ function SellNpcManager:_cleanupPlayer(player: Player)
 	self._guaranteed[player] = nil
 	self._noticedRefusals[player] = nil
 	self._grantedFirstCounter[player] = nil
+	self._grantedFirstRich[player] = nil
 end
 
 -- Returns held skewers to the stand just before the last save. A customer takes them off the moment it
@@ -1376,9 +1430,15 @@ end
 function SellNpcManager:OnStart()
 	self:_buildPool()
 
-	-- One skewer, one customer: each placement runs its own visit thread, so they come concurrently.
-	SkewerStandManager.OnSkewerPlaced:Connect(function(player: Player)
+	-- One skewer, one customer: each placement runs its own visit thread, so they come concurrently. The
+	-- placement that first stocks the stand hands its visit to a rich customer instead of an ordinary one,
+	-- which would only walk to the stand the rich one has just cleared.
+	SkewerStandManager.OnSkewerPlaced:Connect(function(player: Player, _record, count: number)
 		task.spawn(function()
+			if self:TrySendFirstRichVisit(player, count) then
+				return
+			end
+
 			self:_runVisit(player)
 		end)
 	end)

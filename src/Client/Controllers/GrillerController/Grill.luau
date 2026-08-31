@@ -39,8 +39,6 @@ local GRILL_PROMPT_DISTANCE = 10
 local KNOB_PROMPT_DISTANCE = 15
 local GRILL_PROMPT_HOLD = 0.3
 local KNOB_PROMPT_HOLD = 0.1
--- Fires on press: stopping a cook is a timing call, and any hold is spent inside the window being aimed at.
-local STOP_PROMPT_HOLD = 0
 -- The same E as every other prompt, by choice. OnePerButton exclusivity draws one E prompt at a time --
 -- whichever enabled one is nearest -- so the take contends with the knob's Cook on a raw skewer (which
 -- reaches five studs further) and with a neighbouring griller's prompts; standing close to the skewer
@@ -944,24 +942,22 @@ function Grill:Update()
 		charcoal.Part.Color = CHARCOAL_OFF_COLOR:Lerp(charcoal.GlowColor, glow)
 	end
 
-	local cookingUI = self._cookingUI
-	if cookingUI then
-		-- Only the X scale is ours, so a fill inset in the place file stays inset.
-		local fill = cookingUI.Bar.BarContainer.Bar
-		local fillSize = self._cookingFillSize
-		fill.Size = UDim2.new(progress, fillSize.X.Offset, fillSize.Y.Scale, fillSize.Y.Offset)
+	-- Tracked out here rather than alongside the bar it paints: the knob's stop prompt reads the band
+	-- too, and a griller whose CookingUIAttachment never resolved still has a prompt to decide. Only
+	-- acted on at a band edge, so everything below lands on the same frame the fill crosses that mark.
+	local stateId = CookStates.GetStateFromCook(elapsed, cookTime)
+	if stateId ~= self._cookingState then
+		self._cookingState = stateId
 
-		-- Title and fill colour only change on a band edge, so they're written there rather than per
-		-- frame -- landing on the same frame the fill crosses that band's mark.
-		local stateId = CookStates.GetStateFromCook(elapsed, cookTime)
-		if stateId ~= self._cookingState then
-			self._cookingState = stateId
+		-- Only Raw asks to be held, so the offer has to be re-decided at every edge.
+		self:RefreshInteraction()
 
+		if self._cookingUI then
 			local state = CookStates.GetStateFromId(stateId)
-			local title = cookingUI.Title
+			local title = self._cookingUI.Title
 
 			-- Snapped, not eased: the band colours are far enough apart that a lerp runs through olive.
-			fill.BackgroundColor3 = state.BarColor
+			self._cookingUI.Bar.BarContainer.Bar.BackgroundColor3 = state.BarColor
 			title.Text = state.Name
 
 			-- Driven off the config's own list, so the states are only ever spelled out in one place.
@@ -969,6 +965,14 @@ function Grill:Update()
 				title[`{cookState.Id}Gradient`].Enabled = cookState.Id == stateId
 			end
 		end
+	end
+
+	local cookingUI = self._cookingUI
+	if cookingUI then
+		-- Only the X scale is ours, so a fill inset in the place file stays inset.
+		local fill = cookingUI.Bar.BarContainer.Bar
+		local fillSize = self._cookingFillSize
+		fill.Size = UDim2.new(progress, fillSize.X.Offset, fillSize.Y.Scale, fillSize.Y.Offset)
 
 		-- The perfect window in real time, solved once per cook -- _sync drops it whenever a stamp moves.
 		-- Inverted off the same map the bar draws from, so the countdown and the band mark hit together.
@@ -1321,7 +1325,12 @@ function Grill:RefreshInteraction()
 		-- anything that forced it down (the tutorial does) would keep it down forever.
 		self._knobPrompt.Enabled = true
 		self._knobPrompt.ActionText = if canStop then "Stop Cooking" else "Cook"
-		self._knobPrompt.HoldDuration = if canStop then STOP_PROMPT_HOLD else KNOB_PROMPT_HOLD
+		-- Off the band the cook is in, so only a stop that would throw the run away asks to be held (see
+		-- StopHold). Nil state is the frame between the cook being stamped and Update's first pass: read
+		-- as Raw, which puts the guard on rather than off for that frame.
+		self._knobPrompt.HoldDuration = if canStop
+			then CookStates.GetStateFromId(self._cookingState or "Raw").StopHold or 0
+			else KNOB_PROMPT_HOLD
 	end
 
 	-- Billboard calling out that the knob is ready to cook, readable from further off than the prompt. On

@@ -127,6 +127,11 @@ return {
 		-- (SellNpcManager:_negotiateSale), because the tutorial hides the Decline button and so can't teach
 		-- it. Saved rather than session-scoped, so a rejoin neither re-hands the lesson nor skips it.
 		SeenHaggle = false,
+		-- Whether a rich customer has ever visited this player. Their first is given rather than rolled for
+		-- (SellNpcManager:TrySendFirstRichVisit) the moment their stand first holds RichNpc.MIN_SKEWERS,
+		-- because otherwise whether they ever meet one is down to luck. Saved rather than session-scoped, so
+		-- a rejoin neither re-hands the visit nor skips it.
+		SeenRichCustomer = false,
 
 		-- Codes
 		RedeemedCodes = {}, -- code strings already claimed, one claim each forever

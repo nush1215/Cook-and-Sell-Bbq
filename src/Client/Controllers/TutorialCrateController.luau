@@ -88,19 +88,19 @@ function TutorialCrateController:_clearTimer()
 	end
 end
 
--- The countdown has run out: drop the billboard, put the Open prompt up in its place, and say so.
--- The prompt is built client-side on the owner's machine alone, so nobody else ever sees one.
+-- The countdown has run out: swap the billboard over to its alert, put the Open prompt up, and say
+-- so. The prompt is built client-side on the owner's machine alone, so nobody else ever sees one.
 -- @param model: The crate to attach the prompt to
--- @param billboard: The countdown billboard, finished with now the crate is openable
+-- @param billboard: The countdown billboard, switched here to the ready-to-collect alert
 function TutorialCrateController:_onReady(model: Model, billboard: BillboardGui)
 	local trove = self._timerTrove
 	if not trove or not model.PrimaryPart then
 		return
 	end
 
-	-- Remove rather than Clean: this drops the billboard alone and leaves the trove holding the
-	-- prompt, so one _clearTimer still takes down whatever stage the countdown is at.
-	trove:Remove(billboard)
+	billboard.Title.Visible = false
+	billboard.Timer.Visible = false
+	billboard.Alert.Visible = true
 
 	local attachment = trove:Add(Instance.new("Attachment"))
 	attachment.Name = "TutorialCratePromptAttachment"
@@ -167,7 +167,8 @@ function TutorialCrateController:_showTimer(model: Model)
 
 	local billboard = trove:Clone(UI[TIMER_UI_NAME])
 	billboard.Adornee = primaryPart
-	billboard.TextLabel.Text = GuiUtil.Colorize(crate.Name, crate.Color)
+	billboard.Title.Text = GuiUtil.Colorize(crate.Name, crate.Color)
+	billboard.Alert.Visible = false
 	billboard.Parent = primaryPart
 
 	local label = billboard.Timer

@@ -131,17 +131,6 @@ function Stand.new(model: Model, owningBase: any)
 	--
 	local cleaner = Trove.new()
 
-	-- One Highlight reused for the whole cycle: Roblox renders about thirty at once, and several bases
-	-- cycling six stands each would blow that budget -- silently, by stopping outlines game-wide.
-	local silhouette = Instance.new("Highlight")
-	silhouette.OutlineTransparency = 1
-	silhouette.FillTransparency = 0
-	silhouette.FillColor = Color3.fromRGB(0, 0, 0)
-	silhouette.DepthMode = Enum.HighlightDepthMode.Occluded
-	silhouette.Enabled = false
-	silhouette.Parent = model
-	cleaner:Add(silhouette)
-
 	-- Pop: an impulse spring, critically damped so the swell settles back with no dip below rest. Spin: a
 	-- target spring pointed at a whole number of turns, so it whips round and eases to a straight stop.
 	local popSpring = Spring.new(0)
@@ -165,9 +154,6 @@ function Stand.new(model: Model, owningBase: any)
 		-- Owns the band this stand draws at, its lever, and whether the local player may buy off it.
 		_owningBase = owningBase,
 		_baseId = owningBase:GetId(),
-
-		-- Blacks a cycling ingredient out so it can't be read before it lands. Dropped on the final one.
-		_silhouette = silhouette,
 
 		-- Bumped by anything that takes the stand back -- a wipe, a cull, the next roll -- so a cycle
 		-- still yielding knows it's been cancelled and drops what it has.
@@ -228,13 +214,6 @@ function Stand.new(model: Model, owningBase: any)
 	self:Sync()
 
 	return self
-end
-
--- Blacks the cycling model out so it can't be read before it lands. Disabled rather than just
--- un-adorned: an enabled Highlight with no Adornee falls back to its parent, which here is the stand.
-function Stand:_setSilhouette(model: Model?)
-	self._silhouette.Adornee = model
-	self._silhouette.Enabled = model ~= nil
 end
 
 -- Where an ingredient rests: half the base's height, plus the landing gap and this ingredient's own seat
@@ -339,15 +318,20 @@ function Stand:PlayRoll(ingredientId: string, speedLevel: number?)
 	self._resultFloating = false
 	self._resultSettled = false
 
-	-- Swell the board and pulse the stand. The cycling ingredients silhouette themselves, so the
-	-- nearest-Highlight rule keeps them black while the stand's own parts light up.
+	-- Swell the board, which along with the lever swing and the shake is what says the machine fired.
+	-- It used to flash the stand as well, but that was a Highlight per stand held for the whole roll --
+	-- six of Roblox's thirty-odd slots spent on one beat the pop already carries.
 	self._popSpring:Impulse(RandomUtil.GetRandomFromMinMax(10, 15))
 
 	-- Accumulated rather than set: the spring keeps its angle between rolls, so an absolute target would
 	-- already be met after the first roll and the board would never spin again.
 	self._spinSpring.Target += SPIN_TURNS * math.pi * 2
 	self._boardAnimating = true
-	EffectController:RunEffect("HighlightPulse", { self._model, Color3.fromRGB(255, 255, 255), 1, 0.4 })
+
+	-- Where a model goes to be blacked out. One container and one Highlight for every stand in the
+	-- place, so the reveal can't be lost to a budget several bases rolling at once would blow.
+	IngredientRollingController = IngredientRollingController or require(script.Parent)
+	local silhouette = IngredientRollingController:GetSilhouetteContainer()
 
 	local allIngredients = Ingredients.GetAllIngredients()
 
@@ -355,14 +339,14 @@ function Stand:PlayRoll(ingredientId: string, speedLevel: number?)
 	-- and the fillers below draw twenty-six times a roll on every stand of the bank.
 	local rng = Random.new()
 
-	-- Intro: an ingredient rises out of the stand and swells into place. Parented as a *sibling* of the
-	-- stand (as everything this class spawns is), so the stand's entrance ScaleTo can't blow it up.
+	-- Intro: an ingredient rises out of the stand and swells into place. Parented into the silhouette
+	-- container, which blacks it out and -- being outside the stand entirely, as everything this class
+	-- spawns is -- keeps the stand's entrance ScaleTo from blowing it up.
 	local introModel = RandomUtil.GetRandomFromArray(allIngredients, nil, rng).Model:Clone()
 	self._landingLift = getSeatLift(introModel)
 	introModel:ScaleTo(INTRO_SCALE)
 	introModel:PivotTo(self._base.CFrame)
-	self:_setSilhouette(introModel)
-	introModel.Parent = self._model.Parent
+	introModel.Parent = silhouette
 	playRollTick(self._baseId, self._owningBase:GetSoundEmitter())
 
 	Spr.target(introModel, 0.725, 2.2, { Pivot = self:_getLandingCFrame(), Scale = CYCLE_SCALE })
@@ -399,10 +383,10 @@ function Stand:PlayRoll(ingredientId: string, speedLevel: number?)
 		model:ScaleTo(CYCLE_SCALE)
 		model:PivotTo(self:_getLandingCFrame() * CFrame.new(0, -CYCLE_RISE, 0))
 
-		-- The final model is the one meant to be read, so the silhouette comes off rather than moving on.
-		self:_setSilhouette(if isFinalStep then nil else model)
-
-		model.Parent = self._model.Parent
+		-- The final model is the one meant to be read, so it lands beside the stand rather than in the
+		-- silhouette container. Where it's parented *is* the reveal -- nothing else has to be undone,
+		-- which is what keeps a cancelled roll from stranding the black on a model that's been dropped.
+		model.Parent = if isFinalStep then self._model.Parent else silhouette
 
 		-- The final step gets its own sting, so it doesn't tick as well -- both on one frame would mush.
 		if isFinalStep then
@@ -427,8 +411,8 @@ function Stand:PlayRoll(ingredientId: string, speedLevel: number?)
 
 		task.wait(waitTime)
 
-		-- Taken back mid-cycle. Only this step's model is ours to drop: whatever took the stand either
-		-- wiped the silhouette and follow or owns them now, so touching them would reach into a new roll.
+		-- Taken back mid-cycle. Only this step's model is ours to drop: whatever took the stand owns the
+		-- follow now, so resetting that would reach into a new roll. The black leaves with the model.
 		if self._rollToken ~= token then
 			Spr.stop(currentModel)
 			currentModel:Destroy()
@@ -681,7 +665,6 @@ function Stand:Clear()
 
 	self._rollCleaner:Clean()
 	self._promptCleaner:Clean()
-	self:_setSilhouette(nil)
 
 	self._prompt = nil
 	self._currentModel = nil

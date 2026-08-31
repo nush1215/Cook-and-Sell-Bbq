@@ -110,6 +110,7 @@ local PROGRESS_RESET_KEYS = {
 	"LastRichVisit",
 	"SaleRefusals",
 	"SeenHaggle",
+	"SeenRichCustomer",
 	"TutorialStep",
 
 	-- The lifetime counters go too: they're the record of what the player has done, and a run that's

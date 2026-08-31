@@ -1,5 +1,6 @@
--- Step 5: Pull the rolling lever. Ends by locking the lever, which stays shut for the rest of the run --
--- see TutorialController:Start, which is what hands it back.
+-- Step 5: Pull the rolling lever. The lever has been shut since the top of the run (see
+-- TutorialController:Start) and opens here, for this one pull -- and ends locked again for the rest of the
+-- run, which Start is what hands back.
 local IngredientRollingController = require(script.Parent.Parent.Parent.Parent.IngredientRollingController)
 
 local NEAR_DISTANCE = 14
@@ -10,6 +11,8 @@ return function(self)
 	local lever = base.Rolling.Lever
 	local leverHandle = lever.Handle
 	local stand = base.Rolling.Stands["1"]
+
+	IngredientRollingController:SetRollLocked(false)
 
 	local highlight = self:CreateHighlight(leverHandle)
 	local beam = self:CreateBeam(leverHandle, BEAM_HIDE_DISTANCE)

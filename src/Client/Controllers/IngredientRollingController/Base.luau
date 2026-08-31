@@ -142,10 +142,10 @@ function Base.new(model: Model)
 	-- reaches one client and replicates on a different channel to the reparent anyway.
 	--
 	-- Filtered on the name being a number, because the stands aren't the only thing in here: a roll
-	-- spawns its ingredients alongside them rather than under them (see PlayRoll), so this folder fills
-	-- up with clones named after ingredients while one is running. Without the filter every one of them
-	-- would be taken for a new stand -- and every one would re-run the reconcile, twenty-seven times a
-	-- stand per roll.
+	-- lands its result alongside them rather than under one (see PlayRoll), named for the ingredient it
+	-- is. Without the filter that would be taken for a new stand and re-run the reconcile. Only the
+	-- landing arrives here -- the models the cycle spawns and drops on its way there go in the
+	-- silhouette container instead, so they never touch this folder.
 	self:_reconcileStands()
 	cleaner:Connect(self._standsFolder.ChildAdded, function(child)
 		if tonumber(child.Name) then
@@ -333,7 +333,11 @@ end
 -- Pulls the lever: swings it, asks the server for a roll, and holds the prompt down until the roll it
 -- stamped has played out. Owner-only, since only their base carries the prompt this hangs off.
 function Base:RollIngredients()
-	if self._rolling then
+	IngredientRollingController = IngredientRollingController or require(script.Parent)
+
+	-- The lock is checked here as well as on the prompt: the prompt goes down a frame after it's taken,
+	-- and a trigger already on its way in would otherwise still land a pull.
+	if self._rolling or IngredientRollingController:IsRollLocked() then
 		return
 	end
 
@@ -345,7 +349,6 @@ function Base:RollIngredients()
 	self:SwingLever()
 	CameraController:ShakeCustom(1, 5, 0.15, 0.3)
 
-	IngredientRollingController = IngredientRollingController or require(script.Parent)
 	local rolledAt, duration = IngredientRollingController:RequestRoll()
 
 	if rolledAt then
@@ -377,7 +380,16 @@ end
 -- something means the player's partway through the loop and has somewhere better to be, so the cue
 -- waits until they're back to needing an ingredient.
 function Base:_refreshLeverHighlight()
-	if self._rolling or not self:IsOwned() or EquippedItem.GetTool() then
+	IngredientRollingController = IngredientRollingController or require(script.Parent)
+
+	-- The lock goes on the cue as well as the prompt: the glow is what says a lever is pullable, so a lit
+	-- one over a shut prompt only sends the player over to press nothing.
+	if
+		self._rolling
+		or not self:IsOwned()
+		or EquippedItem.GetTool()
+		or IngredientRollingController:IsRollLocked()
+	then
 		self._lever:RemoveTag(Highlights.TAG)
 	else
 		self._lever:AddTag(Highlights.TAG)
@@ -387,6 +399,8 @@ end
 -- Puts the roll prompt and the lever's cue up on the local player's own base and takes them down
 -- otherwise, so a visitor can watch a pull without being offered one the server would only reject.
 function Base:RefreshInteraction()
+	IngredientRollingController = IngredientRollingController or require(script.Parent)
+
 	local owned = self:IsOwned()
 
 	if owned and not self._prompt then
@@ -408,7 +422,7 @@ function Base:RefreshInteraction()
 	end
 
 	if self._prompt then
-		self._prompt.Enabled = not self._rolling
+		self._prompt.Enabled = not self._rolling and not IngredientRollingController:IsRollLocked()
 	end
 
 	self:_refreshLeverHighlight()

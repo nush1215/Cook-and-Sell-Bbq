@@ -48,6 +48,11 @@ local IngredientRollingController = {
 	_bases = {}, -- [baseId] = Base
 	_purchasing = {}, -- [standId] = true while a purchase is in flight
 
+	_rollLocked = false, -- while true, no base offers its lever (see SetRollLocked)
+
+	-- Holds every cycling ingredient on every base, under the one Highlight that blacks them out.
+	_silhouetteContainer = nil,
+
 	-- Seconds since the last proximity sweep, accumulated by the render loop below.
 	_sweepElapsed = 0,
 
@@ -91,6 +96,21 @@ function IngredientRollingController:RefreshInteractions()
 	end
 end
 
+-- Holds every lever shut: no prompt, no cue, and a pull already in flight is turned away. The tutorial
+-- takes this for the beats before the one that asks for a roll.
+function IngredientRollingController:SetRollLocked(locked: boolean)
+	if self._rollLocked == locked then
+		return
+	end
+
+	self._rollLocked = locked
+	self:RefreshInteractions()
+end
+
+function IngredientRollingController:IsRollLocked(): boolean
+	return self._rollLocked
+end
+
 -- Watches the local character's tools so the lever goes dark as soon as they pick something up.
 function IngredientRollingController:_watchCharacter(character: Model)
 	self._characterCleaner:Clean()
@@ -109,8 +129,44 @@ function IngredientRollingController:_watchCharacter(character: Model)
 	self:RefreshInteractions()
 end
 
+-- Where a stand parents an ingredient it's still cycling, so it renders blacked out. Moving one out
+-- again is what reveals it -- see Stand.PlayRoll.
+function IngredientRollingController:GetSilhouetteContainer(): Model
+	return self._silhouetteContainer
+end
+
 function IngredientRollingController:OnStart()
 	self._characterCleaner = self._cleaner:Construct(Trove)
+
+	-- Every cycling ingredient in the place goes in here, under this one Highlight, so a bank of
+	-- stands costs one of Roblox's thirty-odd rendered highlights rather than one each -- several
+	-- bases cycling six stands apiece would blow that budget, silently, by stopping outlines
+	-- game-wide. A Model rather than a Folder because only a Model can be adorned.
+	local container = Instance.new("Model")
+	container.Name = "RollingSilhouettes"
+	container.Parent = workspace
+
+	self._silhouetteContainer = container
+	self._cleaner:Add(container)
+
+	local silhouette = Instance.new("Highlight")
+	silhouette.OutlineTransparency = 1
+	silhouette.FillTransparency = 0
+	silhouette.FillColor = Color3.fromRGB(0, 0, 0)
+	silhouette.DepthMode = Enum.HighlightDepthMode.Occluded
+	silhouette.Adornee = container
+	silhouette.Enabled = false
+	silhouette.Parent = container
+
+	-- Driven off what's actually in the container rather than by the stands, so a clone dropped by a
+	-- cancelled roll releases the slot with nothing having to remember to. Disabled rather than left
+	-- empty so an idle container doesn't hold one of those slots.
+	local function refreshSilhouette()
+		silhouette.Enabled = container:FindFirstChildWhichIsA("Model") ~= nil
+	end
+
+	self._cleaner:Connect(container.ChildAdded, refreshSilhouette)
+	self._cleaner:Connect(container.ChildRemoved, refreshSilhouette)
 
 	-- Bases are fixed in the place file, so sweep them once. Each one drives its own lever and stands.
 	-- A base without the folder is one the server skips too rather than something it guarantees, and

@@ -16,9 +16,9 @@ local TOTAL_LEADERBOARD_ENTRIES = 100
 
 --
 local LEADERBOARD_DATA = {
-	Currency = DataStoreService:GetOrderedDataStore("RICHEST_LEADERBOARD_V2"),
-	SalesCompleted = DataStoreService:GetOrderedDataStore("MOST_SALES_COMPLETED_LEADERBOARD_V2"),
-	TotalPlaytime = DataStoreService:GetOrderedDataStore("MOST_PLAYTIME_LEADERBOARD_V2"),
+	Currency = DataStoreService:GetOrderedDataStore("RICHEST_LEADERBOARD_V3"),
+	SalesCompleted = DataStoreService:GetOrderedDataStore("MOST_SALES_COMPLETED_LEADERBOARD_V3"),
+	TotalPlaytime = DataStoreService:GetOrderedDataStore("MOST_PLAYTIME_LEADERBOARD_V3"),
 }
 
 --

@@ -54,6 +54,10 @@ export type CookState = {
 	Color: Color3, -- the [COOKED] tag's colour on the tooltip that slot pops up
 	BarColor: Color3, -- what the cooking bar's fill turns while the skewer is in this state
 	Tint: Color3?, -- what its cooked models darken toward, or nil to leave them as they are
+	-- Seconds the knob's stop prompt must be held to stop in this band, or nil to fire on press. Only a
+	-- band where stopping is a mistake asks for one -- the rest are timing calls, and any hold there
+	-- would be spent inside the window being aimed at.
+	StopHold: number?,
 	Notification: { Text: string, Sound: string, Effect: string }?, -- the toast on stopping here, if any
 }
 
@@ -82,6 +86,9 @@ CookStates.Data = {
 		Icon = "rbxassetid://85040089054254",
 		Color = Color3.fromRGB(255, 120, 180),
 		BarColor = Color3.fromRGB(255, 219, 248),
+		-- The only band that asks to be held: the stop prompt is up for the whole cook, and a stray press
+		-- here throws away the run the player is waiting on rather than settling it.
+		StopHold = 0.75,
 		-- The one toast about what *didn't* happen: the cook is banked, not lost, and the next light picks
 		-- it back up. A success, since the alternative is the whole cook going in the bin.
 		Notification = { Text = "Pulled off early, cook saved", Sound = "Notify", Effect = "Success" },

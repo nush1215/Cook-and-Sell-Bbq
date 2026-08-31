@@ -35,6 +35,7 @@ local InventoryController
 local GrillStandShopController
 local GrillerController
 local StickStandController
+local IngredientRollingController
 
 -- Local Player
 local LocalPlayer = Players.LocalPlayer
@@ -196,6 +197,12 @@ function TutorialController:Start(variant: string)
 	-- the tail of the very cook it was hidden through, offering to sell the player out of the lesson.
 	GrillerController:SetSkipLocked(true)
 
+	-- Shut until the beat that asks for the pull, which is what opens it. The run's guaranteed roll is armed
+	-- for its whole length and burns on the first pull, so one taken during the build beats lands the
+	-- ingredient the buy beat is about to point at -- and leaves the player off the line they're being
+	-- walked down.
+	IngredientRollingController:SetRollLocked(true)
+
 	-- BaseId lands after the client has built, so say something rather than opening blank.
 	self:SetText("Tutorial", "Getting your stall ready...")
 	self:GetBase()
@@ -231,8 +238,9 @@ function TutorialController:Start(variant: string)
 	self.FinishTutorialEvent:FireServer()
 	self:SetText(nil, "Tutorial Complete!")
 
-	-- Released here, not by the step that took it: step 1 shuts the lever and nothing before the finish
-	-- wants it open, so the run holds one lock rather than each beat taking its own.
+	-- Released here, not by the step that took it: the roll beat shuts the lever behind the pull it asked
+	-- for and nothing before the finish wants it open, so the run holds one lock rather than each beat
+	-- taking its own.
 	if self.LeverLock then
 		self.LeverLock.Destroy()
 		self.LeverLock = nil
@@ -870,6 +878,7 @@ function TutorialController:OnInit()
 	GrillStandShopController = require(script.Parent.GrillStandShopController)
 	GrillerController = require(script.Parent.GrillerController)
 	StickStandController = require(script.Parent.StickStandController)
+	IngredientRollingController = require(script.Parent.IngredientRollingController)
 
 	for _, variantFolder in script.Sequence:GetChildren() do
 		local steps, count = {}, 0
