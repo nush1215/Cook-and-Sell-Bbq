@@ -382,7 +382,7 @@ end
 function TutorialManager:_grantCompletionReward(player: Player)
 	task.delay(TUTORIAL_CRATE_DELAY, function()
 		if player:IsDescendantOf(Players) then
-			TutorialCrateManager:SpawnFor(player)
+			TutorialCrateManager:SpawnFor(player, true)
 		end
 	end)
 end

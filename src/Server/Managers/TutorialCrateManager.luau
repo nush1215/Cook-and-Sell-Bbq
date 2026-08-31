@@ -130,11 +130,12 @@ end
 -- @param player: Who the crate belongs to
 -- @param openAt: Absolute server-time it can be opened at; a value in the past spawns it ready
 -- @param playCrash: Whether their client plays the meteor crash (finishing only, never on a rejoin)
-function TutorialCrateManager:_spawnCrate(player: Player, openAt: number, playCrash: boolean)
+-- @return Whether a crate actually went down
+function TutorialCrateManager:_spawnCrate(player: Player, openAt: number, playCrash: boolean): boolean
 	local spawnPart = getSpawnPart(player)
 	if not spawnPart then
 		warn(`[TutorialCrate] {player.Name} has no Core.{Crates.METEOR_SPAWN_PART} on their base, no crate for them`)
-		return
+		return false
 	end
 
 	local landingCFrame = spawnPart.CFrame
@@ -148,7 +149,7 @@ function TutorialCrateManager:_spawnCrate(player: Player, openAt: number, playCr
 
 	if not (model and uniqueId) then
 		warn(`[TutorialCrate] failed to spawn {Crates.TUTORIAL_CRATE_ID} for {player.Name}`)
-		return
+		return false
 	end
 
 	-- Marks whose crate this is before anyone can open it. Owner is deliberately left unset until
@@ -192,15 +193,42 @@ function TutorialCrateManager:_spawnCrate(player: Player, openAt: number, playCr
 		-- an Instance argument that hasn't arrives as nil. The client waits for the id to show up.
 		self.CrashEvent:FireClient(player, uniqueId, Crates.METEOR_FALL_DURATION, landingCFrame)
 	end
+
+	return true
 end
 
 -- Drops the reward crate for a player who's just finished the tutorial, crash and all.
-function TutorialCrateManager:SpawnFor(player: Player)
+-- @param showTimer: Whether it lands behind the countdown; false spawns it ready to open at once
+-- @return Whether a crate went down -- false if they already have one, or their base has no spawn part
+function TutorialCrateManager:SpawnFor(player: Player, showTimer: boolean): boolean
 	if self._active[player] then
+		return false
+	end
+
+	-- A stamp of right now is already in the past by the time the client reads it, which is what makes
+	-- the countdown skip straight to the Open prompt rather than needing anything told to hide it.
+	local now = workspace:GetServerTimeNow()
+	local openAt = if showTimer then now + Crates.TUTORIAL_TIMER_DURATION else now
+
+	return self:_spawnCrate(player, openAt, true)
+end
+
+-- Takes a player's pending crate out of the world without paying it out, leaving the saved stamp
+-- alone so a rejoin still gets it back.
+function TutorialCrateManager:RemoveFor(player: Player)
+	local entry = self._active[player]
+	if not entry then
 		return
 	end
 
-	self:_spawnCrate(player, workspace:GetServerTimeNow() + Crates.TUTORIAL_TIMER_DURATION, true)
+	-- Cleanup first, destroy second, and the order is the whole point: cleanup drops the Destroying
+	-- hook, and that hook wipes the saved stamp to -1. Destroy the crate with it still connected and
+	-- the player loses a reward they never opened.
+	self:_cleanup(player)
+
+	if entry.Model.Parent then
+		entry.Model:Destroy()
+	end
 end
 
 -- Puts a pending crate back when a returning player is given a base, resuming the saved countdown
@@ -278,18 +306,7 @@ function TutorialCrateManager:OnStart()
 	end)
 
 	Players.PlayerRemoving:Connect(function(player: Player)
-		local entry = self._active[player]
-		if entry then
-			-- Cleanup first, destroy second, and the order is the whole point: cleanup drops the
-			-- Destroying hook, and that hook wipes the saved stamp to -1. Destroy the crate with it
-			-- still connected and the player loses a reward they never opened.
-			self:_cleanup(player)
-
-			if entry.Model.Parent then
-				entry.Model:Destroy()
-			end
-		end
-
+		self:RemoveFor(player)
 		self._spawning[player] = nil
 	end)
 end
