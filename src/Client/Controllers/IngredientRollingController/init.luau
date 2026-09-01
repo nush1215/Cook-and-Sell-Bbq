@@ -21,6 +21,10 @@ local Base = require(script.Base)
 --
 local LocalPlayer = Players.LocalPlayer
 
+-- How long a streamed-in base gets to finish replicating the pieces Base.new indexes (see _addBase).
+local ROLLING_TIMEOUT = 10
+local CHILD_TIMEOUT = 10
+
 --[[
     Renders the rolling stands on every base and drives the owner's lever.
 
@@ -45,7 +49,7 @@ local IngredientRollingController = {
 	PurchaseIngredientEvent = Network.Event("PurchaseIngredient"),
 	OnPurchasedEvent = Network.Event("OnIngredientPurchased"),
 
-	_bases = {}, -- [baseId] = Base
+	_bases = {}, -- [model: Model] = Base
 	_purchasing = {}, -- [standId] = true while a purchase is in flight
 
 	_rollLocked = false, -- while true, no base offers its lever (see SetRollLocked)
@@ -135,6 +139,50 @@ function IngredientRollingController:GetSilhouetteContainer(): Model
 	return self._silhouetteContainer
 end
 
+-- Builds a Base for a base model once the pieces Base.new indexes have replicated, unless one already
+-- tracks it. Models stream in non-atomically, so the waits live here and Base.new keeps trusting its
+-- children.
+function IngredientRollingController:_addBase(baseModel: Model)
+	if self._bases[baseModel] then
+		return
+	end
+
+	-- No warn when it never comes: a base without the folder is one the server skips too.
+	local rollingFolder = baseModel:WaitForChild("Rolling", ROLLING_TIMEOUT)
+	if not rollingFolder then
+		return
+	end
+
+	local lever = rollingFolder:WaitForChild("Lever", CHILD_TIMEOUT)
+	local leverHandle = lever and lever:WaitForChild("Handle", CHILD_TIMEOUT)
+	local standsFolder = rollingFolder:WaitForChild("Stands", CHILD_TIMEOUT)
+	if not leverHandle or not standsFolder then
+		warn(`[IngredientRolling] {baseModel.Name}'s rolling setup is incomplete, it won't render`)
+		return
+	end
+
+	-- Waiting above yields, so the base can have streamed back out (or been built by a racing thread)
+	-- in the meantime.
+	if not baseModel.Parent or self._bases[baseModel] then
+		return
+	end
+
+	local base = Base.new(baseModel)
+	self._bases[baseModel] = base
+	self._cleaner:Add(base)
+end
+
+-- Drops the Base for a model that's streamed out or been removed.
+function IngredientRollingController:_removeBase(baseModel: Model)
+	local base = self._bases[baseModel]
+	if not base then
+		return
+	end
+
+	self._cleaner:Remove(base)
+	self._bases[baseModel] = nil
+end
+
 function IngredientRollingController:OnStart()
 	self._characterCleaner = self._cleaner:Construct(Trove)
 
@@ -168,19 +216,26 @@ function IngredientRollingController:OnStart()
 	self._cleaner:Connect(container.ChildAdded, refreshSilhouette)
 	self._cleaner:Connect(container.ChildRemoved, refreshSilhouette)
 
-	-- Bases are fixed in the place file, so sweep them once. Each one drives its own lever and stands.
-	-- A base without the folder is one the server skips too rather than something it guarantees, and
-	-- this now runs across every base rather than only the one we know the player owns -- so let it go
-	-- without instead of taking the whole controller down with it.
-	for _, baseModel in workspace.Base:GetChildren() do
-		if not baseModel:FindFirstChild("Rolling") then
-			continue
-		end
+	-- Bases stream out and back in as brand-new instances, and at boot the folder's contents can still
+	-- be in flight -- so watch the folder rather than sweeping it once. Off this thread because the
+	-- loader runs every OnStart on one, and both the folder wait and _addBase's child waits yield.
+	task.spawn(function()
+		local baseFolder = workspace:WaitForChild("Base")
 
-		local base = Base.new(baseModel)
-		self._bases[baseModel.Name] = base
-		self._cleaner:Add(base)
-	end
+		self._cleaner:Connect(baseFolder.ChildAdded, function(baseModel)
+			self:_addBase(baseModel)
+		end)
+		self._cleaner:Connect(baseFolder.ChildRemoved, function(baseModel)
+			self:_removeBase(baseModel)
+		end)
+
+		-- _addBase waits on the base's children, so keep the sweep off this thread too.
+		for _, baseModel in baseFolder:GetChildren() do
+			task.spawn(function()
+				self:_addBase(baseModel)
+			end)
+		end
+	end)
 
 	-- One loop drives every base, and works out which of them are near enough to be worth drawing on a
 	-- timer folded into it -- running that check per base per frame would cost more than the drawing it

@@ -33,6 +33,10 @@ local LEVER_ROTATION_AXIS = Vector3.zAxis
 
 local PROMPT_HOLD = 0.25
 
+-- Past the 14 studs the tutorial's pull step treats as arrived (Sequence A/3, B/5), so the prompt is
+-- already up when the beat points at it.
+local PROMPT_DISTANCE = 15
+
 -- How close the local player is to this base, as a band rather than a distance: ordered so the checks
 -- below can ask whether it's at least rendering. See the distances in the Rolling config for what each
 -- one costs.
@@ -315,7 +319,7 @@ end
 -- Swings the lever handle and rings the pull.
 function Base:SwingLever()
 	self._leverSpring:Impulse(-RandomUtil.GetRandomFromMinMax(20, 27))
-	SoundController:PlaySound("LeverPull", self._leverHandle)
+	SoundController:PlaySound("LeverPull", self._soundEmitter)
 end
 
 -- Swings the lever for a pull the stands have just been handed, once however many of them report it.
@@ -407,6 +411,7 @@ function Base:RefreshInteraction()
 		local prompt = Instance.new("ProximityPrompt")
 		prompt.RequiresLineOfSight = false
 		prompt.HoldDuration = PROMPT_HOLD
+		prompt.MaxActivationDistance = PROMPT_DISTANCE
 		prompt.ActionText = "Roll Ingredients"
 		prompt.Style = Enum.ProximityPromptStyle.Custom
 		prompt.Parent = self._leverHandle
