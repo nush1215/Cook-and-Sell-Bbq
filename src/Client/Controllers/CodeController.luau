@@ -76,6 +76,8 @@ function CodeController:OnStart()
 	codesButton:autoDeselect(false)
 	codesButton:oneClick(true)
 	codesButton:setOrder(3)
+	codesButton:setImage("rbxassetid://78885144432591")
+	codesButton:align("Right")
 
 	codesButton.selected:Connect(function()
 		UIController:OpenFrame(holder)

@@ -90,6 +90,10 @@ local ALARM_INTERVAL = 2 -- seconds of silence between bursts
 local ALARM_FADE_IN = 0 -- an alarm should crack in on the beat rather than ramp
 local ALARM_FADE_OUT = 0.15 -- just enough that cutting the burst short doesn't click
 
+-- Rung on the owner's grill the frame the bar enters the perfect window, since that's the one instant
+-- worth pulling the knob on and the bar recolouring alone is easy to miss.
+local PERFECT_SOUND = "PerfectlyCookedChime"
+
 -- Stove visuals: the charcoal glow, the LED and the knob handle.
 local CHARCOAL_OFF_COLOR = Color3.fromRGB(25, 12, 7)
 -- Per-part override, so a grill can burn its own colour without a code change.
@@ -947,7 +951,15 @@ function Grill:Update()
 	-- acted on at a band edge, so everything below lands on the same frame the fill crosses that mark.
 	local stateId = CookStates.GetStateFromCook(elapsed, cookTime)
 	if stateId ~= self._cookingState then
+		local previous = self._cookingState
 		self._cookingState = stateId
+
+		-- Owner only, and only on the Raw -> Perfect crossing: a client that streamed the griller in mid-cook
+		-- opens on a nil -> Perfect edge, which is the window already running rather than it opening. Bands
+		-- only ever move forward within a cook, so Raw is the only way in.
+		if stateId == "Perfect" and previous == "Raw" and self._ownerUserId == LocalPlayer.UserId then
+			SoundController:PlaySound(PERFECT_SOUND, self._gratesPart)
+		end
 
 		-- Only Raw asks to be held, so the offer has to be re-decided at every edge.
 		self:RefreshInteraction()
