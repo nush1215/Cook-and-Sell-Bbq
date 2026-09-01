@@ -488,6 +488,17 @@ function HudController:OnInit()
 		HUD_FRAMES_POSITIONS.Top.Hide = UDim2.fromScale(0.5, -0.5)
 		HUD_FRAMES_POSITIONS.Top.Show = UDim2.fromScale(0.5, 0.22)
 	end
+
+	-- A frame only moves to its HUD_FRAMES_POSITIONS Show spot on the first hide/restore cycle, so any
+	-- frame whose entry differs from where it was authored sits wrong until something opens -- and on
+	-- touch, where Show is overridden above, that is every join. Snap them into place up front.
+	for _, hudFrame in self.UI:GetChildren() do
+		if not hudFrame:IsA("GuiObject") then
+			continue
+		end
+
+		hudFrame.Position = self:_getHudFramePosition(hudFrame, "Show")
+	end
 end
 
 function HudController:OnStart()
