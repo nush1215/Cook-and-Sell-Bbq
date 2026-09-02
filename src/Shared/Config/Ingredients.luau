@@ -15,9 +15,15 @@
     odds (authored Chance scaled by that sum) and a load-time warn says which way to nudge -- Roblox
     requires accurate odds on random items sold for Robux, so this isn't optional.
 
-    Ballpark for a new entry -- Chance: Common 7-25, Uncommon 30-80, Rare 150-500, Epic 1K-3K, Legendary
-    ~10K, Mythic ~100K. Price: Common 75-180, Uncommon 320-580, Rare 1.3K-2K; past that, omit Price and
-    take the tier's. Legendary and Mythic ship empty on purpose -- headroom for the luxurious stuff.
+    Ballpark for a new entry -- Chance: Common 9-51, Uncommon 55-137, Rare 170-450, Epic 700-1.2K,
+    Legendary ~2K, Mythic ~10K. Price: Common 75-260, Uncommon 300-750, Rare 900-2K, Epic 3.5K-5K; past
+    that, omit Price and take the tier's. Mythic ships empty on purpose -- headroom for the luxurious
+    stuff (wagyu, lobster, truffle) that costs nothing to leave sitting there.
+
+    Adding one is never a local edit. Every 1/Chance has to keep summing to 1, so a new entry's share has
+    to come out of the others -- in practice that means re-solving the whole column rather than picking a
+    number for the newcomer. The tier bands above are what's left once that's done; they'll move again the
+    next time the roster grows.
 ]]
 
 -- Services
@@ -73,7 +79,7 @@ local Ingredients = {}
 -- which is 1.5 * 0.8 * 1 = 1.2 today. At the 1.25 this used to read it came to exactly 1.0, and the
 -- stick under the ingredients tipped it negative -- a charred common skewer sold for less than it
 -- cost to build. Lower this, or lower Charred, and check that product first.
-Ingredients.SALE_VALUE_MULTIPLIER = 1.5
+Ingredients.SALE_VALUE_MULTIPLIER = 1.4
 
 -- What each slot past the slowest adds, as a fraction of its own CookTime. The skewer cooks in one piece,
 -- so the slowest ingredient sets the length and the rest only add heat to shift -- which is what makes
@@ -81,14 +87,14 @@ Ingredients.SALE_VALUE_MULTIPLIER = 1.5
 --
 -- Short of 1 so filling a stick pays, and clear of 0 so it still costs something -- value has no falloff
 -- at all (GetTotalValue), so at 0 an extra slot would be free money.
-Ingredients.ADDITIONAL_SLOT_FACTOR = 0.75
+Ingredients.ADDITIONAL_SLOT_FACTOR = 0.8
 
 -- How far off 100% the chances may sum before the load-time warn fires. Set to where drift would start to
 -- show rather than at zero -- a 1% miss turns "1 in 20" into "1 in 20.2", which still prints 20.
 Ingredients.CHANCE_SUM_TOLERANCE = 0.02
 
 -- The Robux products an ingredient can be bought outright with, cheapest first. Keyed by *band* rather
--- than by the thing they buy: eighteen ingredients and more coming, against ten products.
+-- than by the thing they buy: thirty-three ingredients and more coming, against ten products.
 Ingredients.RobuxProductIds = {
 	3709025916,
 	3709025936,
@@ -106,16 +112,17 @@ Ingredients.RobuxProductIds = {
 -- under, and anything dearer takes the top band -- so this list is one shorter than RobuxProductIds.
 --
 -- Thresholds rather than a band named per entry, so a new ingredient places itself from its Price alone.
--- The gaps are deliberate: T7 and T9 are headroom for Legendary and Mythic, which ship empty.
+-- The gaps are deliberate: T7 and T9 are headroom, and every one of the fifteen ingredients added most
+-- recently placed itself here without this list being touched -- which is the whole point of it.
 Ingredients.ProductPriceBands = {
 	100, -- T1: Corn - Jalapeno
-	200, -- T2: Tomato - Chicken
-	500, -- T3: Pineapple - Strawberry
-	1_000, -- T4: Grape
-	2_500, -- T5: Beef, Shrimp
-	6_000, -- T6: Salmon
+	200, -- T2: Carrot - Chicken
+	500, -- T3: Cauliflower - Strawberry
+	1_000, -- T4: Grape - Mango
+	2_500, -- T5: Turkey - Shrimp
+	6_000, -- T6: Duck, Salmon
 	15_000, -- T7: headroom
-	60_000, -- T8: Legendary's anchor
+	60_000, -- T8: Legendary's anchor, where Lamb lands
 	150_000, -- T9: headroom
 	-- T10 is everything above, which is where Mythic's 400k anchor lands
 }
@@ -130,6 +137,12 @@ table.freeze(Ingredients.ProductPriceBands)
 -- CookTime and ValueMultiplier climb together, steeply: the good stuff is the slow stuff, so a rare buys a
 -- longer wait for a much better return rather than a strictly better ingredient. Common doesn't move --
 -- near enough nine rolls in ten land there, so it stays the quick baseline everything else is measured against.
+--
+-- CookTime is an anchor the same way Price is, not a flat rate every entry pays: each one names its own,
+-- fanned around this number by what the food actually is -- dense things that have to cook through at the
+-- top of the band, small wet things at the bottom. What it still is, is the fallback, so an entry added
+-- without one lands on its tier's rate rather than nothing. Keep the bands from overlapping when retuning:
+-- them touching but not crossing is what keeps the slow thing and the valuable thing the same thing.
 Ingredients.Tiers = {
 	{
 		Id = "Common",
@@ -183,19 +196,25 @@ table.freeze(Ingredients.Tiers)
 table.freeze(tiersById)
 
 -- Grouped by tier, commonest first. Config order is the Index grid's layout order and nothing else. The
--- chances add up to 99.997%, so every label reads exactly the number written on it.
+-- chances add up to 99.9998%, so every label reads exactly the number written on it.
 --
 -- Price rises with rarity down a tier as well as across them, so the Index reads as one ladder rather than
 -- flat blocks. Repeating prices (the two peppers, onion and garlic) are wanted -- round numbers a tier
--- apart read better than eighteen forced-unique ones. Salmon names none, being alone in Epic.
+-- apart read better than thirty-three forced-unique ones. Lamb names none, being alone in Legendary.
+--
+-- A tier's price band is wider than the cheapest thing in it: the dearest common costs more than three
+-- times the cheapest, which is what lets a common still be a decision rather than a shrug. What the bands
+-- can't do is touch -- the load-time check below wants every tier strictly dearer and strictly rarer than
+-- the one under it, so the room to fan an entry out is whatever sits between its tier and the next.
 Ingredients.Data = {
 	--
 	{
 		Id = "Corn",
 		Name = "Corn",
 		Tier = "Common",
-		Chance = 7,
+		Chance = 9,
 		Price = 75,
+		CookTime = 14,
 		Color = Color3.fromRGB(255, 214, 71),
 		Icon = "rbxassetid://138967242632937",
 	},
@@ -203,8 +222,9 @@ Ingredients.Data = {
 		Id = "Onion",
 		Name = "Onion",
 		Tier = "Common",
-		Chance = 8,
+		Chance = 10,
 		Price = 80,
+		CookTime = 9,
 		Color = Color3.fromRGB(216, 206, 224),
 		Icon = "rbxassetid://98242838233542",
 	},
@@ -212,17 +232,29 @@ Ingredients.Data = {
 		Id = "Garlic",
 		Name = "Garlic",
 		Tier = "Common",
-		Chance = 9,
+		Chance = 11,
 		Price = 80,
+		CookTime = 7,
 		Color = Color3.fromRGB(235, 227, 209),
 		Icon = "rbxassetid://116516365048951",
+	},
+	{
+		Id = "Potato",
+		Name = "Potato",
+		Tier = "Common",
+		Chance = 12,
+		Price = 85,
+		CookTime = 16,
+		Color = Color3.fromRGB(205, 170, 118),
+		Icon = "rbxassetid://117339991702527",
 	},
 	{
 		Id = "RedBellPepper",
 		Name = "Red Bell Pepper",
 		Tier = "Common",
-		Chance = 10,
+		Chance = 14,
 		Price = 90,
+		CookTime = 10,
 		Color = Color3.fromRGB(206, 62, 53),
 		Icon = "rbxassetid://77712961773231",
 	},
@@ -230,8 +262,9 @@ Ingredients.Data = {
 		Id = "YellowBellPepper",
 		Name = "Yellow Bell Pepper",
 		Tier = "Common",
-		Chance = 11,
+		Chance = 15,
 		Price = 90,
+		CookTime = 10,
 		Color = Color3.fromRGB(240, 196, 62),
 		Icon = "rbxassetid://72467817521534",
 	},
@@ -239,17 +272,29 @@ Ingredients.Data = {
 		Id = "Jalapeno",
 		Name = "Jalapeno",
 		Tier = "Common",
-		Chance = 12,
+		Chance = 17,
 		Price = 95,
+		CookTime = 8,
 		Color = Color3.fromRGB(58, 138, 62),
 		Icon = "rbxassetid://74090150295164",
+	},
+	{
+		Id = "Carrot",
+		Name = "Carrot",
+		Tier = "Common",
+		Chance = 19,
+		Price = 105,
+		CookTime = 15,
+		Color = Color3.fromRGB(235, 122, 46),
+		Icon = "rbxassetid://123200499909407",
 	},
 	{
 		Id = "Tomato",
 		Name = "Tomato",
 		Tier = "Common",
-		Chance = 15,
+		Chance = 21,
 		Price = 110,
+		CookTime = 7,
 		Color = Color3.fromRGB(228, 65, 55),
 		Icon = "rbxassetid://136870243322899",
 	},
@@ -257,8 +302,9 @@ Ingredients.Data = {
 		Id = "Zucchini",
 		Name = "Zucchini",
 		Tier = "Common",
-		Chance = 16,
+		Chance = 25,
 		Price = 115,
+		CookTime = 9,
 		Color = Color3.fromRGB(109, 166, 70),
 		Icon = "rbxassetid://72438289618144",
 	},
@@ -266,55 +312,121 @@ Ingredients.Data = {
 		Id = "Mushroom",
 		Name = "Mushroom",
 		Tier = "Common",
-		Chance = 19,
+		Chance = 28,
 		Price = 140,
+		CookTime = 8,
 		Color = Color3.fromRGB(198, 170, 132),
 		Icon = "rbxassetid://120620478711696",
+	},
+	{
+		Id = "Broccoli",
+		Name = "Broccoli",
+		Tier = "Common",
+		Chance = 32,
+		Price = 150,
+		CookTime = 11,
+		Color = Color3.fromRGB(74, 140, 61),
+		Icon = "rbxassetid://102620202132074",
 	},
 	{
 		Id = "Chicken",
 		Name = "Chicken",
 		Tier = "Common",
-		Chance = 24,
+		Chance = 38,
 		Price = 180,
+		CookTime = 14,
 		Color = Color3.fromRGB(238, 208, 156),
 		Icon = "rbxassetid://85763737510059",
+	},
+	{
+		Id = "Cauliflower",
+		Name = "Cauliflower",
+		Tier = "Common",
+		Chance = 44,
+		Price = 210,
+		CookTime = 13,
+		Color = Color3.fromRGB(238, 232, 214),
+		Icon = "rbxassetid://123187358827349",
+	},
+	{
+		Id = "Eggplant",
+		Name = "Eggplant",
+		Tier = "Common",
+		Chance = 51,
+		Price = 260,
+		CookTime = 12,
+		Color = Color3.fromRGB(108, 62, 140),
+		Icon = "rbxassetid://88534976012906",
 	},
 
 	--
 	{
+		Id = "Pineapple",
+		Name = "Pineapple",
+		Tier = "Uncommon",
+		Chance = 55,
+		Price = 300,
+		CookTime = 28,
+		Color = Color3.fromRGB(245, 203, 54),
+		Icon = "rbxassetid://104408088619027",
+	},
+	{
 		Id = "Pork",
 		Name = "Pork",
 		Tier = "Uncommon",
-		Chance = 30,
+		Chance = 61,
 		Price = 320,
+		CookTime = 32,
 		Color = Color3.fromRGB(241, 157, 157),
 		Icon = "rbxassetid://79245029595159",
 	},
 	{
-		Id = "Pineapple",
-		Name = "Pineapple",
+		Id = "Apple",
+		Name = "Apple",
 		Tier = "Uncommon",
-		Chance = 35,
-		Price = 300,
-		Color = Color3.fromRGB(245, 203, 54),
-		Icon = "rbxassetid://104408088619027",
+		Chance = 67,
+		Price = 350,
+		CookTime = 26,
+		Color = Color3.fromRGB(214, 61, 58),
+		Icon = "rbxassetid://120797045727521",
+	},
+	{
+		Id = "Banana",
+		Name = "Banana",
+		Tier = "Uncommon",
+		Chance = 75,
+		Price = 390,
+		CookTime = 21,
+		Color = Color3.fromRGB(245, 219, 91),
+		Icon = "rbxassetid://85163764338788",
 	},
 	{
 		Id = "Melon",
 		Name = "Melon",
 		Tier = "Uncommon",
-		Chance = 45,
+		Chance = 83,
 		Price = 430,
+		CookTime = 24,
 		Color = Color3.fromRGB(243, 163, 96),
 		Icon = "rbxassetid://71556666204567",
+	},
+	{
+		Id = "Peach",
+		Name = "Peach",
+		Tier = "Uncommon",
+		Chance = 91,
+		Price = 470,
+		CookTime = 22,
+		Color = Color3.fromRGB(250, 176, 124),
+		Icon = "rbxassetid://131315537607177",
 	},
 	{
 		Id = "Strawberry",
 		Name = "Strawberry",
 		Tier = "Uncommon",
-		Chance = 60,
+		Chance = 101,
 		Price = 500,
+		CookTime = 19,
 		Color = Color3.fromRGB(240, 84, 110),
 		Icon = "rbxassetid://76710810752276",
 	},
@@ -322,40 +434,117 @@ Ingredients.Data = {
 		Id = "Grape",
 		Name = "Grape",
 		Tier = "Uncommon",
-		Chance = 80,
+		Chance = 112,
 		Price = 580,
+		CookTime = 19,
 		Color = Color3.fromRGB(150, 92, 196),
 		Icon = "rbxassetid://111929211427017",
+	},
+	{
+		Id = "Kiwi",
+		Name = "Kiwi",
+		Tier = "Uncommon",
+		Chance = 124,
+		Price = 640,
+		CookTime = 20,
+		Color = Color3.fromRGB(143, 191, 74),
+		Icon = "rbxassetid://127403783130431",
+	},
+	{
+		Id = "Asparagus",
+		Name = "Asparagus",
+		Tier = "Uncommon",
+		Chance = 137,
+		Price = 750,
+		CookTime = 23,
+		Color = Color3.fromRGB(106, 158, 84),
+		Icon = "rbxassetid://101470358908580",
 	},
 
 	--
 	{
+		Id = "Mango",
+		Name = "Mango",
+		Tier = "Rare",
+		Chance = 170,
+		Price = 900,
+		CookTime = 34,
+		Color = Color3.fromRGB(247, 168, 51),
+		Icon = "rbxassetid://82309715085228",
+	},
+	{
+		Id = "Turkey",
+		Name = "Turkey",
+		Tier = "Rare",
+		Chance = 220,
+		Price = 1_100,
+		CookTime = 44,
+		Color = Color3.fromRGB(214, 168, 110),
+		Icon = "rbxassetid://135131325322026",
+	},
+	{
 		Id = "Beef",
 		Name = "Beef",
 		Tier = "Rare",
-		Chance = 150,
+		Chance = 280,
 		Price = 1_300,
+		CookTime = 50,
 		Color = Color3.fromRGB(156, 66, 53),
 		Icon = "rbxassetid://95071209025169",
+	},
+	{
+		Id = "Bacon",
+		Name = "Bacon",
+		Tier = "Rare",
+		Chance = 350,
+		Price = 1_600,
+		CookTime = 39,
+		Color = Color3.fromRGB(206, 92, 84),
+		Icon = "rbxassetid://122800616171926",
 	},
 	{
 		Id = "Shrimp",
 		Name = "Shrimp",
 		Tier = "Rare",
-		Chance = 400,
+		Chance = 450,
 		Price = 2_000,
+		CookTime = 35,
 		Color = Color3.fromRGB(255, 133, 112),
 		Icon = "rbxassetid://83047236472578",
 	},
 
 	--
 	{
+		Id = "Duck",
+		Name = "Duck",
+		Tier = "Epic",
+		Chance = 700,
+		Price = 3_500,
+		CookTime = 68,
+		Color = Color3.fromRGB(150, 88, 66),
+		-- TODO: real icon. This id is a placeholder and renders nothing -- and a blank icon on an
+		-- undiscovered Index cell looks exactly like the locked state, so it won't announce itself.
+		Icon = "rbxassetid://0",
+	},
+	{
 		Id = "Salmon",
 		Name = "Salmon",
 		Tier = "Epic",
 		Chance = 1_200,
+		Price = 5_000,
+		CookTime = 54,
 		Color = Color3.fromRGB(250, 142, 110),
 		Icon = "rbxassetid://115449184910204",
+	},
+
+	--
+	{
+		Id = "Lamb",
+		Name = "Lamb",
+		Tier = "Legendary",
+		Chance = 2_200,
+		Color = Color3.fromRGB(176, 96, 88),
+		Icon = "rbxassetid://84226839644571",
 	},
 }
 

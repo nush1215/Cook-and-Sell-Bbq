@@ -58,6 +58,11 @@ function IndexController:_applyCellState(ingredient: Ingredients.Ingredient, dis
 	end
 end
 
+-- Writes the header's tally of how much of the roster the player has discovered.
+function IndexController:_setDiscoveredCount(count: number)
+	self.UI.Holder.Discovered.Text = `Discovered Ingredients: {count}/{#Ingredients.GetAllIngredients()}`
+end
+
 -- Clones one grid cell per ingredient from the detached Template, in config order, each starting in
 -- the locked look so nothing undiscovered flashes before the index reads in.
 function IndexController:_buildCells()
@@ -77,15 +82,25 @@ function IndexController:_buildCells()
 		cell.Visible = true
 		cell.Parent = scrollingFrame
 	end
+
+	self:_setDiscoveredCount(0)
 end
 
--- Re-reads the player's index and reveals every discovered ingredient's cell.
+-- Re-reads the player's index, reveals every discovered ingredient's cell and retallies the header.
 function IndexController:_refreshCells()
 	local index = PlayerDataController:GetKey("IngredientIndex")
+	local discoveredCount = 0
 
 	for _, ingredient in Ingredients.GetAllIngredients() do
-		self:_applyCellState(ingredient, (index[ingredient.Id] or 0) > 0)
+		local discovered = (index[ingredient.Id] or 0) > 0
+		self:_applyCellState(ingredient, discovered)
+
+		if discovered then
+			discoveredCount += 1
+		end
 	end
+
+	self:_setDiscoveredCount(discoveredCount)
 end
 
 function IndexController:OnInit()
