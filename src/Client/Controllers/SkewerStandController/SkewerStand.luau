@@ -24,7 +24,7 @@ local EquippedItem = require(Modules.EquippedItem)
 --
 local LocalPlayer = Players.LocalPlayer
 
-local PROMPT_DISTANCE = 10
+local PROMPT_DISTANCE = 13
 
 -- Up to this many skewers sit on the stand; they distribute along its long (local-X) axis.
 local MAX_SKEWERS = 6
