@@ -6,7 +6,6 @@ local Players = game:GetService("Players")
 -- Packages
 local Packages = ReplicatedStorage.Packages
 local Trove = require(Packages.Trove)
-local Spr = require(Packages.Spr)
 
 -- Shared
 local Shared = ReplicatedStorage.Shared
@@ -36,25 +35,23 @@ local Particles = ReplicatedStorage.Assets.Particles
 local LocalPlayer = Players.LocalPlayer
 
 local GRILL_PROMPT_DISTANCE = 10
-local KNOB_PROMPT_DISTANCE = 15
 local GRILL_PROMPT_HOLD = 0.3
-local KNOB_PROMPT_HOLD = 0.1
+-- Further than the place, since the take is the cook's stop: a player watching the bar from where they
+-- can see it must still be able to call it.
+local TAKE_PROMPT_DISTANCE = 15
 -- The same E as every other prompt, by choice. OnePerButton exclusivity draws one E prompt at a time --
--- whichever enabled one is nearest -- so the take contends with the knob's Cook on a raw skewer (which
--- reaches five studs further) and with a neighbouring griller's prompts; standing close to the skewer
--- is what wins it. Accepted for a consistent button over its own key.
+-- whichever enabled one is nearest -- so the take contends with a neighbouring griller's prompts, and
+-- standing close to the skewer is what wins it. Accepted for a consistent button over its own key.
 local TAKE_PROMPT_KEY = Enum.KeyCode.E
 local TAKE_PROMPT_GAMEPAD_KEY = Enum.KeyCode.ButtonY
 local SKIP_COOK_PRODUCT = "SkipCook" -- the Products entry the skip button is priced from and buys
 -- When the skip is worth offering: a short cook isn't a wait worth buying out of, and an offer up the
--- moment the stove is lit reads as a shakedown. Measured on CookTime, the whole bar.
+-- moment a BBQ goes down reads as a shakedown. Measured on CookTime, the whole bar.
 local SKIP_MIN_COOK_TIME = 10 -- seconds of bar below which the skip is never offered
 local SKIP_REVEAL_DELAY = 5 -- seconds into a cook before it is
 -- Matches the PromptSubjectHighlight component's file name, which is what it registers under.
 local PROMPT_HIGHLIGHT_TAG = "PromptSubjectHighlight"
 local GHOST_TRANSPARENCY = 0.3 -- same figure the build ghost uses, so ghosting reads alike everywhere
-local KNOB_UI_FLOAT_AMPLITUDE = 0.15 -- how far the knob billboard bobs, in studs
-local KNOB_UI_FLOAT_SPEED = 3 -- how fast the bob cycles, in radians per second
 
 -- Cook animation tuning.
 local SPIN_SPEED = math.rad(120) -- how fast the skewer turns while cooking, once up to speed
@@ -77,7 +74,7 @@ local PARTICLE_CLEANUP_PADDING = 0.5 -- extra seconds past the longest particle 
 -- Fallback for a griller with no folder of its own under Assets.Particles.Cooking. See _showCookParticles.
 local COOK_PARTICLE_DEFAULT = "Default"
 
--- The looped sizzle a lit grill carries, faded so the stove going on or off doesn't crack in or cut dead.
+-- The looped sizzle a cooking grill carries, faded so a cook starting or ending doesn't crack in or cut dead.
 local COOK_SOUND = "GrillCooking"
 local COOK_SOUND_FADE_IN = 0.5
 local COOK_SOUND_FADE_OUT = 1
@@ -91,27 +88,25 @@ local ALARM_FADE_IN = 0 -- an alarm should crack in on the beat rather than ramp
 local ALARM_FADE_OUT = 0.15 -- just enough that cutting the burst short doesn't click
 
 -- Rung on the owner's grill the frame the bar enters the perfect window, since that's the one instant
--- worth pulling the knob on and the bar recolouring alone is easy to miss.
+-- worth taking the skewer off on and the bar recolouring alone is easy to miss.
 local PERFECT_SOUND = "PerfectlyCookedChime"
 
--- Stove visuals: the charcoal glow, the LED and the knob handle.
+-- Stove visuals: the charcoal glow.
 local CHARCOAL_OFF_COLOR = Color3.fromRGB(25, 12, 7)
 -- Per-part override, so a grill can burn its own colour without a code change.
 local CHARCOAL_GLOW_ATTRIBUTE = "GlowColor"
 local CHARCOAL_DEFAULT_GLOW = Color3.fromRGB(255, 85, 0)
 local CHARCOAL_FADE_TIME = 3 -- seconds the glow fades in at the start of a cook and back out at the end
-local LED_ON_COLOR = Color3.fromRGB(0, 255, 0)
-local LED_OFF_COLOR = Color3.fromRGB(255, 0, 0)
-local HANDLE_ON_ROTATION = CFrame.Angles(0, math.rad(90), 0) -- how far the knob turns when the stove's on
 
 -- Required lazily to break the cycle: GrillerController requires this class.
 local GrillerController
 
 --[[
     Renders one placed griller on every client: spins and browns the server-cloned skewer, and lights
-    the stove. Everything derives from the CookStartedAt / CookTime attributes, so it plays identically
-    on every client and a mid-cook join picks up at the right progress. A cook only ends when the owner
-    turns the stove off; past the end of the bar it keeps burning and the skewer chars.
+    the coals. Everything derives from the CookStartedAt / CookTime attributes, so it plays identically
+    on every client and a mid-cook join picks up at the right progress. A cook starts the moment a skewer
+    is set down and only ends when the owner takes it back off; past the end of the bar it keeps burning
+    and the skewer chars.
 
     Parts and prompts are resolved once and held for this class's life. That relies on the server
     streaming a griller atomically (see Base:BuildStructure) -- made nonatomic, this holds corpses.
@@ -166,7 +161,6 @@ function Grill.new(slot: Instance)
 
 	-- Searched recursively rather than by path: the grill body gets re-nested as it's re-authored, and a
 	-- lookup naming each level would break with it.
-	local knob = slot:FindFirstChild("Knob", true)
 	local attachment = slot:FindFirstChild("StickAttachment", true)
 	local grillAttachment = slot:FindFirstChild("GrillAttachment", true)
 	local grillModel = slot:FindFirstChild("Grill")
@@ -206,17 +200,10 @@ function Grill.new(slot: Instance)
 		-- Where the place prompt hangs. The take isn't here -- it rides on the skewer itself.
 		_grillAttachment = grillAttachment,
 
-		-- Stove parts, and their authored rest so turning the stove off can put them back.
-		_knob = knob,
-		_led = knob and knob:FindFirstChild("LED"),
-		_handle = knob and knob:FindFirstChild("Handle"),
+		-- The coals the cook's glow lerps.
 		_charcoals = charcoals,
-		_handleRestOffset = nil,
-		-- Whether the stove is *shown* lit, so the handle only springs when that changes -- re-springing
-		-- it on a griller still dropping in pins the knob to a pose the rest of the model hasn't reached.
-		_stoveLit = false,
 
-		-- The body alone, not the whole griller: the knob carries its own cue on its own condition.
+		-- The body alone, not the whole griller: it carries the "put the skewer you're holding here" cue.
 		_grillModel = grillModel,
 
 		-- What the cook's particles mount to and its sounds play from.
@@ -243,11 +230,10 @@ function Grill.new(slot: Instance)
 		_stoveOff = nil,
 
 		-- The cooking bar, the authored fill size Update only swaps the X of, and the band it was last
-		-- painted for. Plus the "cook me" billboard on the knob while the skewer waits to be lit.
+		-- painted for.
 		_cookingUI = nil,
 		_cookingFillSize = nil,
 		_cookingState = nil,
-		_knobUI = nil,
 
 		-- The perfect window on the synced server clock, solved on the first frame the bar draws and
 		-- dropped by _sync whenever one of the cook's stamps moves.
@@ -262,7 +248,6 @@ function Grill.new(slot: Instance)
 
 		--
 		_prompt = nil,
-		_knobPrompt = nil,
 		_takeSkewerPrompt = nil,
 		_takeSkewerModel = nil, -- the skewer model the take prompt was built on, so a swap rebuilds it
 
@@ -279,16 +264,12 @@ function Grill.new(slot: Instance)
 		_cleaner = cleaner,
 		_promptCleaner = cleaner:Construct(Trove),
 		_cookingUICleaner = cleaner:Construct(Trove),
-		_knobCleaner = cleaner:Construct(Trove),
-		_knobUICleaner = cleaner:Construct(Trove),
 		_takeSkewerCleaner = cleaner:Construct(Trove),
 		_ghostCleaner = cleaner:Construct(Trove),
 		_particleCleaner = cleaner:Construct(Trove),
 		_soundCleaner = cleaner:Construct(Trove),
 		_alarmCleaner = cleaner:Construct(Trove),
 	}, Grill)
-
-	self._handleRestOffset = self._handle and slot:GetPivot():Inverse() * self._handle.CFrame
 
 	-- The server streams a structure whole (see Base:BuildStructure), so a missing attachment means the
 	-- template is wrong, not merely late.
@@ -297,13 +278,7 @@ function Grill.new(slot: Instance)
 		return self
 	end
 
-	-- Warned rather than bailed on: without a handle nobody can light it, but the cook still renders for
-	-- everyone watching.
-	if not self._handle then
-		warn(`[Griller] {slot.Name} has no Knob.Handle, its stove can't be switched`)
-	end
-
-	-- The server rebuilds the skewer model on a place/remove/stop, so follow it in and out.
+	-- The server rebuilds the skewer model on a place/take, so follow it in and out.
 	cleaner:Connect(slot.ChildAdded, function(child)
 		if child.Name == "Skewer" then
 			self._skewerModel = child
@@ -330,7 +305,7 @@ function Grill.new(slot: Instance)
 		end
 	end)
 
-	-- The cook animation, the stove and the prompt all track these.
+	-- The cook animation, the coals and the prompts all track these.
 	local attributes = {
 		"PlacedStickId",
 		"Cooking",
@@ -349,13 +324,12 @@ function Grill.new(slot: Instance)
 		end)
 	end
 
-	-- Start from the off look; _sync relights if this slot's already cooking. Settled here rather than in
-	-- _setStoveOff, which hands the coals to Update's cool-down instead of snapping them dark.
+	-- Start from cold; _sync lights the coals if this slot's already cooking. Snapped dark here rather than
+	-- left to Update's cool-down, which fades from wherever a cook that actually ran had got to.
 	for _, charcoal in self._charcoals do
 		charcoal.Part.Color = CHARCOAL_OFF_COLOR
 	end
 
-	self:_setStoveOff()
 	self:_sync()
 
 	return self
@@ -370,11 +344,6 @@ end
 -- Where a skewer sits when it's seated on this griller: the same pose the server pivots the real one to.
 function Grill:_seatedCFrame(): CFrame
 	return self:_settledPivot() * self._seatOffset
-end
-
--- Where the knob handle sits with the stove off. The stove turning on rotates it from here.
-function Grill:_handleRestCFrame(): CFrame
-	return self:_settledPivot() * self._handleRestOffset
 end
 
 -- Seconds since this cook started, off the synced server clock so every client agrees. Zero when
@@ -537,8 +506,8 @@ function Grill:_rebuildCookParts()
 	self._cookParts = parts
 end
 
--- Reads the slot's attributes and reconciles: starts or stops the cook (stove + part pairing) on a
--- Cooking edge, and keeps the prompt/knob current.
+-- Reads the slot's attributes and reconciles: starts or stops the cook (coals + part pairing) on a
+-- Cooking edge, and keeps the prompts current.
 function Grill:_sync()
 	local cooking = self._slot:GetAttribute("Cooking") == true
 
@@ -577,7 +546,6 @@ function Grill:_sync()
 		self._skewerModel = self._slot:FindFirstChild("Skewer")
 		self:_stopAlarm()
 		self:_rebuildCookParts()
-		self:_setStoveOn()
 		self:_showCookingUI()
 		self:_showCookParticles()
 		self:_startCookSound()
@@ -585,7 +553,6 @@ function Grill:_sync()
 		self._cooking = false
 		self._cookParts = nil
 		self._spinCarry = nil
-		self:_setStoveOff()
 		self:_hideCookingUI()
 		self:_hideCookParticles()
 		self:_stopCookSound()
@@ -630,41 +597,6 @@ function Grill:_sync()
 	end
 
 	self:RefreshInteraction()
-end
-
--- Lights the stove: LED green, knob turned. The charcoal glow is Update's, driven off the cook timer.
-function Grill:_setStoveOn()
-	if self._led then
-		self._led.Color = LED_ON_COLOR
-	end
-
-	if self._stoveLit then
-		return
-	end
-	self._stoveLit = true
-
-	if self._handle then
-		Spr.target(self._handle, 0.7, 3, { CFrame = self:_handleRestCFrame() * HANDLE_ON_ROTATION })
-	end
-end
-
--- Kills the stove: LED red, knob back to rest. The coals are left to Update, which cools them from
--- wherever they were off the _stoveOff stamp.
-function Grill:_setStoveOff()
-	if self._led then
-		self._led.Color = LED_OFF_COLOR
-	end
-
-	-- Only turned back if it was ever turned: the knob is authored at rest, and springing a fresh griller's
-	-- knob there anyway would leave it hanging where the drop-in hasn't reached yet.
-	if not self._stoveLit then
-		return
-	end
-	self._stoveLit = false
-
-	if self._handle then
-		Spr.target(self._handle, 0.7, 3, { CFrame = self:_handleRestCFrame() })
-	end
 end
 
 -- Puts the cooking bar up over the griller's CookingUIAttachment, marks the band boundaries, records the
@@ -759,8 +691,8 @@ function Grill:_showCookParticles()
 	local folder = Particles.Cooking:FindFirstChild(effectName)
 		or Particles.Cooking:FindFirstChild(COOK_PARTICLE_DEFAULT)
 
-	-- Warned rather than thrown: this runs alongside lighting the stove, so erroring would take the whole
-	-- cook down over a missing folder.
+	-- Warned rather than thrown: this runs alongside the rest of a cook starting, so erroring would take
+	-- the whole thing down over a missing folder.
 	if not folder then
 		warn(`[Grill] Assets.Particles.Cooking has no {effectName} or {COOK_PARTICLE_DEFAULT} folder`)
 		return
@@ -920,7 +852,7 @@ function Grill:Update()
 	-- Warped once here, so the bar, the browning and the charring all move as one piece under a widened
 	-- window, a resumed cook or an unstable grill.
 	--
-	-- The stove and the spin deliberately don't read this -- they're the grill running, not the food
+	-- The coals and the spin deliberately don't read this -- they're the grill running, not the food
 	-- cooking. The spin especially: _sync sizes its wind-down off a steady SPIN_SPEED to land on a whole
 	-- turn, which a wobbled angle would break. That's also why the spin renders above this, not below.
 	local elapsed = CookStates.GetBarElapsed(
@@ -938,17 +870,17 @@ function Grill:Update()
 	-- then holds. Charring past the end is GetOvertimeColor's, off the seconds since the bar filled.
 	local brown = math.clamp(progress / CookStates.RAW_END, 0, 1)
 
-	-- Off raw seconds since the light rather than the warped bar: the coals went out when the stove did,
-	-- so a skewer resumed part-cooked still lights them from cold.
+	-- Off raw seconds since the cook started rather than the warped bar: the coals went out when the last
+	-- one ended, so a skewer resumed part-cooked still lights them from cold.
 	local glow = math.clamp(self:_elapsed() / CHARCOAL_FADE_TIME, 0, 1)
 	glow = glow * glow * (3 - 2 * glow) -- smoothstep, so the glow eases in rather than ramping flat
 	for _, charcoal in self._charcoals do
 		charcoal.Part.Color = CHARCOAL_OFF_COLOR:Lerp(charcoal.GlowColor, glow)
 	end
 
-	-- Tracked out here rather than alongside the bar it paints: the knob's stop prompt reads the band
-	-- too, and a griller whose CookingUIAttachment never resolved still has a prompt to decide. Only
-	-- acted on at a band edge, so everything below lands on the same frame the fill crosses that mark.
+	-- Tracked out here rather than alongside the bar it paints: the take prompt reads the band too, and a
+	-- griller whose CookingUIAttachment never resolved still has a prompt to decide. Only acted on at a
+	-- band edge, so everything below lands on the same frame the fill crosses that mark.
 	local stateId = CookStates.GetStateFromCook(elapsed, cookTime)
 	if stateId ~= self._cookingState then
 		local previous = self._cookingState
@@ -961,7 +893,7 @@ function Grill:Update()
 			SoundController:PlaySound(PERFECT_SOUND, self._gratesPart)
 		end
 
-		-- Only Raw asks to be held, so the offer has to be re-decided at every edge.
+		-- Only Raw asks the take to be held, so the offer has to be re-decided at every edge.
 		self:RefreshInteraction()
 
 		if self._cookingUI then
@@ -1156,8 +1088,8 @@ function Grill:_refreshGhost()
 end
 
 -- Puts the grill's prompts and cues up on grillers the local player owns and takes them down otherwise.
--- Each prompt sits on the thing it acts on: place on the body, the stove's switch on the knob, take on
--- the skewer. The Robux skip rides the cooking bar instead, so this only decides its visibility and price.
+-- Each prompt sits on the thing it acts on: place on the body, take on the skewer. The Robux skip rides
+-- the cooking bar instead, so this only decides its visibility and price.
 function Grill:RefreshInteraction()
 	if not self._attachment then
 		return
@@ -1167,30 +1099,26 @@ function Grill:RefreshInteraction()
 	local owned = self._ownerUserId == LocalPlayer.UserId
 	local placed = self._slot:GetAttribute("PlacedStickId")
 	local cooking = self._slot:GetAttribute("Cooking") == true
-	local cooked = self._slot:GetAttribute("Cooked") == true
 
 	GrillerController = GrillerController or require(script.Parent)
 
-	-- What the slot is offering. A cook can only be stopped; a raw skewer can be lit or taken; a cooked
-	-- one can only be taken.
+	-- What the slot is offering: an empty grate takes a BBQ, an occupied one gives it back. Setting one
+	-- down is what lights the grill, so the take is the cook's stop as well as its collection.
 	local canPlace = owned and placed == nil
 	-- Stricter than the grate merely being free: the body's glow and the ghost preview both hang off
 	-- actually holding a placeable BBQ, and a cooked skewer can't go back on the heat.
 	local heldSkewer = EquippedItem.GetSkewer()
 	local canPlaceHeld = canPlace and heldSkewer ~= nil and heldSkewer:GetAttribute("Cooked") ~= true
-	local canCook = owned and placed ~= nil and not cooking and not cooked
-	local canStop = owned and cooking
-	-- A hold rather than ineligibility: the knob prompt must survive it (torn down, it would rebuild
-	-- under a player standing at it), so only its Enabled and glow gate on this.
-	local stopLocked = canStop and GrillerController:IsStopLocked()
-	-- Gated here rather than on the prompt, so the outline goes with it and neither is left saying
-	-- take me while the take is locked.
-	local canTake = owned and placed ~= nil and not cooking and not GrillerController:IsTakeLocked()
+	local takeEligible = owned and placed ~= nil
+	-- A hold rather than ineligibility: the server doesn't rebuild the skewer mid-cook, so a lock gating
+	-- the prompt's existence would tear it down and rebuild it under a player stood at it. The two locks
+	-- are the tutorial's, one per side of the cook (see GrillerController:SetTakeLocked).
+	local takeLocked = if cooking then GrillerController:IsStopLocked() else GrillerController:IsTakeLocked()
 
 	-- Settled first because it's the only offer that must be rebuilt rather than re-labelled -- the server
 	-- rebuilds the skewer on every record write -- so an error further down would cost it outright.
 	-- Tracked by the model it was built on, not the prompt, or a swap leaves a destroyed prompt standing in.
-	local takeModel = if canTake then self._skewerModel else nil
+	local takeModel = if takeEligible then self._skewerModel else nil
 
 	if takeModel ~= self._takeSkewerModel then
 		self._takeSkewerCleaner:Clean()
@@ -1207,9 +1135,8 @@ function Grill:RefreshInteraction()
 
 			local prompt = Instance.new("ProximityPrompt")
 			prompt.RequiresLineOfSight = false
-			prompt.HoldDuration = GRILL_PROMPT_HOLD
 			prompt.Style = Enum.ProximityPromptStyle.Custom
-			prompt.MaxActivationDistance = GRILL_PROMPT_DISTANCE
+			prompt.MaxActivationDistance = TAKE_PROMPT_DISTANCE
 			-- Its own button, not the griller's E -- see TAKE_PROMPT_KEY.
 			prompt.KeyboardKeyCode = TAKE_PROMPT_KEY
 			prompt.GamepadKeyCode = TAKE_PROMPT_GAMEPAD_KEY
@@ -1232,11 +1159,23 @@ function Grill:RefreshInteraction()
 		end
 	end
 
+	if self._takeSkewerPrompt then
+		-- Asserted both ways, not left alone, so releasing a lock restores the prompt on the next refresh.
+		self._takeSkewerPrompt.Enabled = not takeLocked
+		-- Off the band the cook is in, so only a take that would throw the run away asks to be held (see
+		-- StopHold) -- the rest are timing calls, and a hold there is spent inside the window being aimed
+		-- at. Nil state is the frame between the cook being stamped and Update's first pass: read as Raw,
+		-- which puts the guard on rather than off for that frame.
+		self._takeSkewerPrompt.HoldDuration = if cooking
+			then CookStates.GetStateFromId(self._cookingState or "Raw").StopHold or 0
+			else GRILL_PROMPT_HOLD
+	end
+
 	-- Outlines the skewer while its take prompt is up. Tagged after the prompt is built, since the
 	-- component resolves the prompt once on start and gives up if there isn't one.
 	if self._skewerModel then
 		self._skewerModel:SetAttribute("HighlightColor", Highlights.CLAIM)
-		if canTake then
+		if takeEligible and not takeLocked then
 			self._skewerModel:AddTag(PROMPT_HIGHLIGHT_TAG)
 		else
 			self._skewerModel:RemoveTag(PROMPT_HIGHLIGHT_TAG)
@@ -1279,8 +1218,8 @@ function Grill:RefreshInteraction()
 		self._prompt = nil
 	end
 
-	-- Place only: taking belongs to the skewer, and the stop to the knob alone, since that's the timing
-	-- call that decides what the BBQ is worth.
+	-- Place only: taking belongs to the skewer, since that's the timing call that decides what the BBQ is
+	-- worth and the skewer is what the player is watching when they make it.
 	if self._prompt then
 		self._prompt.Enabled = canPlace
 		self._prompt.HoldDuration = GRILL_PROMPT_HOLD
@@ -1299,79 +1238,6 @@ function Grill:RefreshInteraction()
 		-- Only priced when actually offered -- the lookup is a MarketplaceService round trip.
 		if canSkip then
 			skip.Price.Text = self:_robuxPriceText(SKIP_COOK_PRODUCT)
-		end
-	end
-
-	-- One prompt across both light and stop, so a cook starting doesn't tear it down and rebuild it
-	-- underneath a player standing at it.
-	local knobEligible = canCook or canStop
-
-	if knobEligible and not self._knobPrompt then
-		-- The handle, not the knob: the knob is a model and the prompt wants a part.
-		if self._handle then
-			-- Keeps the place prompt's E, which is safe: one wants the grate free and the other occupied,
-			-- so the two are never up together.
-			local prompt = Instance.new("ProximityPrompt")
-			prompt.RequiresLineOfSight = false
-			prompt.Style = Enum.ProximityPromptStyle.Custom
-			prompt.MaxActivationDistance = KNOB_PROMPT_DISTANCE
-			prompt.Parent = self._handle
-
-			self._knobPrompt = prompt
-			self._knobCleaner:Add(prompt)
-			self._knobCleaner:Connect(prompt.Triggered, function()
-				SoundController:PlaySound("KnobSwitch", self._handle)
-
-				GrillerController = GrillerController or require(script.Parent)
-				if self._slot:GetAttribute("Cooking") then
-					GrillerController:RequestStopCook(self._uid)
-				else
-					GrillerController:RequestCook(self._uid)
-				end
-			end)
-		end
-	elseif not knobEligible and self._knobPrompt then
-		self._knobCleaner:Clean()
-		self._knobPrompt = nil
-	end
-
-	if self._knobPrompt then
-		-- Asserted both ways, not left alone: eligibility is this prompt's existence, so the hold has to
-		-- be honored here -- and releasing it restores the prompt on the next refresh.
-		self._knobPrompt.Enabled = not stopLocked
-		self._knobPrompt.ActionText = if canStop then "Stop Cooking" else "Cook"
-		-- Off the band the cook is in, so only a stop that would throw the run away asks to be held (see
-		-- StopHold). Nil state is the frame between the cook being stamped and Update's first pass: read
-		-- as Raw, which puts the guard on rather than off for that frame.
-		self._knobPrompt.HoldDuration = if canStop
-			then CookStates.GetStateFromId(self._cookingState or "Raw").StopHold or 0
-			else KNOB_PROMPT_HOLD
-	end
-
-	-- Billboard calling out that the knob is ready to cook, readable from further off than the prompt. On
-	-- its own cleaner, since the prompt stays up through the cook and this label would be lying by then.
-	if canCook and not self._knobUI and self._handle then
-		local holder = UI.KnobUIAttachment:Clone()
-		holder.Parent = self._handle
-		holder:SetAttribute("CanSpin", false)
-		holder:SetAttribute("HoverAmplitude", KNOB_UI_FLOAT_AMPLITUDE)
-		holder:SetAttribute("HoverSpeed", KNOB_UI_FLOAT_SPEED)
-		holder:AddTag("PartFloat")
-
-		self._knobUI = holder
-		self._knobUICleaner:Add(holder)
-	elseif not canCook and self._knobUI then
-		self._knobUICleaner:Clean()
-		self._knobUI = nil
-	end
-
-	-- Same condition as its prompt, so the glow and the prompt are never out of step.
-	if self._knob then
-		self._knob:SetAttribute("HighlightColor", Highlights.OPERATE)
-		if knobEligible and not stopLocked then
-			self._knob:AddTag(Highlights.TAG)
-		else
-			self._knob:RemoveTag(Highlights.TAG)
 		end
 	end
 
@@ -1398,9 +1264,6 @@ function Grill:Destroy()
 	-- These instances outlive this class, so a tag left on keeps breathing with nothing driving it.
 	if self._grillModel then
 		self._grillModel:RemoveTag(Highlights.TAG)
-	end
-	if self._knob then
-		self._knob:RemoveTag(Highlights.TAG)
 	end
 	if self._skewerModel then
 		self._skewerModel:RemoveTag(PROMPT_HIGHLIGHT_TAG)

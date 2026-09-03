@@ -1,63 +1,48 @@
--- Step 13: Put the BBQ out on the sell stall, which is what brings a customer. Ends by holding the take
--- off, which step 14 releases once the sale has gone through -- see there.
-local HttpService = game:GetService("HttpService")
+-- Step 13: Take the Store teleport. The stick shop isn't on the player's base -- it's in the shared
+-- store -- and the top bar's Store button is how you get there. The spotlight teaches the button;
+-- arriving is what ends the beat, so walking there counts the same as pressing it.
+--
+-- Last in this variant rather than fifth, and the sale two beats ago is what pays for it: selling a BBQ
+-- destroys the stick under it, so the player really is at zero here. The trip is them restocking after
+-- a loop they've now done once, instead of an errand run before they've seen one pay out.
+--
+-- Looked up per check rather than held, for the same reason the trip home uses a zone: a reference
+-- taken on one side of a teleport is worth nothing on the other if the thing it points at has been
+-- out of the world in between.
+-- Controllers
+local HudController = require(script.Parent.Parent.Parent.Parent.HudController)
 
-local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
-local SkewerStandController = require(script.Parent.Parent.Parent.Parent.SkewerStandController)
+-- The bar the Store button sits on, held down for the rest of the run by Start.
+local TOP_BAR_FRAME = "Top"
 
-local NEAR_DISTANCE = 12
-local BEAM_HIDE_DISTANCE = 12
+local ARRIVED_DISTANCE = 60
 
 return function(self)
-	local base = self:GetBase()
-	local stand = base.Stalls.SellStall.SkewerStand
+	local teleports = workspace:WaitForChild("Core"):WaitForChild("Teleports")
 
-	local highlight = self:CreateHighlight(stand)
-	local beam = self:CreateBeam(stand, BEAM_HIDE_DISTANCE)
+	-- This is the beat that wants it, so it comes back for exactly as long as the beat lasts.
+	HudController:SetHudFrameHiddenFor(self, TOP_BAR_FRAME, false)
 
-	self:AwaitGoal({
-		{
-			Description = `Go to your {self:Emphasize("Stall")}`,
-			Check = function()
-				return self:IsNear(stand, NEAR_DISTANCE)
-			end,
-		},
-		{
-			Description = `Equip your {self:Emphasize("BBQ")}`,
-			Check = function()
-				return EquippedItem.GetSkewer() ~= nil
-			end,
-		},
-	}, {
-		Description = `Place your {self:Emphasize("BBQ")} on the stand`,
+	local spotlight = self:SpotlightHudButton("Store")
+
+	self:AwaitGoal(nil, {
+		Description = `You're out of {self:Emphasize("Sticks")}! Click the {self:Emphasize("Store")} button`,
 		Wait = function()
-			-- The stand's contents ride on one attribute as a JSON list. Counted against what was already
-			-- there rather than against empty: a customer mid-visit when the player last left puts the
-			-- skewer it was holding back on the stand, so the stand isn't always bare when this opens.
-			local function placedCount(): number
-				local encoded = stand:GetAttribute("PlacedSkewers")
-				return if encoded then #HttpService:JSONDecode(encoded) else 0
+			local function atStore(): boolean
+				local store = teleports:FindFirstChild("Store")
+				return store ~= nil and self:IsNear(store, ARRIVED_DISTANCE)
 			end
 
-			local startingCount = placedCount()
-			while placedCount() <= startingCount do
-				stand:GetAttributeChangedSignal("PlacedSkewers"):Wait()
+			while not atStore() do
+				task.wait()
 			end
-
-			-- Taken here rather than after AwaitGoal returns, which is a frame later: the skewer's own take
-			-- prompt is built with the model it rides on, so it's live on the frame the place lands.
-			--
-			-- What follows is a wait for a customer, and the only thing in reach during it is a prompt
-			-- offering to take back the very skewer being waited on -- which would leave the beat waiting
-			-- for a sale on an empty stand, with nothing to say so.
-			SkewerStandController:SetTakeLocked(true)
 		end,
 	})
 
-	beam.Destroy()
-	highlight.Destroy()
+	spotlight.Destroy()
+	HudController:SetHudFrameHiddenFor(self, TOP_BAR_FRAME, true)
 
-	self:LogStep("PlaceOnSellStand")
+	self:LogStep("OpenStore")
 
 	self.SequenceFinish:Fire()
 end

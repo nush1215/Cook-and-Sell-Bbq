@@ -25,10 +25,6 @@ local GRILLER_CATEGORY = "Grillers"
 -- The parts a Grill has to have to do anything. They come off the structure's template, so they're
 -- always there -- but a placed griller replicates in mid-session rather than existing from place-load,
 -- so they're waited on rather than assumed (see _addGrill).
---
--- Knob isn't among them on purpose: the server streams a griller whole (Base:BuildStructure sets it
--- atomic), so nothing here is ever merely late, and a missing knob costs the owner the stove rather
--- than costing everyone the cook -- Grill warns for it and renders the rest.
 local REQUIRED_DESCENDANTS = { "Grill", "StickAttachment", "GrillAttachment" }
 local CHILD_TIMEOUT = 10
 
@@ -38,12 +34,12 @@ local CHILD_TIMEOUT = 10
 local SKIP_COOK_COOLDOWN = 1
 
 --[[
-    Renders the cook on every base's grillers and drives the owner's place/cook interaction.
+    Renders the cook on every base's grillers and drives the owner's place/take interaction.
 
     One Grill instance per placed griller, across every base, so a cooking skewer spins and browns for
     visitors too -- the server clones the static skewer model in and mirrors the cook state onto the
-    griller's attributes, and the class animates it off those. The place/remove prompt and the cook
-    knob only appear on grillers the local player owns.
+    griller's attributes, and the class animates it off those. The place and take prompts only appear
+    on grillers the local player owns.
 
     Grillers are structures a player builds rather than slots authored into their base, so they're
     found off the Griller tag: one appearing mid-session is picked up the same way as one that was
@@ -68,15 +64,13 @@ end
 --
 local GrillerController = {
 	ToggleGrillEvent = Network.Event("ToggleGrillStick"),
-	StartCookEvent = Network.Event("StartCooking"),
-	StopCookEvent = Network.Event("StopCooking"),
 	RequestSkipCookEvent = Network.Event("RequestSkipCook"),
 
 	_grills = {}, -- [model: Instance] = Grill
 	_cleaner = Trove.new(),
-	_takeLocked = false, -- while true, no grill offers to hand a skewer back (see SetTakeLocked)
+	_takeLocked = false, -- while true, no idle grill offers to hand a skewer back (see SetTakeLocked)
 	_skipLocked = false, -- while true, no grill shows its Robux skip (see SetSkipLocked)
-	_stopLocked = false, -- while true, no grill offers to stop its cook (see SetStopLocked)
+	_stopLocked = false, -- while true, no cooking grill offers to hand a skewer back (see SetStopLocked)
 	_skipCookNextAt = 0, -- the clock the next skip request is allowed at, so a mashed button sends one
 }
 
@@ -117,28 +111,21 @@ function GrillerController:_removeGrill(model: Instance)
 	self._grills[model] = nil
 end
 
--- Asks the server to put the equipped filled skewer on this grill, or take the finished one back off.
+-- Asks the server to put the equipped filled skewer on this grill, which lights it, or take it back off,
+-- which settles it at whatever the bar has reached.
+--
+-- Deliberately unthrottled: the take is a timing call, and the server takes the player's ping off the
+-- moment it lands, so anything held back here would land as a worse cook than they aimed for. The server
+-- holds its own debounce across the write either way (see GrillerManager:ToggleGrillStick).
 function GrillerController:RequestToggle(uid: string)
 	self.ToggleGrillEvent:FireServer(uid)
-end
-
--- Asks the server to light the stove under this grill's eligible skewer.
-function GrillerController:RequestCook(uid: string)
-	self.StartCookEvent:FireServer(uid)
-end
-
--- Asks the server to turn this grill's stove back off, settling the skewer at whatever the bar has
--- reached. Deliberately unthrottled: this is a timing call, and the server takes the player's ping off
--- the moment it lands, so anything held back here would land as a worse cook than they aimed for.
-function GrillerController:RequestStopCook(uid: string)
-	self.StopCookEvent:FireServer(uid)
 end
 
 -- Asks the server to raise the Robux prompt for skipping the cook running on this grill. Opened
 -- server-side rather than through ShopController so the grill it was raised from is remembered there:
 -- the receipt says nothing about which cook was being bought out.
 --
--- Throttled, unlike the stop above: this one costs money rather than timing, so the cost of holding a
+-- Throttled, unlike the toggle above: this one costs money rather than timing, so the cost of holding a
 -- press back is nothing and the cost of letting a dozen through is a stream of purchase prompts. The
 -- server holds the same window (see GrillerManager:PromptSkipCookProduct) -- this only saves the traffic.
 function GrillerController:RequestSkipCook(uid: string)
@@ -150,7 +137,7 @@ function GrillerController:RequestSkipCook(uid: string)
 	self.RequestSkipCookEvent:FireServer(uid)
 end
 
--- Re-checks every grill's prompt/knob/highlights (ownership + eligibility). Cheap, and it depends on
+-- Re-checks every grill's prompts and highlights (ownership + eligibility). Cheap, and it depends on
 -- both the local player's base and what they're holding, so it's called whenever either changes.
 function GrillerController:RefreshInteractions()
 	for _, grill in self._grills do
@@ -158,14 +145,12 @@ function GrillerController:RefreshInteractions()
 	end
 end
 
--- Holds every grill's take off, so a skewer that's been put down stays put. Gates the eligibility the
--- class already computes rather than reaching in and disabling prompts, because the take prompt rides on
+-- Holds the take off on grills that aren't cooking, so a settled skewer stays put. Gates the eligibility
+-- the class already computes rather than reaching in and disabling the prompt, because the take rides on
 -- the skewer model -- which the server rebuilds on every record write, taking the prompt with it -- so
 -- anything holding a captured instance would be handing back to one that's already gone.
 --
--- Set by the tutorial across the beat between placing a BBQ and lighting it: the stove is the only thing
--- being asked for there, and a prompt offering to undo the step they just finished is the one other
--- thing in reach.
+-- The cooking half of the same prompt is SetStopLocked's, since the two are asked for at different beats.
 function GrillerController:SetTakeLocked(locked: boolean)
 	if self._takeLocked == locked then
 		return
@@ -202,14 +187,14 @@ function GrillerController:IsSkipLocked(): boolean
 	return self._skipLocked
 end
 
--- Holds every grill's stop off, so a running cook can't be ended. Gates the eligibility the class
--- already computes rather than reaching in and disabling the knob prompt, because every refresh
--- re-asserts Enabled on it (see Grill:RefreshInteraction) -- a forced disable loses that race and
--- flashes the prompt back on for a frame each time.
+-- Holds the take off on grills that are cooking, so a running cook can't be ended. Taking a skewer off is
+-- the stop, so this and SetTakeLocked gate the same prompt; they're split because the tutorial wants one
+-- without the other. Held as a disable rather than an ineligibility: the server doesn't rebuild a skewer
+-- mid-cook, so gating existence here would tear the prompt down and rebuild it under a player stood at it.
 --
--- Set by the tutorial's cooking beat, from before the cook is lit -- Grill's own attribute handlers
--- refresh ahead of any waiter on the cook starting, so a lock taken on that signal is already one
--- flash too late -- until the bar clears the raw band and the stop is worth offering.
+-- Set by the tutorial's cooking beat, from before the cook starts -- Grill's own attribute handlers
+-- refresh ahead of any waiter on it, so a lock taken on that signal is already one flash too late --
+-- until the bar clears the raw band and the stop is worth offering.
 function GrillerController:SetStopLocked(locked: boolean)
 	if self._stopLocked == locked then
 		return

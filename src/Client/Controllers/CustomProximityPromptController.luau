@@ -496,7 +496,7 @@ function CustomProximityPromptController:_createPrompt(prompt, inputType, gui)
 	local triggerEndedConnection
 
 	-- Wired whatever the prompt's HoldDuration is right now, and the ring is timed per hold rather than
-	-- built once up front: HoldDuration can change while the prompt is up (the grill's knob asks to be
+	-- built once up front: HoldDuration can change while the prompt is up (the grill's take asks to be
 	-- held only while the cook is raw), and a ring baked at show time would run at the wrong length --
 	-- or not at all -- for the rest of the show. Costs nothing on a press-to-fire prompt, since the
 	-- engine only raises these when there's a hold to run.

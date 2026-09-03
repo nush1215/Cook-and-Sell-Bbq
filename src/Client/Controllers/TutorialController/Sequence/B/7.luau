@@ -7,7 +7,7 @@ local Ingredients = require(ReplicatedStorage.Shared.Config.Ingredients)
 
 -- What the tutorial's roll is pinned to, so this beat can name the thing to equip rather than asking for
 -- "your Ingredient" while exactly one sits in the player's inventory. The server owns the pin --
--- TutorialManager's TUTORIAL_INGREDIENT_ID -- and this is the client's copy of it, the same way step 17
+-- TutorialManager's TUTORIAL_INGREDIENT_ID -- and this is the client's copy of it, the same way step 15
 -- keeps the id of the stick it points at.
 local TUTORIAL_INGREDIENT_ID = "Garlic"
 

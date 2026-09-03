@@ -82,8 +82,8 @@ local HUD_SPOTLIGHT_PADDING = 12
 -- Where the server parks each base's tutorial guides, keyed by base name (see Base.new).
 local GUIDES_FOLDER_NAME = "TutorialGuides"
 
--- The label over a guide saying what the ghost is for. Drifts wider and quicker than the griller's knob
--- billboard, having to catch the eye of someone who doesn't yet know what they're looking for.
+-- The label over a guide saying what the ghost is for. Drifts wider and quicker than the game's other
+-- part billboards, having to catch the eye of someone who doesn't yet know what they're looking for.
 local PLACE_HERE_LABEL_NAME = "TutorialPlaceHere"
 local PLACE_HERE_FLOAT_AMPLITUDE = 0.5
 local PLACE_HERE_FLOAT_SPEED = 5

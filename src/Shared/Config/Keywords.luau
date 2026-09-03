@@ -38,7 +38,7 @@ local GRILLER_COLOR = Color3.fromRGB(255, 146, 40)
 Keywords.NUMBER = Color3.fromRGB(255, 212, 0)
 
 -- What the tutorial banner falls back to for a keyword this file doesn't name, so "Pull the Lever"
--- still says which word is the thing to go and find. Verbs and UI buttons ("Lever", "Knob", "Accept",
+-- still says which word is the thing to go and find. Verbs and UI buttons ("Lever", "Accept",
 -- "Store") live here rather than in the table below -- they aren't objects to go and recognise, and
 -- giving them object colours would only dilute the words that are.
 Keywords.EMPHASIS = Color3.fromRGB(85, 255, 0)

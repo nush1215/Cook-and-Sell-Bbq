@@ -35,7 +35,7 @@ export type Structure = {
 	-- separates a grill whose mutation IS the grill from one where it's an occasional bonus. Rolled
 	-- server-side as the cook settles, so it's neither predictable nor forgeable.
 	CookSpeed: number?, -- how many times faster this grill cooks, or nil for the plain rate. Divides the
-	-- whole bar rather than one band (GrillerManager:StartCooking), so speed is a trade: the perfect
+	-- whole bar rather than one band (GrillerManager:ToggleGrillStick), so speed is a trade: the perfect
 	-- window shrinks with it. The burn past the bar doesn't scale -- it's wall-clock seconds in CookStates.
 	CookEffect: string?, -- the folder under Assets.Particles.Cooking played on the grate while cooking, or
 	-- nil for the shared Default. Named rather than matched off the Id, so two grills can share one set.

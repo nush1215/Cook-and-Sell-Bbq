@@ -1,116 +1,63 @@
--- Step 11: Take the BBQ off the heat once it's actually cooked.
---
--- A cook is only ever ended by the player, and stopping inside the raw band gives them a BBQ worth
--- almost nothing -- which, on the one sale the tutorial is teaching, reads as the game being broken
--- rather than as their mistake. So rather than letting them stop early and telling them off for it,
--- the stop is held shut (step 10 takes GrillerController's stop lock) until the bar clears the raw
--- band, and only then does the beat ask for the knob. Past that point the timing is theirs: anywhere
--- from the window to the end of the bar is a real BBQ.
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local RunService = game:GetService("RunService")
+-- Step 11: Put the BBQ out on the sell stall, which is what brings a customer. Ends by holding the take
+-- off, which step 12 releases once the sale has gone through -- see there.
+local HttpService = game:GetService("HttpService")
 
-local CookStates = require(ReplicatedStorage.Shared.Config.CookStates)
-
--- Controllers
-local GrillerController = require(script.Parent.Parent.Parent.Parent.GrillerController)
+local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
+local SkewerStandController = require(script.Parent.Parent.Parent.Parent.SkewerStandController)
 
 local NEAR_DISTANCE = 12
 local BEAM_HIDE_DISTANCE = 12
 
 return function(self)
-	local slot = self:GetStructure("Grillers")
-	local knob = slot.Knob.Handle
+	local base = self:GetBase()
+	local stand = base.Stalls.SellStall.SkewerStand
 
-	local highlight = self:CreateHighlight(knob)
-
-	-- The one beat the player is asked to wait through, so it's the one they're most likely to wander off
-	-- in the middle of -- and the only guard that can put the banner back to "stay by your griller" is
-	-- the one they can walk out of. Pointed at the knob, like step 10, since that's what ends the cook.
-	local beam = self:CreateBeam(knob, BEAM_HIDE_DISTANCE)
-
-	-- How far along the 0-1 bar the cook is, read the same way the griller itself derives it -- both warps
-	-- included, since the tutorial's own cook is the one carrying a widened window, and the grill it's
-	-- being run on is whichever griller the player owns, which can be an unstable one. Reading it off the
-	-- raw clock would hand the stop back while the bar still showed raw.
-	local function cookProgress(): number
-		local startedAt = slot:GetAttribute("CookStartedAt")
-		local cookTime = slot:GetAttribute("CookTime")
-		if not startedAt or not cookTime or cookTime <= 0 then
-			return 0
-		end
-
-		local elapsed = CookStates.GetBarElapsed(
-			workspace:GetServerTimeNow() - startedAt,
-			cookTime,
-			slot:GetAttribute("CookWindowStretch"),
-			slot:GetAttribute("CookProgress"),
-			slot:GetAttribute("CookInstability"),
-			slot:GetAttribute("CookInstabilityPhase")
-		)
-
-		return elapsed / cookTime
-	end
-
-	local function isCooking(): boolean
-		return slot:GetAttribute("Cooking") == true
-	end
-
-	local function isCookedEnough(): boolean
-		return isCooking() and cookProgress() >= CookStates.RAW_END
-	end
-
-	-- Hand the stop back the moment the BBQ is worth taking off. Nothing else on the grill changes
-	-- between lighting it and stopping it, so there's no state change to hang this on -- it has to be
-	-- watched for. A cook that has ended without leaving the raw band releases it too: the knob starts
-	-- cooks as well as stopping them, so holding the lock past the end of one would leave it standing
-	-- for whatever cooks next.
-	local releaseConnection
-	releaseConnection = RunService.Heartbeat:Connect(function()
-		if isCooking() and not isCookedEnough() then
-			return
-		end
-
-		releaseConnection:Disconnect()
-		releaseConnection = nil
-
-		GrillerController:SetStopLocked(false)
-	end)
+	local highlight = self:CreateHighlight(stand)
+	local beam = self:CreateBeam(stand, BEAM_HIDE_DISTANCE)
 
 	self:AwaitGoal({
 		{
-			Description = `Stay by your {self:Emphasize("Griller")}`,
-			-- The knob, not the griller: this beat is asking for the knob's own prompt, so what counts as
-			-- near is wherever that prompt is in reach from.
+			Description = `Go to your {self:Emphasize("Stall")}`,
 			Check = function()
-				return self:IsNear(knob, NEAR_DISTANCE)
+				return self:IsNear(stand, NEAR_DISTANCE)
 			end,
 		},
 		{
-			Description = function()
-				return if isCooking()
-					then "Let it cook..."
-					else `Turn the {self:Emphasize("Knob")} to start cooking`
+			Description = `Equip your {self:Emphasize("BBQ")}`,
+			Check = function()
+				return EquippedItem.GetSkewer() ~= nil
 			end,
-			Check = isCookedEnough,
 		},
 	}, {
-		Description = `It's ready! Turn the {self:Emphasize("Knob")} off`,
+		Description = `Place your {self:Emphasize("BBQ")} on the stand`,
 		Wait = function()
-			while slot:GetAttribute("Cooked") ~= true do
-				slot:GetAttributeChangedSignal("Cooked"):Wait()
+			-- The stand's contents ride on one attribute as a JSON list. Counted against what was already
+			-- there rather than against empty: a customer mid-visit when the player last left puts the
+			-- skewer it was holding back on the stand, so the stand isn't always bare when this opens.
+			local function placedCount(): number
+				local encoded = stand:GetAttribute("PlacedSkewers")
+				return if encoded then #HttpService:JSONDecode(encoded) else 0
 			end
+
+			local startingCount = placedCount()
+			while placedCount() <= startingCount do
+				stand:GetAttributeChangedSignal("PlacedSkewers"):Wait()
+			end
+
+			-- Taken here rather than after AwaitGoal returns, which is a frame later: the skewer's own take
+			-- prompt is built with the model it rides on, so it's live on the frame the place lands.
+			--
+			-- What follows is a wait for a customer, and the only thing in reach during it is a prompt
+			-- offering to take back the very skewer being waited on -- which would leave the beat waiting
+			-- for a sale on an empty stand, with nothing to say so.
+			SkewerStandController:SetTakeLocked(true)
 		end,
 	})
 
-	if releaseConnection then
-		releaseConnection:Disconnect()
-	end
-	-- The path where Cooked lands before the heartbeat got there; a lock already released no-ops.
-	GrillerController:SetStopLocked(false)
 	beam.Destroy()
 	highlight.Destroy()
 
-	self:LogStep("StopCook")
+	self:LogStep("PlaceOnSellStand")
 
 	self.SequenceFinish:Fire()
 end

@@ -21,7 +21,7 @@ Highlights.TAG = "BreathingHighlight"
 -- free griller.
 Highlights.PLACE = Color3.fromRGB(255, 255, 0)
 
--- Work this machine: the roll lever, the cook knob.
+-- Work this machine: the roll lever, the sauce bottle.
 Highlights.OPERATE = Color3.fromRGB(255, 255, 0)
 
 -- Money's waiting: a finished skewer to claim off the grill, the sell stall with one in hand.

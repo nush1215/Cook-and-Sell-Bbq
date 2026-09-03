@@ -1,35 +1,46 @@
--- Step 16: Walk into the stick shop, which opens its own UI on entry.
-local Players = game:GetService("Players")
+-- Step 16: Take the Base teleport home, where everything else happens.
+--
+-- Ends on the player standing on their base's PlayerSpawn -- the very part the Base button drops them
+-- onto -- rather than on a reference held across the trip. Holding one was the obvious approach and it
+-- was the wrong one: the base streams out while the player is over at the store and comes back as a
+-- brand-new model, so anything looked up beforehand is dead by the time they are stood on it and the
+-- beat never ends no matter where they go or what they press. Re-resolving per check, the way step 13
+-- re-looks-up the Store pad, is what makes it survive the round trip.
+-- Controllers
+local HudController = require(script.Parent.Parent.Parent.Parent.HudController)
 
-local LocalPlayer = Players.LocalPlayer
-local PlayerGui = LocalPlayer.PlayerGui
+-- The bar the Base button sits on, held down for the rest of the run by Start.
+local TOP_BAR_FRAME = "Top"
 
-local BEAM_HIDE_DISTANCE = 14
+local ARRIVED_DISTANCE = 30
 
 return function(self)
-	local zone = workspace:WaitForChild("Core"):WaitForChild("Zones"):WaitForChild("StickShop")
-	local stall = workspace:WaitForChild("Stalls"):WaitForChild("StickStall")
-	local holder = PlayerGui:WaitForChild("StickShopUI").Holder
+	-- This is the beat that wants it, so it comes back for exactly as long as the beat lasts.
+	HudController:SetHudFrameHiddenFor(self, TOP_BAR_FRAME, false)
 
-	-- The glow goes on the stall and the beam still lands on the zone: the stall is the thing a player
-	-- scans the map for, but the zone is what actually opens the shop, and it's the zone the beam has
-	-- always been aimed at.
-	local highlight = self:CreateBreathingHighlight(stall)
-	local beam = self:CreateBeam(zone, BEAM_HIDE_DISTANCE)
+	local spotlight = self:SpotlightHudButton("Base")
 
 	self:AwaitGoal(nil, {
-		Description = `Go to the {self:Emphasize("Stick Shop")}`,
+		Description = `Click the {self:Emphasize("Base")} button to go home`,
 		Wait = function()
-			while not holder.Visible do
-				holder:GetPropertyChangedSignal("Visible"):Wait()
+			local function atBase(): boolean
+				local base = self:GetBaseIfPresent()
+				local core = base and base:FindFirstChild("Core")
+				local spawnPart = core and core:FindFirstChild("PlayerSpawn")
+
+				return spawnPart ~= nil and self:IsNear(spawnPart, ARRIVED_DISTANCE)
+			end
+
+			while not atBase() do
+				task.wait()
 			end
 		end,
 	})
 
-	beam.Destroy()
-	highlight.Destroy()
+	spotlight.Destroy()
+	HudController:SetHudFrameHiddenFor(self, TOP_BAR_FRAME, true)
 
-	self:LogStep("OpenStickShop")
+	self:LogStep("ReturnToBase")
 
 	self.SequenceFinish:Fire()
 end

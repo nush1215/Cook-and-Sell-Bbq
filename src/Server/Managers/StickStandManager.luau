@@ -294,8 +294,9 @@ end
 -- a base can be cleared in one go -- and a toast says what came back, since without the tool appearing
 -- in their hand nothing on screen otherwise would.
 -- @return Whether the pickup may go ahead. Always true here: a stand has nothing going on that a stick
--- coming off it could interrupt, so there's no state it refuses in. The griller's takes the same
--- parameters and can say no, and BaseManager calls whichever owns the structure without knowing which.
+-- coming off it could interrupt, so there's no state it refuses in. The griller's takes these parameters
+-- plus a timing stamp it alone needs, and can say no; BaseManager calls whichever owns the structure
+-- without knowing which, on the parameters both share.
 function StickStandManager:ReturnContentsToPlayer(player: Player, _data, _uid: string, record, fromPickup: boolean?): boolean
 	local isFilled = #record.Ingredients > 0
 

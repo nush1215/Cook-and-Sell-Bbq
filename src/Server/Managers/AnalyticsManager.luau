@@ -265,10 +265,13 @@ function AnalyticsManager:OnStart()
 	-- Onboarding funnel, one named funnel per tutorial variant rather than the single onboarding one, so a
 	-- reworked onboarding reports separately from the one it's replacing instead of averaging into it. No
 	-- session id: the tutorial runs once per player, so there's no repeat run to tell apart.
+	--
+	-- The 2 is that versioning: the cooking beats merged when the griller's knob went, so a step index in
+	-- this funnel names a different beat than the same index did in the one before it.
 	TutorialManager.OnFunnelStep:Connect(function(player, variant, stepIndex, stepName)
 		task.spawn(function()
 			pcall(function()
-				AnalyticsService:LogFunnelStepEvent(player, `Tutorial {variant}`, nil, stepIndex, stepName)
+				AnalyticsService:LogFunnelStepEvent(player, `Tutorial {variant} 2`, nil, stepIndex, stepName)
 			end)
 		end)
 	end)

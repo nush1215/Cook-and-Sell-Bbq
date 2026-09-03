@@ -71,9 +71,9 @@ return {
 		-- wherever it goes.
 		--
 		-- Cooked flips true once it's off a griller at all; CookState says how well that went. A raw pull
-		-- carries neither, so it's indistinguishable from one never lit -- what it carries instead is
-		-- CookProgress, how far up the bar it got as a *fraction*, so the next light resumes there and
-		-- means the same on whatever bar it resumes on. Always below CookStates.RAW_END, since anything
+		-- carries neither, so it's indistinguishable from one never cooked -- what it carries instead is
+		-- CookProgress, how far up the bar it got as a *fraction*, so setting it back down resumes there
+		-- and means the same on whatever bar it resumes on. Always below CookStates.RAW_END, since anything
 		-- past that band settles into CookState and clears it. Adding an ingredient wipes it (deliberately;
 		-- see StickStandManager).
 		--
@@ -88,11 +88,13 @@ return {
 		-- base, so a plain list rather than slot-keyed.
 		SkewerStand = {}, -- { { StickId, Ingredients = { ingredientId }, Cooked = true, Sauce?, Mutation? }, ... }
 		FilledSticks = {}, -- [uid] = { StickId, Ingredients, Cooked?, Sauce?, Mutation? } held as a distinct tool
-		-- [structureUid] = a skewer record sitting on that griller. A running cook also carries Cooking,
-		-- CookStartedAt and CookTime (the whole 0 -> 1 run in seconds), plus optionally CookWindowStretch
-		-- and the CookInstability/CookInstabilityPhase pair -- all three bend the bar (see
-		-- CookStates.GetBarElapsed). Every one is stamped at the light rather than read at the stop, so the
-		-- bar bends the same way from first frame to last, across a rejoin included.
+		-- [structureUid] = a skewer record sitting on that griller. Setting one down starts its cook, so a
+		-- record here almost always carries Cooking, CookStartedAt and CookTime (the whole 0 -> 1 run in
+		-- seconds), plus optionally CookWindowStretch and the CookInstability/CookInstabilityPhase pair --
+		-- all three bend the bar (see CookStates.GetBarElapsed). Every one is stamped as the skewer goes
+		-- down rather than read at the take, so the bar bends the same way from first frame to last, across
+		-- a rejoin included. A record without them is one whose cook has been bought out with the Robux
+		-- skip, sitting settled until it's collected.
 		-- A cook frozen by its owner leaving also carries CookPausedElapsed: the real seconds it had run at
 		-- their last save, which CookStartedAt is restamped off on their return so time offline doesn't
 		-- advance it (see GrillerManager).
