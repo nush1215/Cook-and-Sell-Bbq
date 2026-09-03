@@ -439,10 +439,8 @@ function SellNpcManager:_spawnCustomer(player: Player): boolean
 	self:_playNpcAnimation(record, "Inspect")
 
 	-- New players get turned down less often, on the same taper as their income head start. The walk-off
-	-- share is what's scaled rather than INTERESTED_CHANCE itself, so 1 is the ceiling by construction. An
-	-- unloaded profile rolls the normal odds, same as the spawn delay above.
-	local playerData = PlayerDataManager:GetLoadedPlayerData(player)
-	local declineScale = if playerData then EarlyBoost.GetDeclineScale(playerData.TotalEarned) else 1
+	-- share is what's scaled rather than INTERESTED_CHANCE itself, so 1 is the ceiling by construction.
+	local declineScale = EarlyBoost.GetDeclineScale(CurrencyManager:GetEarlyBoostEarnings(player))
 	local interestedChance = 1 - (1 - SellNpc.INTERESTED_CHANCE) * declineScale
 
 	-- Authoritative here; clients get the decision plus its landing timestamp and pace their own flip off
@@ -1065,10 +1063,8 @@ function SellNpcManager:_runVisit(player: Player)
 	if self._guaranteed[player] then
 		task.wait(SellNpc.GUARANTEED_SPAWN_DELAY)
 	else
-		-- New players wait less, on the same taper as their income head start. An unloaded profile waits
-		-- the full delay rather than being assumed to be at zero earned, as CurrencyManager does.
-		local playerData = PlayerDataManager:GetLoadedPlayerData(player)
-		local scale = if playerData then EarlyBoost.GetSpawnDelayScale(playerData.TotalEarned) else 1
+		-- New players wait less, on the same taper as their income head start.
+		local scale = EarlyBoost.GetSpawnDelayScale(CurrencyManager:GetEarlyBoostEarnings(player))
 		task.wait(self._rng:NextNumber(SellNpc.SPAWN_DELAY_MIN, SellNpc.SPAWN_DELAY_MAX) * scale)
 	end
 

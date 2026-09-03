@@ -99,7 +99,7 @@ Sticks.Data = {
 		Name = "Copper",
 		Price = 750,
 		Capacity = 5,
-		ValueBoost = 29,
+		ValueBoost = 5,
 		Icon = "rbxassetid://71422270507233",
 		TextColor = Color3.fromRGB(210, 120, 55),
 		StrokeColor = Color3.fromRGB(63, 36, 16),
@@ -114,7 +114,7 @@ Sticks.Data = {
 		Name = "Titanium",
 		Price = 1_500,
 		Capacity = 6,
-		ValueBoost = 45,
+		ValueBoost = 10,
 		Icon = "rbxassetid://139823220671033",
 		TextColor = Color3.fromRGB(175, 190, 205),
 		StrokeColor = Color3.fromRGB(52, 57, 62),
@@ -130,7 +130,7 @@ Sticks.Data = {
 		Name = "Gold",
 		Price = 3_500,
 		Capacity = 7,
-		ValueBoost = 85,
+		ValueBoost = 15,
 		Icon = "rbxassetid://83501186533591",
 		TextColor = Color3.fromRGB(255, 215, 0),
 		StrokeColor = Color3.fromRGB(77, 64, 0),
@@ -143,16 +143,9 @@ Sticks.Data = {
 	{
 		Id = "DiamondStick",
 		Name = "Diamond",
-		-- Nobody is ever charged this. There's no shop row and the currency path refuses anything not
-		-- Restockable, so the only way to hold one is the dev product below -- which means Price does
-		-- exactly one thing here, and it's feed SALE_RETURN_FACTOR. At the 250,000 this used to read,
-		-- every diamond skewer paid out a five-figure liquidation on a stick that cost no Bux at all,
-		-- which outearned everything actually on the skewer. Priced on the ladder it's measured
-		-- against instead: one step past gold, so the slice it credits back is one step past gold's.
-		-- What makes it the best stick is the capacity and the boost, not a number nobody pays.
 		Price = 6_000,
 		Capacity = 8,
-		ValueBoost = 95,
+		ValueBoost = 80,
 		Icon = "rbxassetid://127215303482669",
 		TextColor = Color3.fromRGB(110, 220, 245),
 		StrokeColor = Color3.fromRGB(33, 66, 73),

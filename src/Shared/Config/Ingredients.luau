@@ -76,7 +76,7 @@ Ingredients.SALE_VALUE_MULTIPLIER = 1.45
 --
 -- Short of 1 so filling a stick pays, and clear of 0 so it still costs something -- value has no falloff
 -- at all (GetTotalValue), so at 0 an extra slot would be free money.
-Ingredients.ADDITIONAL_SLOT_FACTOR = 0.8
+Ingredients.ADDITIONAL_SLOT_FACTOR = 0.75
 
 -- How far off 100% the chances may sum before the load-time warn fires. Set to where drift would start to
 -- show rather than at zero -- a 1% miss turns "1 in 20" into "1 in 20.2", which still prints 20.

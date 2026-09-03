@@ -20,7 +20,33 @@ local CurrencyManager = {
 	-- what earned or spent it (e.g. "SkewerSale", "StickPurchase"); nil for admin grants that shouldn't
 	-- count as part of the economy. `amount` is what actually landed, boosts included.
 	OnCurrencyChanged = Signal.new(),
+
+	_earlyBoostDisabled = {}, -- [player] = true while an admin has their early boost switched off
 }
+
+-- The lifetime earnings the early boost should be figured against, for every dial that runs off it --
+-- the payout bonus here, and SellNpc's spawn delay and walk-off chance.
+--
+-- THRESHOLD stands for "no head start", since every EarlyBoost getter reads neutral at and past it. That
+-- covers both cases where there's none to give: a profile that hasn't loaded yet, where assuming zero
+-- earned would hand the full boost to whoever it is -- established player or not -- and one an admin has
+-- switched off. Doesn't yield, for the reason on GetPlayerBoostFraction below.
+function CurrencyManager:GetEarlyBoostEarnings(player: Player): number
+	if self._earlyBoostDisabled[player] then
+		return EarlyBoost.THRESHOLD
+	end
+
+	local playerData = PlayerDataManager:GetLoadedPlayerData(player)
+	return if playerData then playerData.TotalEarned else EarlyBoost.THRESHOLD
+end
+
+-- Switches a player's early boost off or back on for the rest of their session, for testing the game at
+-- an established player's pacing. Not saved, so a rejoin brings it back.
+function CurrencyManager:SetPlayerEarlyBoostEnabled(player: Player, enabled: boolean)
+	-- Only the exceptions are held, so an untouched player is a plain nil lookup.
+	self._earlyBoostDisabled[player] = if enabled then nil else true
+	self:RefreshPlayerBoostFraction(player)
+end
 
 -- The share of a base amount the player's boosts add on top of it: the gamepasses they hold, how many
 -- friends are in the server with them, and the head start a new player's income gets. Every one is
@@ -50,14 +76,8 @@ function CurrencyManager:GetPlayerBoostFraction(player: Player): number
 	local friendsAmount = player:GetAttribute("FriendsAmount") or 0
 	fraction += friendsAmount / 10
 
-	-- The head start a new player's income gets, on the base amount like the two above it. Read off the
-	-- data as it stands rather than awaited, for the no-yielding reason above. A profile that hasn't
-	-- loaded yet earns no bonus: there's no lifetime figure to decay it against, and assuming zero
-	-- earned would hand the full boost to whoever it is -- established player or not.
-	local playerData = PlayerDataManager:GetLoadedPlayerData(player)
-	if playerData then
-		fraction += EarlyBoost.GetBonus(playerData.TotalEarned)
-	end
+	-- The head start a new player's income gets, on the base amount like the two above it.
+	fraction += EarlyBoost.GetBonus(self:GetEarlyBoostEarnings(player))
 
 	return fraction
 end
@@ -162,6 +182,10 @@ function CurrencyManager:OnStart()
 	for _, player in Players:GetPlayers() do
 		watchPlayer(player)
 	end
+
+	Players.PlayerRemoving:Connect(function(player: Player)
+		self._earlyBoostDisabled[player] = nil
+	end)
 end
 
 return CurrencyManager
