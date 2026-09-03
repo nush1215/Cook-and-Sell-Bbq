@@ -71,7 +71,7 @@ function UISparkles:Start()
 	local root = ui:FindFirstAncestorWhichIsA("ScreenGui")
 	local rootFrame = root:FindFirstChildOfClass("Frame") or root:FindFirstChildOfClass("ImageLabel")
 	if not rootFrame or rootFrame and not rootFrame.Name == "Holder" then
-		warn("UISparkles: Start: No root frame found")
+		--	warn("UISparkles: Start: No root frame found")
 		return
 	end
 

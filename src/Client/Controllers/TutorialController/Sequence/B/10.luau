@@ -1,4 +1,4 @@
--- Step 10: Light the stove. Ends by locking the stop prompts, which step 15 holds until the BBQ is
+-- Step 10: Light the stove. Takes GrillerController's stop lock, which step 11 holds until the BBQ is
 -- actually cooked -- see there for why.
 local GrillerController = require(script.Parent.Parent.Parent.Parent.GrillerController)
 
@@ -8,6 +8,12 @@ local BEAM_HIDE_DISTANCE = 12
 return function(self)
 	local slot = self:GetStructure("Grillers")
 	local knob = slot.Knob.Handle
+
+	-- Taken before the cook exists at all, not on the Cooking attribute: the grill's own attribute
+	-- handlers connect before any waiter this step could put on it, so their refresh runs first and a
+	-- lock taken on that signal is already one "Stop Cooking" flash too late. Harmless this early --
+	-- it only gates the stop, and nothing is cooking yet. The knob's glow goes down with its prompt.
+	GrillerController:SetStopLocked(true)
 
 	local highlight = self:CreateHighlight(knob)
 
@@ -30,26 +36,6 @@ return function(self)
 			while slot:GetAttribute("Cooking") ~= true do
 				slot:GetAttributeChangedSignal("Cooking"):Wait()
 			end
-
-			-- Taken here rather than after AwaitGoal returns, which is a frame later: the stop prompt goes
-			-- live the instant the cook starts, and that frame is long enough to press it in.
-			--
-			-- The knob's glow goes with its prompt. It breathes for the whole cook, since the knob is what
-			-- stops one, and left alone it would be lit through the raw band for something the player is
-			-- being held back from doing.
-			local prompts = {
-				knob:FindFirstChildWhichIsA("ProximityPrompt"),
-				slot:FindFirstChild("GrillAttachment", true):FindFirstChildWhichIsA("ProximityPrompt"),
-			}
-
-			-- The Robux skip isn't among them, and isn't this beat's to take: it's held for the whole run
-			-- from TutorialController:Start. It used to be taken here and released on the same lock as
-			-- these prompts, which handed it back at the raw band -- putting it on the bar for the tail of
-			-- the very cook it was hidden through, still offering to sell the player out of the thing they
-			-- were being taught.
-			self.CookPromptLock = self:DisablePrompts(prompts, function()
-				GrillerController:RefreshInteractions()
-			end, { slot.Knob })
 
 			-- Step 9 held this from the moment the BBQ went down; the cook is what it was holding out for.
 			-- Nothing visible changes here -- a cooking grill offers no take of its own -- it just means the

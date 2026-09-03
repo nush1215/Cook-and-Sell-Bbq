@@ -16,6 +16,9 @@ local SkewerStand = require(script.SkewerStand)
 --
 local LocalPlayer = Players.LocalPlayer
 
+-- How long a streamed-in base gets to finish replicating the pieces _setupBase indexes.
+local CHILD_TIMEOUT = 10
+
 --[[
     Renders the cooked skewers placed on every base's sell-stall SkewerStand and drives the owner's
     prompts.
@@ -31,28 +34,47 @@ local SkewerStandController = {
 	PlaceSkewerEvent = Network.Event("PlaceSkewerOnStand"),
 	RemoveSkewerEvent = Network.Event("RemoveSkewerFromStand"),
 
-	_stands = {}, -- [part: BasePart] = SkewerStand
+	_stands = {}, -- [baseModel: Model] = SkewerStand
 	_cleaner = Trove.new(),
 	_takeLocked = false, -- while true, no stand offers a placed skewer back (see SetTakeLocked)
 }
 
--- Wires up a base's sell-stall stand, unless one already tracks it. The part is fixed in the place
--- file, so there's nothing to add or remove later -- just build it once.
+-- Wires up a base's sell-stall stand once the pieces have replicated, unless one already tracks it.
+-- Models stream in non-atomically, so the waits live here and SkewerStand.new keeps trusting its
+-- children.
 function SkewerStandController:_setupBase(baseModel: Model)
-	local stalls = baseModel:FindFirstChild("Stalls")
-	local sellStall = stalls and stalls:FindFirstChild("SellStall")
-	local stand = sellStall and sellStall:FindFirstChild("SkewerStand")
-	if not stand then
+	if self._stands[baseModel] then
 		return
 	end
 
-	if self._stands[stand] then
+	local stalls = baseModel:WaitForChild("Stalls", CHILD_TIMEOUT)
+	local sellStall = stalls and stalls:WaitForChild("SellStall", CHILD_TIMEOUT)
+	local stand = sellStall and sellStall:WaitForChild("SkewerStand", CHILD_TIMEOUT)
+	if not stand then
+		warn(`[SkewerStand] {baseModel.Name}'s stand setup is incomplete, it won't render`)
+		return
+	end
+
+	-- Waiting above yields, so the base can have streamed back out (or been built by a racing thread)
+	-- in the meantime.
+	if not baseModel.Parent or self._stands[baseModel] then
 		return
 	end
 
 	local instance = SkewerStand.new(stand, baseModel.Name, sellStall)
-	self._stands[stand] = instance
+	self._stands[baseModel] = instance
 	self._cleaner:Add(instance)
+end
+
+-- Drops the stand for a base that's streamed out or been removed.
+function SkewerStandController:_removeBase(baseModel: Model)
+	local instance = self._stands[baseModel]
+	if not instance then
+		return
+	end
+
+	self._cleaner:Remove(instance)
+	self._stands[baseModel] = nil
 end
 
 -- Asks the server to place the equipped cooked skewer on this base's stand.
@@ -116,11 +138,26 @@ end
 function SkewerStandController:OnStart()
 	self._characterCleaner = self._cleaner:Construct(Trove)
 
-	-- Bases are fixed in the place file, so sweep them once. The stand part is static, so nothing has
-	-- to keep the placed skewers glued after they're seated.
-	for _, baseModel in workspace.Base:GetChildren() do
-		self:_setupBase(baseModel)
-	end
+	-- Bases stream out and back in as brand-new instances, and at boot the folder's contents can still
+	-- be in flight -- so watch the folder rather than sweeping it once. Off this thread because the
+	-- loader runs every OnStart on one, and both the folder wait and _setupBase's child waits yield.
+	task.spawn(function()
+		local baseFolder = workspace:WaitForChild("Base")
+
+		self._cleaner:Connect(baseFolder.ChildAdded, function(baseModel)
+			self:_setupBase(baseModel)
+		end)
+		self._cleaner:Connect(baseFolder.ChildRemoved, function(baseModel)
+			self:_removeBase(baseModel)
+		end)
+
+		-- _setupBase waits on the base's children, so keep the sweep off this thread too.
+		for _, baseModel in baseFolder:GetChildren() do
+			task.spawn(function()
+				self:_setupBase(baseModel)
+			end)
+		end
+	end)
 
 	-- BaseId lands after the stands are already built, and it changes when the local player is assigned
 	-- or loses a base -- re-check every stand's prompts.

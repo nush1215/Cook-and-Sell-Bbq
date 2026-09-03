@@ -21,6 +21,9 @@ local Plot = require(script.Plot)
 --
 local LocalPlayer = Players.LocalPlayer
 
+-- How long a streamed-in base gets to finish replicating the plot folder _setupBase indexes.
+local CHILD_TIMEOUT = 10
+
 --[[
     Drives the unlock signs on every base's plots.
 
@@ -89,11 +92,17 @@ function PlotController:RefreshSigns()
 	end
 end
 
--- Tracks a base's plots. They're authored into the place file and never come or go, so a one-off
--- sweep covers them -- it's the signs on them that move, and each Plot follows its own.
+-- Tracks a base's plots once its folder has replicated. Models stream in non-atomically, so the wait
+-- lives here -- it's the signs on the plots that move, and each Plot follows its own.
 function PlotController:_setupBase(baseModel: Model)
-	local folder = baseModel:FindFirstChild(Plots.FOLDER_NAME)
+	local folder = baseModel:WaitForChild(Plots.FOLDER_NAME, CHILD_TIMEOUT)
 	if not folder then
+		warn(`[Plot] {baseModel.Name}'s plot folder never replicated, its signs won't render`)
+		return
+	end
+
+	-- Waiting above yields, so the base can have streamed back out in the meantime.
+	if not baseModel.Parent then
 		return
 	end
 
@@ -103,17 +112,48 @@ function PlotController:_setupBase(baseModel: Model)
 			continue
 		end
 
+		-- A racing thread can have built this plot while the folder wait yielded.
+		if self._plots[plotModel] then
+			continue
+		end
+
 		local plot = Plot.new(plotModel, baseModel.Name)
 		self._plots[plotModel] = plot
 		self._cleaner:Add(plot)
 	end
 end
 
-function PlotController:OnStart()
-	-- Bases are fixed in the place file, so sweep them once. Each base drives its own plots.
-	for _, baseModel in workspace.Base:GetChildren() do
-		self:_setupBase(baseModel)
+-- Drops the Plots for a base that's streamed out or been removed.
+function PlotController:_removeBase(baseModel: Model)
+	for plotModel, plot in self._plots do
+		if plotModel:IsDescendantOf(baseModel) then
+			self._cleaner:Remove(plot)
+			self._plots[plotModel] = nil
+		end
 	end
+end
+
+function PlotController:OnStart()
+	-- Bases stream out and back in as brand-new instances, and at boot the folder's contents can still
+	-- be in flight -- so watch the folder rather than sweeping it once. Off this thread because the
+	-- loader runs every OnStart on one, and both the folder wait and _setupBase's child wait yield.
+	task.spawn(function()
+		local baseFolder = workspace:WaitForChild("Base")
+
+		self._cleaner:Connect(baseFolder.ChildAdded, function(baseModel)
+			self:_setupBase(baseModel)
+		end)
+		self._cleaner:Connect(baseFolder.ChildRemoved, function(baseModel)
+			self:_removeBase(baseModel)
+		end)
+
+		-- _setupBase waits on the base's plot folder, so keep the sweep off this thread too.
+		for _, baseModel in baseFolder:GetChildren() do
+			task.spawn(function()
+				self:_setupBase(baseModel)
+			end)
+		end
+	end)
 
 	-- BaseId lands after the plots are already built, and changes when the local player is assigned or
 	-- loses a base -- re-check which signs should be up and which should come down.

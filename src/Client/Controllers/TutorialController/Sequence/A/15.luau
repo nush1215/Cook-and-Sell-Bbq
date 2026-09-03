@@ -3,13 +3,16 @@
 -- A cook is only ever ended by the player, and stopping inside the raw band gives them a BBQ worth
 -- almost nothing -- which, on the one sale the tutorial is teaching, reads as the game being broken
 -- rather than as their mistake. So rather than letting them stop early and telling them off for it,
--- both stop prompts are held shut (step 14 takes the lock) until the bar clears the raw band, and only
--- then does the beat ask for the knob. Past that point the timing is theirs: anywhere from the window
--- to the end of the bar is a real BBQ.
+-- the stop is held shut (step 14 takes GrillerController's stop lock) until the bar clears the raw
+-- band, and only then does the beat ask for the knob. Past that point the timing is theirs: anywhere
+-- from the window to the end of the bar is a real BBQ.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 
 local CookStates = require(ReplicatedStorage.Shared.Config.CookStates)
+
+-- Controllers
+local GrillerController = require(script.Parent.Parent.Parent.Parent.GrillerController)
 
 local NEAR_DISTANCE = 12
 
@@ -22,7 +25,7 @@ return function(self)
 	-- How far along the 0-1 bar the cook is, read the same way the griller itself derives it -- both warps
 	-- included, since the tutorial's own cook is the one carrying a widened window, and the grill it's
 	-- being run on is whichever griller the player owns, which can be an unstable one. Reading it off the
-	-- raw clock would hand the prompts back while the bar still showed raw.
+	-- raw clock would hand the stop back while the bar still showed raw.
 	local function cookProgress(): number
 		local startedAt = slot:GetAttribute("CookStartedAt")
 		local cookTime = slot:GetAttribute("CookTime")
@@ -50,14 +53,11 @@ return function(self)
 		return isCooking() and cookProgress() >= CookStates.RAW_END
 	end
 
-	-- Hand the prompts back the moment the BBQ is worth taking off. Nothing else on the grill changes
+	-- Hand the stop back the moment the BBQ is worth taking off. Nothing else on the grill changes
 	-- between lighting it and stopping it, so there's no state change to hang this on -- it has to be
 	-- watched for. A cook that has ended without leaving the raw band releases it too: the knob starts
-	-- cooks as well as stopping them, so holding it shut past the end of one would leave the player with
-	-- a raw BBQ and no way to put it back on the heat.
-	local lock = self.CookPromptLock
-	self.CookPromptLock = nil
-
+	-- cooks as well as stopping them, so holding the lock past the end of one would leave it standing
+	-- for whatever cooks next.
 	local releaseConnection
 	releaseConnection = RunService.Heartbeat:Connect(function()
 		if isCooking() and not isCookedEnough() then
@@ -67,10 +67,7 @@ return function(self)
 		releaseConnection:Disconnect()
 		releaseConnection = nil
 
-		if lock then
-			lock.Destroy()
-			lock = nil
-		end
+		GrillerController:SetStopLocked(false)
 	end)
 
 	self:AwaitGoal({
@@ -102,9 +99,8 @@ return function(self)
 	if releaseConnection then
 		releaseConnection:Disconnect()
 	end
-	if lock then
-		lock.Destroy()
-	end
+	-- The path where Cooked lands before the heartbeat got there; a lock already released no-ops.
+	GrillerController:SetStopLocked(false)
 	highlight.Destroy()
 
 	self:LogStep("StopCook")

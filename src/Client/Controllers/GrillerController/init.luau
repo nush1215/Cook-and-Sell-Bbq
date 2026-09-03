@@ -76,6 +76,7 @@ local GrillerController = {
 	_cleaner = Trove.new(),
 	_takeLocked = false, -- while true, no grill offers to hand a skewer back (see SetTakeLocked)
 	_skipLocked = false, -- while true, no grill shows its Robux skip (see SetSkipLocked)
+	_stopLocked = false, -- while true, no grill offers to stop its cook (see SetStopLocked)
 	_skipCookNextAt = 0, -- the clock the next skip request is allowed at, so a mashed button sends one
 }
 
@@ -151,8 +152,6 @@ end
 
 -- Re-checks every grill's prompt/knob/highlights (ownership + eligibility). Cheap, and it depends on
 -- both the local player's base and what they're holding, so it's called whenever either changes.
--- Public so anything that has forced a prompt off itself can hand control back rather than guessing
--- what state to restore it to (see TutorialController:DisablePrompts).
 function GrillerController:RefreshInteractions()
 	for _, grill in self._grills do
 		grill:RefreshInteraction()
@@ -201,6 +200,28 @@ end
 -- Whether the skip is currently held off. Read by Grill when it works out what a slot is offering.
 function GrillerController:IsSkipLocked(): boolean
 	return self._skipLocked
+end
+
+-- Holds every grill's stop off, so a running cook can't be ended. Gates the eligibility the class
+-- already computes rather than reaching in and disabling the knob prompt, because every refresh
+-- re-asserts Enabled on it (see Grill:RefreshInteraction) -- a forced disable loses that race and
+-- flashes the prompt back on for a frame each time.
+--
+-- Set by the tutorial's cooking beat, from before the cook is lit -- Grill's own attribute handlers
+-- refresh ahead of any waiter on the cook starting, so a lock taken on that signal is already one
+-- flash too late -- until the bar clears the raw band and the stop is worth offering.
+function GrillerController:SetStopLocked(locked: boolean)
+	if self._stopLocked == locked then
+		return
+	end
+
+	self._stopLocked = locked
+	self:RefreshInteractions()
+end
+
+-- Whether stopping is currently held off. Read by Grill when it works out what a slot is offering.
+function GrillerController:IsStopLocked(): boolean
+	return self._stopLocked
 end
 
 -- Watches the local character's tools so a free griller lights up as they equip a raw skewer.

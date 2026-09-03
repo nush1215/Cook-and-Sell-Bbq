@@ -1180,6 +1180,9 @@ function Grill:RefreshInteraction()
 	local canPlaceHeld = canPlace and heldSkewer ~= nil and heldSkewer:GetAttribute("Cooked") ~= true
 	local canCook = owned and placed ~= nil and not cooking and not cooked
 	local canStop = owned and cooking
+	-- A hold rather than ineligibility: the knob prompt must survive it (torn down, it would rebuild
+	-- under a player standing at it), so only its Enabled and glow gate on this.
+	local stopLocked = canStop and GrillerController:IsStopLocked()
 	-- Gated here rather than on the prompt, so the outline goes with it and neither is left saying
 	-- take me while the take is locked.
 	local canTake = owned and placed ~= nil and not cooking and not GrillerController:IsTakeLocked()
@@ -1260,8 +1263,8 @@ function Grill:RefreshInteraction()
 			end)
 
 			-- The ghost follows the label, not the eligibility, or every free grill on the base would
-			-- wear one. Only _refreshGhost from here, never the whole refresh: that writes Enabled, and
-			-- the tutorial writes it straight back, so the two would flip it at each other.
+			-- wear one. Only _refreshGhost from here, never the whole refresh: shown/hidden shouldn't
+			-- re-decide what the slot offers.
 			self._promptCleaner:Connect(prompt.PromptShown, function()
 				self._promptShown = true
 				self:_refreshGhost()
@@ -1333,9 +1336,9 @@ function Grill:RefreshInteraction()
 	end
 
 	if self._knobPrompt then
-		-- Asserted, not left alone: eligibility is this prompt's existence, so without a write here
-		-- anything that forced it down (the tutorial does) would keep it down forever.
-		self._knobPrompt.Enabled = true
+		-- Asserted both ways, not left alone: eligibility is this prompt's existence, so the hold has to
+		-- be honored here -- and releasing it restores the prompt on the next refresh.
+		self._knobPrompt.Enabled = not stopLocked
 		self._knobPrompt.ActionText = if canStop then "Stop Cooking" else "Cook"
 		-- Off the band the cook is in, so only a stop that would throw the run away asks to be held (see
 		-- StopHold). Nil state is the frame between the cook being stamped and Update's first pass: read
@@ -1365,7 +1368,7 @@ function Grill:RefreshInteraction()
 	-- Same condition as its prompt, so the glow and the prompt are never out of step.
 	if self._knob then
 		self._knob:SetAttribute("HighlightColor", Highlights.OPERATE)
-		if knobEligible then
+		if knobEligible and not stopLocked then
 			self._knob:AddTag(Highlights.TAG)
 		else
 			self._knob:RemoveTag(Highlights.TAG)

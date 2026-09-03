@@ -21,6 +21,9 @@ local SauceDispenser = require(script.SauceDispenser)
 --
 local LocalPlayer = Players.LocalPlayer
 
+-- How long a streamed-in base gets to finish replicating the pieces _setupBase indexes.
+local CHILD_TIMEOUT = 10
+
 --[[
     Renders the pour on every base's sauce dispensers and drives the owner's place/sauce interaction.
 
@@ -64,12 +67,19 @@ function SauceDispenserController:_removeDispenser(slot: Instance)
 	self._dispensers[slot] = nil
 end
 
--- Tracks a base's dispenser slots. Dispensers are static Ghost interactables always in the folder, so
--- a one-off sweep plus watching for changes covers them.
+-- Tracks a base's dispenser slots once its folder has replicated. Models stream in non-atomically,
+-- so the waits live here; the folder is then watched as well as swept, since slots come and go with
+-- the Ghost interactables.
 function SauceDispenserController:_setupBase(baseModel: Model)
-	local interactables = baseModel:FindFirstChild("Interactables")
-	local dispenserFolder = interactables and interactables:FindFirstChild("SauceDispenser")
+	local interactables = baseModel:WaitForChild("Interactables", CHILD_TIMEOUT)
+	local dispenserFolder = interactables and interactables:WaitForChild("SauceDispenser", CHILD_TIMEOUT)
 	if not dispenserFolder then
+		warn(`[SauceDispenser] {baseModel.Name}'s dispenser folder never replicated, it won't render`)
+		return
+	end
+
+	-- Waiting above yields, so the base can have streamed back out in the meantime.
+	if not baseModel.Parent then
 		return
 	end
 
@@ -88,6 +98,16 @@ function SauceDispenserController:_setupBase(baseModel: Model)
 	self._cleaner:Connect(dispenserFolder.ChildRemoved, function(slot)
 		self:_removeDispenser(slot)
 	end)
+end
+
+-- Drops the SauceDispensers for a base that's streamed out or been removed. The folder's ChildRemoved
+-- doesn't fire per slot when the whole base goes at once, so sweep them out by ancestry.
+function SauceDispenserController:_removeBase(baseModel: Model)
+	for slot in self._dispensers do
+		if slot:IsDescendantOf(baseModel) then
+			self:_removeDispenser(slot)
+		end
+	end
 end
 
 -- Asks the server to put the equipped cooked skewer on this dispenser's plate, or take the one
@@ -146,10 +166,26 @@ end
 function SauceDispenserController:OnStart()
 	self._characterCleaner = self._cleaner:Construct(Trove)
 
-	-- Bases are fixed in the place file, so sweep them once. Each base drives its own dispensers.
-	for _, baseModel in workspace.Base:GetChildren() do
-		self:_setupBase(baseModel)
-	end
+	-- Bases stream out and back in as brand-new instances, and at boot the folder's contents can still
+	-- be in flight -- so watch the folder rather than sweeping it once. Off this thread because the
+	-- loader runs every OnStart on one, and both the folder wait and _setupBase's child waits yield.
+	task.spawn(function()
+		local baseFolder = workspace:WaitForChild("Base")
+
+		self._cleaner:Connect(baseFolder.ChildAdded, function(baseModel)
+			self:_setupBase(baseModel)
+		end)
+		self._cleaner:Connect(baseFolder.ChildRemoved, function(baseModel)
+			self:_removeBase(baseModel)
+		end)
+
+		-- _setupBase waits on the base's children, so keep the sweep off this thread too.
+		for _, baseModel in baseFolder:GetChildren() do
+			task.spawn(function()
+				self:_setupBase(baseModel)
+			end)
+		end
+	end)
 
 	-- BaseId lands after the dispensers are already built, and changes when the local player is
 	-- assigned or loses a base -- re-check which should show a prompt.
