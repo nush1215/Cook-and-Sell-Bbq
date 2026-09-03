@@ -66,7 +66,7 @@ EarlyBoost.MAX_DECLINE_REDUCTION = 0.5
 -- often. Lower = it stays a surprise. Cheap to be generous with -- it costs them the one ingredient that
 -- stand would have rolled, and the lever is free -- but it is still a pull that fed them nothing, so
 -- this wants to stay well short of common enough to read as the stand wasting their time.
-EarlyBoost.MAX_TEASE_CHANCE = 8
+EarlyBoost.MAX_TEASE_CHANCE = 10
 
 -- How many times over their Bux a teased ingredient has to cost to count as out of reach. At 1 it would
 -- only have to be a dollar clear and the next sale would close it, which makes it a purchase they were
