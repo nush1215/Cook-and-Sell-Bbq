@@ -97,7 +97,7 @@ Sticks.Data = {
 	{
 		Id = "CopperStick",
 		Name = "Copper",
-		Price = 500,
+		Price = 750,
 		Capacity = 5,
 		ValueBoost = 29,
 		Icon = "rbxassetid://71422270507233",
@@ -112,7 +112,7 @@ Sticks.Data = {
 	{
 		Id = "TitaniumStick",
 		Name = "Titanium",
-		Price = 1_000,
+		Price = 1_500,
 		Capacity = 6,
 		ValueBoost = 45,
 		Icon = "rbxassetid://139823220671033",
@@ -128,7 +128,7 @@ Sticks.Data = {
 	{
 		Id = "GoldStick",
 		Name = "Gold",
-		Price = 2_500,
+		Price = 3_500,
 		Capacity = 7,
 		ValueBoost = 85,
 		Icon = "rbxassetid://83501186533591",

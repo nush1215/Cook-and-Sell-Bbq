@@ -541,7 +541,7 @@ function Stand:RefreshInteraction()
 		self._promptCleaner:Add(prompt)
 		self._promptCleaner:Connect(prompt.Triggered, function()
 			IngredientRollingController = IngredientRollingController or require(script.Parent)
-			IngredientRollingController:RequestPurchase(self._id)
+			IngredientRollingController:RequestPurchase(self._id, self._model:GetAttribute("RolledIngredient"))
 		end)
 	end
 

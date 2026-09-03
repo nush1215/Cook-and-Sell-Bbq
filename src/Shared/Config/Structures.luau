@@ -136,7 +136,7 @@ Structures.Data = {
 		Rarity = "Common",
 		Restockable = true,
 		RestockChance = 75,
-		RestockAmount = NumberRange.new(2, 4),
+		RestockAmount = NumberRange.new(1, 2),
 		RobuxProductId = 3710074770,
 	},
 
@@ -152,7 +152,7 @@ Structures.Data = {
 		Rarity = "Rare",
 		Restockable = true,
 		RestockChance = 50,
-		RestockAmount = NumberRange.new(1, 3),
+		RestockAmount = NumberRange.new(1, 1),
 		RobuxProductId = 3710074809,
 		CookSpeed = 1.25,
 	},

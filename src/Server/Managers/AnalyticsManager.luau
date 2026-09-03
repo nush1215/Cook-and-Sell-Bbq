@@ -21,6 +21,7 @@ local BaseManager
 local BadgeManager
 local TutorialManager
 local TutorialCrateManager
+local PlaytimeManager
 
 --[[
 	The one place AnalyticsService is spoken to. Every gameplay manager owns a Signal for what happens in
@@ -31,7 +32,11 @@ local TutorialCrateManager
 	Custom events carry a numeric value plus up to three custom fields, which are the only breakdown
 	dimensions the dashboard offers -- so what goes in each field is chosen for what's worth slicing by.
 ]]
-local AnalyticsManager = {}
+local AnalyticsManager = {
+	-- [player] = lever pulls this session. Read and cleared when the session ends, so it must not be
+	-- dropped on PlayerRemoving: that fires before the pre-cleanup hook the summary goes out on.
+	_sessionRolls = {},
+}
 
 local CustomFields = Enum.AnalyticsCustomFieldKeys
 
@@ -71,6 +76,25 @@ end
 local function getIngredientTier(ingredientId: string): string?
 	local ingredient = Ingredients.GetIngredientFromId(ingredientId)
 	return ingredient and ingredient.Tier.Id
+end
+
+-- Buckets a session length in seconds, since raw seconds are too granular to break a chart down by.
+local function getSessionLengthBucket(sessionLength: number): string
+	local minutes = sessionLength / 60
+
+	if minutes < 1 then
+		return "0-1m"
+	elseif minutes < 5 then
+		return "1-5m"
+	elseif minutes < 15 then
+		return "5-15m"
+	elseif minutes < 30 then
+		return "15-30m"
+	elseif minutes < 60 then
+		return "30-60m"
+	end
+
+	return "60m+"
 end
 
 -- Returns the cook state most of a haul's skewers share, so a bulk sale still reads as one quality.
@@ -136,6 +160,7 @@ function AnalyticsManager:OnInit()
 	BadgeManager = require(script.Parent.BadgeManager)
 	TutorialManager = require(script.Parent.TutorialManager)
 	TutorialCrateManager = require(script.Parent.TutorialCrateManager)
+	PlaytimeManager = require(script.Parent.PlaytimeManager)
 end
 
 function AnalyticsManager:OnStart()
@@ -164,6 +189,11 @@ function AnalyticsManager:OnStart()
 	-- Core loop: roll -> buy -> cook -> display -> sell
 	IngredientRollingManager.OnIngredientRolled:Connect(function(player, standId, ingredientId)
 		logCustom(player, "Ingredient Rolled", 1, ingredientId, getIngredientTier(ingredientId), standId)
+	end)
+	-- Tallied off the per-pull signal rather than the per-stand one above, which would count a single
+	-- pull once for every stand the player has unlocked. Reported as one event per session below.
+	IngredientRollingManager.OnRollPerformed:Connect(function(player)
+		self._sessionRolls[player] = (self._sessionRolls[player] or 0) + 1
 	end)
 	-- Only three custom fields exist, and how it was paid for is worth slicing by now that a broke player
 	-- is offered the ingredient for Robux instead of a rejection -- so it shares the last field with
@@ -241,6 +271,17 @@ function AnalyticsManager:OnStart()
 	-- between players the wait held onto and players who had to come back for it.
 	TutorialCrateManager.OnClaimed:Connect(function(player, spawnedThisSession)
 		logCustom(player, "Tutorial Crate Claimed", 1, if spawnedThisSession then "SameSession" else "Rejoined")
+	end)
+
+	-- Session summaries. OnSessionEnded rides the pre-cleanup hook, so it covers leaving, shutdown and
+	-- session handover alike, and still holds a player the service will accept.
+	PlaytimeManager.OnSessionEnded:Connect(function(player, sessionLength)
+		-- Sessions that never rolled are logged too: dropping them would bias the average upward and
+		-- hide how many players never reach the lever at all.
+		local rolls = self._sessionRolls[player] or 0
+		self._sessionRolls[player] = nil
+
+		logCustom(player, "Session Rolls", rolls, getSessionLengthBucket(sessionLength))
 	end)
 end
 

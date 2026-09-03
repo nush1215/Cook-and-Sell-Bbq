@@ -6,11 +6,13 @@ local Players = game:GetService("Players")
 -- Packages
 local Packages = ReplicatedStorage.Packages
 local Trove = require(Packages.Trove)
+local Signal = require(Packages.Signal)
 
 -- Shared
 local Shared = ReplicatedStorage.Shared
 local Network = require(Shared.Network)
 local RollingConfig = require(Shared.Config.Rolling)
+local Ingredients = require(Shared.Config.Ingredients)
 
 -- Controllers
 local SoundController = require(script.Parent.SoundController)
@@ -49,8 +51,16 @@ local IngredientRollingController = {
 	PurchaseIngredientEvent = Network.Event("PurchaseIngredient"),
 	OnPurchasedEvent = Network.Event("OnIngredientPurchased"),
 
+	-- Fires once per lever pull the server accepted.
+	OnRollPerformed = Signal.new(),
+
+	-- (ingredientId, price) once a stand's ingredient is actually bought. Only the currency path
+	-- reaches here: a buy the player can't afford is finished off a Robux receipt on the server, which
+	-- never comes back through OnPurchasedEvent.
+	OnIngredientBought = Signal.new(),
+
 	_bases = {}, -- [model: Model] = Base
-	_purchasing = {}, -- [standId] = true while a purchase is in flight
+	_purchasing = {}, -- [standId] = the ingredient it was showing while a purchase is in flight
 
 	_rollLocked = false, -- while true, no base offers its lever (see SetRollLocked)
 
@@ -79,16 +89,22 @@ function IngredientRollingController:RequestRoll(): (number?, number?)
 		return nil
 	end
 
+	if rolledAt then
+		self.OnRollPerformed:Fire()
+	end
+
 	return rolledAt, duration
 end
 
--- Asks the server to buy the ingredient currently sitting on a stand.
-function IngredientRollingController:RequestPurchase(standId: string)
+-- Asks the server to buy the ingredient currently sitting on a stand. ingredientId is what the stand
+-- is showing as the request goes out -- the server decides what's actually sold, this is only held on
+-- to so the purchase signal can name it, since the stand has been cleared by the time the result lands.
+function IngredientRollingController:RequestPurchase(standId: string, ingredientId: string)
 	if self._purchasing[standId] then
 		return
 	end
 
-	self._purchasing[standId] = true
+	self._purchasing[standId] = ingredientId
 	self.PurchaseIngredientEvent:FireServer(standId)
 end
 
@@ -265,10 +281,13 @@ function IngredientRollingController:OnStart()
 	-- do here -- the server drops the stand's attribute on a real purchase, which clears it on every
 	-- client at once and flies the ingredient to whoever bought it.
 	self.OnPurchasedEvent:OnClientEvent(function(success: boolean, standId: string, discovered: boolean?)
+		local ingredientId = self._purchasing[standId]
 		self._purchasing[standId] = nil
 		if not success then
 			return
 		end
+
+		self.OnIngredientBought:Fire(ingredientId, Ingredients.GetIngredientFromId(ingredientId).Price)
 
 		-- A first-ever pull already rings through its discovery notification, so the purchase sound
 		-- would only stack on top of it.

@@ -35,6 +35,9 @@ local IngredientRollingManager = {
 
 	-- (player, standId, ingredientId) once per stand on every pull.
 	OnIngredientRolled = Signal.new(),
+	-- (player) once per lever pull the server accepted. OnIngredientRolled above is per stand, so a
+	-- player with several of them fires it many times for the one pull and can't be counted for this.
+	OnRollPerformed = Signal.new(),
 	-- (player, ingredientId, price, discovered, method) when a pending roll is claimed and the ingredient
 	-- granted. method is "Currency" or "Robux"; price is the Bux paid, 0 on a Robux buy.
 	OnIngredientPurchased = Signal.new(),
@@ -156,6 +159,8 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 	-- (having lost a level) shouldn't keep its old claim.
 	PlayerDataManager:SetPlayerDataKey(player, "PendingRolls", pending)
 	self:WritePendingRollsToBase(player, pending)
+
+	self.OnRollPerformed:Fire(player)
 
 	for standId, roll in pending do
 		self.OnIngredientRolled:Fire(player, standId, roll.IngredientId)
