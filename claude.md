@@ -26,8 +26,8 @@
 
 ## Functions
 - Avoid one-off helper functions for logic that's only used once — inline it instead. Only extract to a named function if the logic is reused or complex enough that naming it genuinely aids readability.
-- Add a brief doc comment to custom functions explaining what they do. Skip this for lifecycle/event hooks (`OnServerEvent`, `Heartbeat`, etc.) — their purpose is already obvious from context.
-- Keep comments concise by default — one line is usually enough. Only go longer when the logic is non-obvious enough that a senior engineer skimming it couldn't tell what it does at a glance (e.g. a tricky algorithm, a non-standard workaround, subtle ordering/timing dependencies) — and even then, stay terse: explain the "why," not a line-by-line narration.
+- Add a one-line doc comment to custom functions explaining what they do. Skip this for lifecycle/event hooks (`OnServerEvent`, `Heartbeat`, etc.) — their purpose is already obvious from context.
+- Comments are one line, no exceptions. If something is genuinely tricky (non-obvious algorithm, workaround, timing dependency), flag it with a short "why" note — never a multi-line explanation. If you can't say it in one line, the code needs a clearer name, not a longer comment.
 
 ## Defensive Checks
 - Don't add type guards or existence checks when the context already guarantees the type or value. Trust the data you set up.

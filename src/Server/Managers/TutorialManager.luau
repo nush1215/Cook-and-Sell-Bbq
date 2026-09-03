@@ -54,9 +54,10 @@ local FALLBACK_VARIANT = "B"
 
 -- What the tutorial's roll is pinned to. Rolled ingredients run from $75 to $400,000 and the player
 -- starts with $100, so an unpinned first pull could land something they can't buy and the tutorial
--- would have nowhere to go. Corn is $75, which with the $5 stick leaves $20 -- the cheap tier is the
--- only tier with any headroom at all here.
-local TUTORIAL_INGREDIENT_ID = "Corn"
+-- would have nowhere to go. Garlic is $80, which with the $5 stick leaves $15 -- the cheap tier is the
+-- only tier with any headroom at all here. Cheapest to cook of the whole roster too, at 7 seconds, so
+-- the beat being taught is over quickly rather than sat through.
+local TUTORIAL_INGREDIENT_ID = "Garlic"
 
 -- The stick variant B hands over at the start, instead of sending the player shopping for one. The same
 -- tier A has them buy: cheapest at $5, and the only one that restocks every window, so a player who ends
@@ -67,9 +68,9 @@ local TUTORIAL_STICK_ID = "WoodenStick"
 local STICK_FIRST_VARIANT = "B"
 
 -- How many times longer the perfect cook window runs while they're being taught it. The window is a
--- quarter of the bar, and on the pinned ingredient above that's about two seconds -- too sharp to ask
+-- quarter of the bar, and on the pinned ingredient above that's about three seconds -- too sharp to ask
 -- of someone meeting the mechanic for the first time, on a touchscreen, having just been told what a
--- griller is. At 3x it's about six, which still asks them to watch the bar and react. Nothing else
+-- griller is. At 3x it's about nine, which still asks them to watch the bar and react. Nothing else
 -- about the cook moves: the run up to the window and the burn past it keep their normal timings.
 local TUTORIAL_COOK_WINDOW_STRETCH = 3
 

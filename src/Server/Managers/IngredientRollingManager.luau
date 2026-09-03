@@ -17,6 +17,7 @@ local RandomUtil = require(Shared.RandomUtil)
 local Ingredients = require(Shared.Config.Ingredients)
 local RollingConfig = require(Shared.Config.Rolling)
 local BaseUnlocks = require(Shared.Config.BaseUnlocks)
+local EarlyBoost = require(Shared.Config.EarlyBoost)
 
 --
 local PlayerDataManager
@@ -41,11 +42,16 @@ local IngredientRollingManager = {
 	-- (player, ingredientId, price, discovered, method) when a pending roll is claimed and the ingredient
 	-- granted. method is "Currency" or "Robux"; price is the Bux paid, 0 on a Robux buy.
 	OnIngredientPurchased = Signal.new(),
+	-- (player, standId, ingredientId) when a pull hands a stand over to an early-game window-shop rather
+	-- than a roll. Fires alongside OnIngredientRolled rather than instead of it -- the stand really does
+	-- hold the thing -- so anything counting rolls can tell the shown ones from the won ones.
+	OnIngredientTeased = Signal.new(),
 
 	-- The rolls live in player data (data.PendingRolls), so one landed on but not bought survives a rejoin.
 	_inCooldown = {}, -- [player] = true, held until the roll animation has had time to finish
 	_purchasing = {}, -- [player] = true, held across the CanAfford -> DeductCurrency window
 	_forcedIngredients = {}, -- [player] = ingredientId, consumed by the next roll's first stand
+	_forcedTeasers = {}, -- [player] = true, makes the next pull tease past its chance roll
 	-- [player] = { StandId, IngredientId } their open Robux prompt was raised for. The ingredient is
 	-- stamped too, so a pull landing while the dialog sits open can't be handed over at the old price.
 	_pendingRobuxStand = {},
@@ -87,6 +93,67 @@ function IngredientRollingManager:RestorePendingRollsToBase(player: Player)
 	end
 
 	self:WritePendingRollsToBase(player, data.PendingRolls)
+end
+
+-- The ingredient a due pity counter forces onto one roll, or nil if none is due and it should roll normally.
+-- Scanned rarest first, so two counters coming due on the same roll pay out the better one. A counter
+-- watches its tier *or better* but pays out the tier itself (Config.Ingredients holds the weights), so the
+-- guarantee is a floor and anything above it still has to be won.
+--
+-- What the player can afford doesn't come into it: a pity Lamb lands on the stand whether or not they have
+-- the $60,000 for it, the same as a lucky one would. An unbought roll keeps its stand with no expiry, so
+-- earning the money and coming back for it is the intended path.
+function IngredientRollingManager:DrawPityIngredient(pity: { [string]: number }, rng: Random): string?
+	for _, tier in Ingredients.PITY_TIERS do
+		if (pity[tier.Id] or 0) >= tier.PityThreshold then
+			return RandomUtil.GetResultFromWeight(tier.PityWeights, rng)
+		end
+	end
+
+	return nil
+end
+
+-- Every cool ingredient priced clear of this much Bux: the pool a teaser draws from. Priced clear rather
+-- than merely above, so a teaser is still out of reach after the sale the player was about to make.
+--
+-- Comes back empty for someone rich enough that nothing worth showing off is out of reach, which is the
+-- teaser retiring itself on their balance before the early-game fade gets to it on their earnings.
+function IngredientRollingManager:GetTeaserCandidates(currency: number): { string }
+	local outOfReach = currency * EarlyBoost.TEASE_AFFORD_MARGIN
+	local candidates = {}
+
+	for _, ingredient in Ingredients.Data do
+		if ingredient.Tier.Index >= Ingredients.COOL_TIER_INDEX and ingredient.Price > outOfReach then
+			table.insert(candidates, ingredient.Id)
+		end
+	end
+
+	return candidates
+end
+
+-- A cool ingredient this player can't afford, for a pull to show off instead of rolling, or nil if they
+-- rolled no teaser this pull -- past the early game, or rich enough that nothing is out of reach.
+--
+-- The point is the want, not the ingredient. An early base rolls almost nothing but Commons and the good
+-- stuff is thousands of rolls out, so nothing tells a new player what they're playing towards. This puts
+-- it on their own stand where they can walk up to it and read the price off the billboard, and the price
+-- is the real one -- an unaffordable roll is already a thing this game does (see DrawPityIngredient), so
+-- there's nothing here to mark up or lock. What they can't do is buy it, which is the whole idea.
+--
+-- Drawn flat rather than by weight, and that's deliberate: on the roll odds seven teasers in eight would
+-- be Rares and Lamb would show about one in fifty, which is no showcase at all. Flat puts it at five in
+-- eight and one in eight, and the pool climbs the ladder on its own as the player's balance does. The
+-- label still reads its authored odds, the same call PITY_TIERS documents -- what pity and this add is
+-- meant to be felt rather than read.
+function IngredientRollingManager:DrawTeaserIngredient(player: Player, currency: number, rng: Random): string?
+	if self._forcedTeasers[player] then
+		self._forcedTeasers[player] = nil
+	elseif not RandomUtil.RollChance(EarlyBoost.GetTeaseChance(CurrencyManager:GetEarlyBoostEarnings(player)), rng) then
+		return nil
+	end
+
+	-- Nil on an empty pool, which is the right answer for a player who can afford everything worth showing
+	return RandomUtil.GetRandomFromArray(self:GetTeaserCandidates(currency), nil, rng)
 end
 
 -- Rolls one weighted-random ingredient per active stand and stores them as pending claims in player data.
@@ -137,15 +204,56 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 	-- from the command bar can't leave rolls with no stand to land on.
 	local standCount = math.min(data.Unlocks.RollingStands, BaseUnlocks.GetUnlockFromId("RollingStands").Limit)
 
+	-- Cloned and written back once below: a pull moves every counter, and one write beats a nested one per
+	-- tier per stand.
+	local pity = table.clone(data.Pity)
+
+	-- Held off until the tutorial is done: it pins the first stand to an ingredient the player can always
+	-- afford for exactly this reason, and a teaser is the opposite of that.
+	local teaserIngredientId = if data.TutorialCompleted
+		then self:DrawTeaserIngredient(player, data.Currency, rng)
+		else nil
+
+	-- Drawn once for the pull rather than per stand, so a wide base can't lose several of them to one
+	-- lucky chance -- a teaser costs the stand it takes.
+	local teaserStandIndex = if teaserIngredientId then rng:NextInteger(1, standCount) else nil
+	local teasedStandId = nil
+
 	for standIndex = 1, standCount do
 		local standId = tostring(standIndex)
-		local ingredientId = RandomUtil.GetResultFromWeight(weighted, rng)
+		local ingredientId = self:DrawPityIngredient(pity, rng)
+
+		-- A guarantee the player is owed outranks a window-shop they can't buy, so the teaser only takes a
+		-- stand no pity payout claimed.
+		local isTeaser = ingredientId == nil and standIndex == teaserStandIndex
+		if isTeaser then
+			ingredientId = teaserIngredientId
+		end
+
+		ingredientId = ingredientId or RandomUtil.GetResultFromWeight(weighted, rng)
 
 		-- A forced ingredient lands on the first stand, the rest roll normally. Consumed here rather than
 		-- up top, so the early returns above can't eat it on a pull that never rolled anything.
 		if standIndex == 1 and self._forcedIngredients[player] then
 			ingredientId = self._forcedIngredients[player]
 			self._forcedIngredients[player] = nil
+			isTeaser = false
+		end
+
+		if isTeaser then
+			teasedStandId = standId
+		end
+
+		-- Counted off what landed rather than how it was chosen, so a pity payout resets its own counter
+		-- the same way a natural roll does -- which is what re-arms it -- and a forced Lamb off the command
+		-- bar doesn't leave a Legendary pity still owed.
+		--
+		-- A teaser is the one thing that lands without resetting anything: it's shown, not won, so clearing
+		-- a guarantee on it would take away something the player never got to own. It still counts up, the
+		-- same as the ordinary roll it replaced almost certainly would have.
+		local landedIndex = Ingredients.GetIngredientFromId(ingredientId).Tier.Index
+		for _, tier in Ingredients.PITY_TIERS do
+			pity[tier.Id] = if not isTeaser and landedIndex >= tier.Index then 0 else (pity[tier.Id] or 0) + 1
 		end
 
 		pending[standId] = {
@@ -154,6 +262,8 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 			SpeedLevel = speedLevel,
 		}
 	end
+
+	PlayerDataManager:SetPlayerDataKey(player, "Pity", pity)
 
 	-- Written whole: a pull replaces everything the last left, so a stand the new roll doesn't cover
 	-- (having lost a level) shouldn't keep its old claim.
@@ -166,6 +276,10 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 		self.OnIngredientRolled:Fire(player, standId, roll.IngredientId)
 	end
 
+	if teasedStandId then
+		self.OnIngredientTeased:Fire(player, teasedStandId, pending[teasedStandId].IngredientId)
+	end
+
 	return rolledAt, duration
 end
 
@@ -173,6 +287,20 @@ end
 -- command bar, and cleared by the pull that uses it, so it's worth exactly one ingredient.
 function IngredientRollingManager:ForceNextIngredient(player: Player, ingredientId: string)
 	self._forcedIngredients[player] = ingredientId
+end
+
+-- Makes the next pull tease without waiting on its chance, and is worth exactly one pull. Fired off the
+-- command bar: the chance tops out at a few percent and fades as the player earns, so there's no reaching
+-- one on demand by pulling the lever. What it can't do is conjure a pool -- a player past the early game
+-- or rich enough to afford everything cool still teases nothing, and the arming is spent either way.
+function IngredientRollingManager:ForceNextTeaser(player: Player)
+	self._forcedTeasers[player] = true
+end
+
+-- Sets one of a player's pity counters. Fired off the command bar: the rarest rung is thousands of rolls
+-- out, so there's no reaching it by pulling the lever.
+function IngredientRollingManager:SetPlayerPityCount(player: Player, tierId: string, count: number)
+	PlayerDataManager:SetPlayerDataKey(player, { "Pity", tierId }, count)
 end
 
 -- Claims one stand's pending roll: gates on the roll timing, charges, grants. Returns true only on an
@@ -387,6 +515,7 @@ function IngredientRollingManager:OnStart()
 		self._inCooldown[player] = nil
 		self._purchasing[player] = nil
 		self._forcedIngredients[player] = nil
+		self._forcedTeasers[player] = nil
 		self._pendingRobuxStand[player] = nil
 	end)
 end

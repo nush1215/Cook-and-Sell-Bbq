@@ -1016,12 +1016,12 @@ function BuildController:_bindPlacementActions()
 		end
 	end
 
-	-- Place first, so it takes the touch slot nearest the jump button.
-	ContextActionUtility:BindAction(PLACE_ACTION, onPlace, true)
-	ContextActionUtility:SetTitle(PLACE_ACTION, "Place")
-
+	-- Rotate first, so it takes the touch slot nearest the jump button.
 	ContextActionUtility:BindAction(ROTATE_ACTION, onRotate, true, ROTATE_KEY)
 	ContextActionUtility:SetTitle(ROTATE_ACTION, "Rotate")
+
+	ContextActionUtility:BindAction(PLACE_ACTION, onPlace, true)
+	ContextActionUtility:SetTitle(PLACE_ACTION, "Place")
 
 	self._placementCleaner:Add(function()
 		ContextActionUtility:UnbindAction(PLACE_ACTION)

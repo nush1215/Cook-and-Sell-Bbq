@@ -9,7 +9,7 @@ local Ingredients = require(ReplicatedStorage.Shared.Config.Ingredients)
 -- "your Ingredient" while exactly one sits in the player's inventory. The server owns the pin --
 -- TutorialManager's TUTORIAL_INGREDIENT_ID -- and this is the client's copy of it, the same way step 17
 -- keeps the id of the stick it points at.
-local TUTORIAL_INGREDIENT_ID = "Corn"
+local TUTORIAL_INGREDIENT_ID = "Garlic"
 
 local NEAR_DISTANCE = 12
 local BEAM_HIDE_DISTANCE = 12

@@ -190,6 +190,12 @@ function AnalyticsManager:OnStart()
 	IngredientRollingManager.OnIngredientRolled:Connect(function(player, standId, ingredientId)
 		logCustom(player, "Ingredient Rolled", 1, ingredientId, getIngredientTier(ingredientId), standId)
 	end)
+	-- A teased stand fires the roll event above as well, since it really is holding the thing -- so this is
+	-- what tells the two apart. Without it a Lamb an early player was shown and couldn't buy is
+	-- indistinguishable from one they won, and the roll distribution reads as far too generous at the top.
+	IngredientRollingManager.OnIngredientTeased:Connect(function(player, standId, ingredientId)
+		logCustom(player, "Ingredient Teased", 1, ingredientId, getIngredientTier(ingredientId), standId)
+	end)
 	-- Tallied off the per-pull signal rather than the per-stand one above, which would count a single
 	-- pull once for every stand the player has unlocked. Reported as one event per session below.
 	IngredientRollingManager.OnRollPerformed:Connect(function(player)

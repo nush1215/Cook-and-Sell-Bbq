@@ -45,9 +45,13 @@ local SKIP_COOK_PRODUCT = "SkipCook"
     (see CookStates).
 
     Player data is the source of truth -- data.Grillers[structureUid] holds the skewer, plus Cooking /
-    CookStartedAt / CookTime while it runs. Nothing is scheduled off those: an unstopped cook just keeps
-    running across a rejoin, and the elapsed time at the stop is what settles it. The stamp is the synced
-    clock rather than os.time(), which only resolves to whole seconds -- most of this window.
+    CookStartedAt / CookTime while it runs. Nothing is scheduled off those: the elapsed time at the stop is
+    what settles a cook. The stamp is the synced clock rather than os.time(), which only resolves to whole
+    seconds -- most of this window.
+
+    A cook is frozen for as long as its owner is away: the seconds it had run are banked at their last save
+    and the clock is restamped off them when they come back, so a session gap neither burns a BBQ nor buys
+    any progress, and a rejoin resumes the same bar the stove was lit on.
 
     Which grillers exist is discovered off the Griller tag and keyed by uid, so one placed mid-session
     needs nothing told about it.
@@ -721,7 +725,58 @@ function GrillerManager:RecordCookResult(player: Player, stateId: string, elapse
 	end
 end
 
--- Registers the player's data listener. Guarded so two grillers bound in one frame can't set them up twice.
+-- Banks how long every running cook had been on the heat, so the time the player is away doesn't advance it.
+-- Only the elapsed is kept -- the clock itself is restamped off it by ResumePausedCooks when they come back.
+--
+-- A pre-cleanup callback because that's the one hook covering every way a session ends (leaving, shutdown,
+-- session handover), where _cleanupPlayer covers only the first.
+--
+-- Mutates `data` directly and never yields, as the hook requires: the player may already be gone from
+-- Players, which SetPlayerDataKey needs.
+function GrillerManager:PauseCooksOnLastSave(data)
+	for _, record in data.Grillers do
+		-- Already carrying one means the cook was paused and never resumed -- they left again before their
+		-- grillers bound -- so CookStartedAt is stale and recomputing would bank the gap they were away for.
+		if not record.Cooking or record.CookPausedElapsed then
+			continue
+		end
+
+		record.CookPausedElapsed = math.max(0, workspace:GetServerTimeNow() - record.CookStartedAt)
+	end
+end
+
+-- Restarts the clock on every cook that was frozen when the player last left, putting the bar back exactly
+-- where they stopped watching it. Rewinding the stamp is the whole resume: CookStartedAt is the only input
+-- the settle, the bar, the browning and the spin all derive from.
+function GrillerManager:ResumePausedCooks(player: Player)
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		return
+	end
+
+	for uid, record in data.Grillers do
+		if not record.Cooking then
+			continue
+		end
+
+		-- No bank on a running cook means the session ended without its last save (a crash), so the leg it
+		-- was on is unknowable -- restart that leg rather than settle against a stamp from another session.
+		PlayerDataManager:SetPlayerDataKey(player, { "Grillers", uid }, {
+			StickId = record.StickId,
+			Ingredients = table.clone(record.Ingredients),
+			Cooking = true,
+			CookStartedAt = workspace:GetServerTimeNow() - (record.CookPausedElapsed or 0),
+			CookTime = record.CookTime,
+			CookWindowStretch = record.CookWindowStretch,
+			CookProgress = record.CookProgress,
+			CookInstability = record.CookInstability,
+			CookInstabilityPhase = record.CookInstabilityPhase,
+		})
+	end
+end
+
+-- Registers the player's data listener and picks their paused cooks back up. Guarded so two grillers bound
+-- in one frame can't set them up twice.
 function GrillerManager:_setupPlayer(player: Player)
 	if self._listeners[player] then
 		return
@@ -730,6 +785,10 @@ function GrillerManager:_setupPlayer(player: Player)
 	self._listeners[player] = PlayerDataManager:ListenForChanges(player, "Grillers", function()
 		self:_renderGrills(player)
 	end)
+
+	-- After the listener, so the restamped records render themselves. The guard above is set before this
+	-- yields, so a second griller binding meanwhile still can't run it twice.
+	self:ResumePausedCooks(player)
 end
 
 -- Drops the player's listener and the models we cloned onto their grills.
@@ -796,6 +855,10 @@ function GrillerManager:OnStart()
 
 	self.RequestSkipCookEvent:OnServerEvent(function(player: Player, uid: string)
 		self:PromptSkipCookProduct(player, uid)
+	end)
+
+	PlayerDataManager:RegisterPreCleanupCallback(function(_, data)
+		self:PauseCooksOnLastSave(data)
 	end)
 
 	Players.PlayerRemoving:Connect(function(player: Player)

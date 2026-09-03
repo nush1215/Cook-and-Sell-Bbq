@@ -52,6 +52,15 @@ return {
 		-- having had time to play; SpeedLevel is stamped on the roll rather than read live, so a level
 		-- bought mid-pull can't move the goalposts under an animation already playing.
 		PendingRolls = {}, -- [standId] = { IngredientId, RolledAt, SpeedLevel }
+		-- Ingredient rolls since one landed at each tracked tier or better (see Ingredients.PITY_TIERS). A
+		-- counter reaching its tier's PityThreshold forces the next roll to that tier; whatever lands then
+		-- clears every counter at or below it, so a Legendary doesn't leave a forced Rare queued up behind
+		-- it. Watching "or better" while paying out the tier itself is what makes the guarantee a floor.
+		--
+		-- Counted per ingredient roll rather than per lever pull, since a pull on six stands is six shots
+		-- at the tier: per pull, a six-stand base would reach pity on the same count having had six times
+		-- the chances. So a bigger base reaches pity in fewer pulls and the same rolls.
+		Pity = {}, -- [tierId] = ingredient rolls since that tier or better
 
 		-- Index
 		-- [ingredientId] = lifetime number obtained; the key's presence marks it discovered
@@ -84,6 +93,9 @@ return {
 		-- and the CookInstability/CookInstabilityPhase pair -- all three bend the bar (see
 		-- CookStates.GetBarElapsed). Every one is stamped at the light rather than read at the stop, so the
 		-- bar bends the same way from first frame to last, across a rejoin included.
+		-- A cook frozen by its owner leaving also carries CookPausedElapsed: the real seconds it had run at
+		-- their last save, which CookStartedAt is restamped off on their return so time offline doesn't
+		-- advance it (see GrillerManager).
 		Grillers = {},
 
 		-- Sauce Dispenser

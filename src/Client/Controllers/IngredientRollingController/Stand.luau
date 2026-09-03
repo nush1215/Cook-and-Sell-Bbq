@@ -49,10 +49,6 @@ local RESULT_FLOAT_DELAY = 0.1 -- lets the landing spring settle before the floa
 local RESULT_HIGHLIGHT_DELAY = 0.7
 local PROMPT_DISTANCE = 13
 
--- A position on the tier ladder rather than a list of ids, so a tier added above Rare is celebrated
--- automatically instead of quietly falling back to the plain sting.
-local COOL_TIER_INDEX = table.find(Ingredients.Tiers, Ingredients.GetTierFromId("Rare")) :: number
-
 --[[
     One rolling stand, on every client, so a pull is something visitors can watch.
 
@@ -105,7 +101,7 @@ local pendingLanding = {} -- [baseId] = { IsCool: boolean, Emitter: BasePart }
 -- One sting per bank, or a four-stand base would stack the same sound four deep. The rarest landing of
 -- the frame is the one that plays -- a rare shouldn't be reduced to a common's chirp by a frame-mate.
 local function playLandingSound(baseId: string, ingredient: Ingredients.Ingredient, emitter: BasePart)
-	local isCool = (table.find(Ingredients.Tiers, ingredient.Tier) :: number) >= COOL_TIER_INDEX
+	local isCool = ingredient.Tier.Index >= Ingredients.COOL_TIER_INDEX
 	local banked = pendingLanding[baseId]
 
 	-- A banked landing is upgraded by a cool one, never added to. Only the tier moves -- every stand of
@@ -531,7 +527,7 @@ function Stand:RefreshInteraction()
 	if not self._prompt then
 		local prompt = Instance.new("ProximityPrompt")
 		prompt.RequiresLineOfSight = false
-		prompt.HoldDuration = 0.5
+		prompt.HoldDuration = 0.4
 		prompt.Style = Enum.ProximityPromptStyle.Custom
 		prompt.MaxActivationDistance = PROMPT_DISTANCE
 		prompt.ActionText = "Buy"

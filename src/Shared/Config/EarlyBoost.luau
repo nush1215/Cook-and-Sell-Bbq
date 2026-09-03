@@ -4,13 +4,21 @@
     A fresh base earns about the same per minute as an established one -- throughput is capped by how
     fast a skewer cooks rather than by how much money is behind it -- while what things cost climbs
     steeply (plots run 1K to 5M). So the opening is the slowest the game ever feels, which is exactly
-    backwards. This is what fixes that, on three dials: what a sale pays, how long the player waits
-    for the customer, and how often that customer walks off without buying. All three are hardest at
-    the very start and taper to nothing by the time the player is properly going.
+    backwards. This is what fixes that, on four dials: what a sale pays, how long the player waits
+    for the customer, how often that customer walks off without buying, and how often a rolling stand
+    shows off something they can't afford yet. All four are hardest at the very start and taper to
+    nothing by the time the player is properly going.
 
     The money is only half of it. Paying more per sale doesn't touch the rhythm of a sale, and the
     opening is where the dead air costs most -- few skewers, no upgrades to fill the gap, and a
     walk-off burning a whole retry cycle out of very little. Hence the two pacing dials beside it.
+
+    The fourth isn't pacing at all, it's the reason to keep going. An early base rolls almost nothing
+    but Commons, and the good stuff sits hundreds to thousands of rolls out, so a new player has no
+    picture of what they're playing towards -- the opening reads as the whole game rather than the
+    start of one. The teaser hands one stand over to something out of reach so they can walk up and
+    read the price off it. It's the only dial here that gives nothing away: what it costs the player
+    is the ordinary ingredient that stand would have rolled, and pulling again is free.
 
     Keyed on lifetime earnings rather than playtime, and that's the whole design. It can't be idled
     through, it measures how far along the player actually is instead of how long they've been sat
@@ -19,13 +27,15 @@
     also means anyone already past the threshold gets exactly nothing the moment this ships, so an
     established player never sees it and there's nothing to migrate.
 
-    One key and one curve for all three, so they fade out together rather than one outliving the
-    others and leaving the opening half-boosted.
+    One key and one curve for all four, so they fade out together rather than one outliving the
+    others and leaving the opening half-boosted. The teaser wants that most of all: a player still
+    being shown things they can't buy after the head start has gone is being told they're behind.
 
     What GetBonus gives back is the bonus fraction, not a multiplier -- CurrencyManager stacks it into
     the same running `addition` as the gamepass and friend boosts, all of them figured on the base
     amount. So a brand-new player holding x2Bux gets 1 + 1 + 0.5, not 2 x 1.5. The two pacing dials
-    are the other way round: they give back a multiplier for their caller to scale by.
+    are the other way round: they give back a multiplier for their caller to scale by, and
+    GetTeaseChance a percentage to roll against.
 ]]
 
 --
@@ -50,6 +60,24 @@ EarlyBoost.MAX_SPAWN_SPEEDUP = 0.3
 -- INTERESTED_CHANCE, so 1 is the ceiling by construction and this can't overshoot into never refusing.
 -- Higher = fewer wasted visits early. Lower = the thinking moment reads the same from the first skewer.
 EarlyBoost.MAX_DECLINE_REDUCTION = 0.5
+
+-- How often a pull is given over to showing off something out of reach at nothing earned, as a
+-- percentage: 8 is about one pull in twelve. Higher = the good stuff is in front of a new player more
+-- often. Lower = it stays a surprise. Cheap to be generous with -- it costs them the one ingredient that
+-- stand would have rolled, and the lever is free -- but it is still a pull that fed them nothing, so
+-- this wants to stay well short of common enough to read as the stand wasting their time.
+EarlyBoost.MAX_TEASE_CHANCE = 8
+
+-- How many times over their Bux a teased ingredient has to cost to count as out of reach. At 1 it would
+-- only have to be a dollar clear and the next sale would close it, which makes it a purchase they were
+-- about to make rather than something to play towards -- the want is the whole point.
+--
+-- Measured against what they're holding rather than what they've earned, so it tracks a player who just
+-- spent everything on a plot. That also means the pool climbs the ladder on its own as they get richer:
+-- $100 in hand draws from the whole cool roster, $10,000 from Lamb alone, and past $20,000 there's
+-- nothing dear enough left to show them -- which is the teaser bowing out on its own, before the fade
+-- below gets to it.
+EarlyBoost.TEASE_AFFORD_MARGIN = 3
 
 -- Lifetime earnings at which the bonus has run out entirely. This is the length of the head start, and
 -- it's in dollars rather than minutes on purpose: a player who found a good loop gets through it sooner
@@ -98,6 +126,12 @@ end
 -- a caller can apply it unconditionally.
 function EarlyBoost.GetDeclineScale(totalEarned: number): number
 	return 1 - EarlyBoost.MAX_DECLINE_REDUCTION * (1 - getFade(totalEarned))
+end
+
+-- The chance a pull shows off an ingredient this player can't afford yet, as a percentage. Zero at and
+-- past THRESHOLD, so a caller can roll it unconditionally.
+function EarlyBoost.GetTeaseChance(totalEarned: number): number
+	return EarlyBoost.MAX_TEASE_CHANCE * (1 - getFade(totalEarned))
 end
 
 return EarlyBoost

@@ -46,6 +46,14 @@ export type Tier = {
 	ValueMultiplier: number, -- what it sells for per dollar it cost, on top of SALE_VALUE_MULTIPLIER
 	TextColor: Color3, -- not authored below, back-filled from Shared.Colors
 	StrokeColor: Color3, -- the label's stroke, likewise back-filled
+	Index: number, -- position on the ladder, back-filled; the commonest tier is 1
+	PityThreshold: number?, -- go this many ingredient rolls without this tier *or better* and the next roll
+	-- is forced to it. Nil marks a tier untracked, which is what Common and Uncommon do. Rolls rather than
+	-- lever pulls -- one pull on six stands is six shots at the tier. Lower means pity delivers more of the
+	-- tier, and its real rate runs further ahead of the odds on its label (see below)
+	PityWeights: { { any } }?, -- back-filled: { id, Weight } for this tier's own entries, which is what a
+	-- forced roll draws from. The counter resets on anything this good or better, but the payout is the
+	-- tier itself -- pity hands over what it promised and leaves the rest to luck
 }
 
 export type Ingredient = {
@@ -132,6 +140,27 @@ table.freeze(Ingredients.ProductPriceBands)
 -- top of the band, small wet things at the bottom. What it still is, is the fallback, so an entry added
 -- without one lands on its tier's rate rather than nothing. Keep the bands from overlapping when retuning:
 -- them touching but not crossing is what keeps the slow thing and the valuable thing the same thing.
+--
+-- PityThreshold is the pity dial, and a tier having one is what puts a counter on it. It says the thing
+-- out loud: go this many ingredient *rolls* without one of this tier or better, and the next roll is one.
+-- Rolls rather than lever pulls, so a six-stand base reaches it in a sixth of the pulls and the guarantee
+-- means the same to everybody. Common and Uncommon name none -- at 1 in 1.2 and 1 in 7 there's no drought
+-- to protect anyone from.
+--
+-- These are set tight on purpose: short enough that the counter, not luck, is what mostly delivers the rare
+-- tiers. Lamb averages 2,200 rolls on its own odds and a guarantee at 650 means about three in four of them
+-- arrive on the counter -- so a Legendary is something a player grinds *to* rather than gets lucky into,
+-- which is the feel this ladder is tuned for. Rare at 65 against its 46-roll average is the mildest rung;
+-- Epic and Legendary lean on pity progressively harder.
+--
+-- Two consequences that follow from that and aren't bugs. The tiers land far commoner than their Chance
+-- labels read -- Lamb about four times as often -- which is covered where Chance is left alone further
+-- down. And the *thresholds*, not the odds, are what set the real pace, which is why the load-time check
+-- below compares them to each other rather than to the odds behind them.
+--
+-- These don't re-solve themselves. Rebalance the chance column and the guarantees keep their old numbers
+-- while the odds behind them move -- which matters less here than it would on a loose ladder, since the
+-- odds were never doing much of the work.
 Ingredients.Tiers = {
 	{
 		Id = "Common",
@@ -150,24 +179,30 @@ Ingredients.Tiers = {
 		Price = 1_700,
 		CookTime = 40,
 		ValueMultiplier = 1.8,
+		PityThreshold = 65,
 	},
 	{
 		Id = "Epic",
 		Price = 5_000,
 		CookTime = 60,
 		ValueMultiplier = 2.4,
+		PityThreshold = 350,
 	},
 	{
 		Id = "Legendary",
 		Price = 60_000,
 		CookTime = 85,
 		ValueMultiplier = 3.2,
+		PityThreshold = 650,
 	},
 	{
 		Id = "Mythic",
 		Price = 400_000,
 		CookTime = 110,
 		ValueMultiplier = 4.2,
+		-- A placeholder until Mythic has entries, since there's no average gap to set it against yet. It's
+		-- inert either way: a tier with nothing in it gets no counter.
+		PityThreshold = 1_500,
 	},
 }
 
@@ -175,14 +210,22 @@ Ingredients.Tiers = {
 -- stick read the same colour.
 local tiersById = {}
 
-for _, tier in Ingredients.Tiers do
+for index, tier in Ingredients.Tiers do
 	tier.TextColor = Colors[tier.Id].TextColor
 	tier.StrokeColor = Colors[tier.Id].StrokeColor
+	-- Kept on the tier so a rarity comparison is a number against a number rather than a table.find of
+	-- the ladder, which is what the pity reset does on every roll of every pull.
+	tier.Index = index
 	tiersById[tier.Id] = tier
 end
 
 table.freeze(Ingredients.Tiers)
 table.freeze(tiersById)
+
+-- Where the ladder starts being worth making a fuss over: a landing here or above gets the cool sting, and
+-- it's the floor a teaser draws from. A position rather than a list of ids, so a tier added above Rare is
+-- celebrated automatically instead of quietly falling back to the plain sting.
+Ingredients.COOL_TIER_INDEX = tiersById.Rare.Index
 
 -- Grouped by tier, commonest first. Config order is the Index grid's layout order and nothing else. The
 -- chances add up to 99.9998%, so every label reads exactly the number written on it.
@@ -602,6 +645,84 @@ if math.abs(totalWeight - 1) > Ingredients.CHANCE_SUM_TOLERANCE then
 	warn(
 		`Ingredient chances add up to {percent}% instead of 100%, so every label reads {math.abs(percent - 100)}% {direction} than authored -- {fix} some Chances to bring them back`
 	)
+end
+
+-- Pity. A tier naming a PityThreshold gets a counter in player data, and once that counter reaches it
+-- IngredientRollingManager forces the next roll to that tier.
+--
+-- Walked rarest first, since a counter watches "this tier *or better*": it means rolls since anything this
+-- good, so a Lamb clears the Rare counter as well as its own and pity can never force a Rare onto someone
+-- who just pulled a Legendary. What's gathered here is each tier's own entries, which is what a payout
+-- draws from -- paying out the whole band instead would hand Lamb out on Rare pity at about forty times its
+-- own rate, Lamb being a fortieth of the Rare band by weight while the Rare counter fires roughly twenty
+-- times as often as the Legendary one.
+local pityTiers = {}
+
+for index = #Ingredients.Tiers, 1, -1 do
+	local tier = Ingredients.Tiers[index]
+	local ownWeights = {}
+
+	for _, ingredient in Ingredients.Data do
+		if ingredient.Tier == tier then
+			table.insert(ownWeights, { ingredient.Id, ingredient.Weight })
+		end
+	end
+
+	-- A tier with no entries has nothing to force, so it stays untracked until it has some -- which is what
+	-- lets Mythic sit above with a threshold and an empty roster.
+	if not tier.PityThreshold or #ownWeights == 0 then
+		continue
+	end
+
+	-- Written onto the tier despite Ingredients.Tiers being frozen above, which is fine because that freeze
+	-- is shallow -- it holds the array, not the tiers in it. Freezing a tier itself would break this.
+	tier.PityWeights = table.freeze(ownWeights)
+	table.insert(pityTiers, tier)
+end
+
+-- Chance is deliberately left alone here, and that is a decision rather than an oversight. Pity forces
+-- rolls that wouldn't otherwise have landed, so a tracked tier turns up markedly more often than its label
+-- reads. At today's thresholds that is not a rounding difference -- measured over three million rolls:
+--
+--     Rare band       label 1 in 46     really 1 in 33     1.38x
+--     Epic band       label 1 in 368    really 1 in 196    1.88x
+--     Legendary       label 1 in 2,200  really 1 in 566    3.89x
+--
+-- The labels are the authored odds and stay that way: pity is meant to be something the player feels rather
+-- than reads, so nothing above is scaled to account for it. So don't "fix" a rate that comes in ahead of
+-- its label -- the gap *is* the pity, and it widens as a PityThreshold tightens. Re-measure it if the
+-- thresholds move; an earlier revision solved for these rates and folded them back into Chance, and git
+-- history has that if a true-odds display ever wants the numbers.
+--
+-- Worth knowing rather than acting on: Roblox wants accurate odds on randoms sold for Robux, and
+-- ingredients are (Ingredients.RobuxProductIds). Understating is the forgiving direction -- players get
+-- more than promised -- but a 3.89x understatement on Lamb is a long way from the authored number.
+
+-- Rarest first, which is the order the roller scans them in: two counters coming due on the same roll
+-- should pay out the better one.
+Ingredients.PITY_TIERS = table.freeze(pityTiers)
+
+-- The thresholds are tight enough that a counter, not luck, is what mostly delivers these tiers -- so the
+-- one thing that can still be mis-authored is their order. Whatever a tier's odds say, it can't arrive more
+-- often than its counter allows, so a rarer tier given the shorter threshold really does turn up more often
+-- than the commoner one above it and the whole ladder reads backwards.
+--
+-- Checked against the tier below rather than against each tier's own drought: at these thresholds the
+-- drought barely gets a say, and warning about that would be warning about the design.
+--
+-- pityTiers is rarest first, so walking it backwards climbs the ladder.
+local previousTier
+
+for index = #pityTiers, 1, -1 do
+	local tier = pityTiers[index]
+
+	if previousTier and tier.PityThreshold <= previousTier.PityThreshold then
+		warn(
+			`Ingredient tier {tier.Id} pities at {tier.PityThreshold} rolls, no longer than {previousTier.Id} at {previousTier.PityThreshold} -- the rarer tier would be guaranteed at least as often as the commoner one. Raise {tier.Id}'s PityThreshold past {previousTier.PityThreshold}`
+		)
+	end
+
+	previousTier = tier
 end
 
 -- The other two ways to mis-author the ladder, both of them a tier overlapping the one below it. A
