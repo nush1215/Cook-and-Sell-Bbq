@@ -43,7 +43,7 @@ Plots.FLOOR_NAME = "Floor"
 
 -- Costs[n] is what the nth plot a player buys costs them, whichever plot that turns out to be. Being
 -- past the end of the list means they own the lot, which also makes #Costs the number of plots.
-Plots.Costs = { 1_000, 15_000, 50_000, 150_000, 500_000, 1_500_000, 5_000_000, 15_000_000 }
+Plots.Costs = { 5_000, 50_000, 100_000, 250_000, 500_000, 1_500_000, 5_000_000, 15_000_000 }
 
 -- The Robux dev product per unlock, keyed the same way Costs is -- by how many plots the player has
 -- already bought, not by which plot. The receipt says nothing about which one they picked, so

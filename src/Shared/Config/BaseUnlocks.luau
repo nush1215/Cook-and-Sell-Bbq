@@ -85,9 +85,9 @@ BaseUnlocks.Data = {
 		LockStyle = "Layout",
 		Layout = { MaxPerRow = 3, Padding = 3 },
 		Limit = 6,
-		Costs = { 0, 1_000, 15_000, 150_000, 500_000, 1_500_000 },
+		Costs = { 0, 5_000, 18_000, 200_000, 500_000, 1_500_000 },
 		-- Level 6 has no product made for it yet, so that last step is currency-only.
-		RobuxProductIds = { [2] = 3709025046, [3] = 3709025081, [4] = 3709025105, [5] = 3709025123 },
+		RobuxProductIds = { [2] = 3709025046, [3] = 3709025081, [4] = 3709025105, [5] = 3709025123, [6] = 3710581384 },
 		TutorialLocked = true,
 	},
 	{

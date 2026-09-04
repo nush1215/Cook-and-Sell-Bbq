@@ -455,7 +455,7 @@ function SauceDispenserManager:ToggleSauceSkewer(player: Player, slotId: string)
 			CookState = skewer.CookState,
 			Sauce = skewer.Sauce,
 			Mutation = skewer.Mutation,
-		})
+		}, nil, skewer.Uid)
 		PlayerDataManager:SetPlayerDataKey(player, { "SauceDispensers", slotId, "Skewer" }, nil)
 
 		self._toggling[player] = nil
@@ -500,6 +500,8 @@ function SauceDispenserManager:ToggleSauceSkewer(player: Player, slotId: string)
 	end
 
 	PlayerDataManager:SetPlayerDataKey(player, { "SauceDispensers", slotId, "Skewer" }, {
+		-- Carried across so taking it back hands the same skewer over -- the held estimate is seeded off it.
+		Uid = filled.Uid,
 		StickId = filled.StickId,
 		Ingredients = table.clone(filled.Ingredients),
 		Cooked = filled.Cooked,

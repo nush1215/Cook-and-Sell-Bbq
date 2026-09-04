@@ -182,6 +182,21 @@ function SellNpcManager:_releaseSlot(player: Player, slot: number)
 	end
 end
 
+-- Claims a slot and the world position that customer waits at. Lanes alternate around the stand's centre
+-- (0, -1, +1, -2, ...) so the line stays centred on it however many customers are queued.
+function SellNpcManager:_claimStandPosition(player: Player, spawnPart: BasePart, standPart: BasePart): (number, Vector3)
+	local slot = self:_claimSlot(player)
+	local lane = math.ceil(slot / 2) * (if slot % 2 == 0 then 1 else -1)
+	local position = (standPart.CFrame * CFrame.new(lane * SellNpc.STAND_SPACING, 0, 0)).Position
+
+	-- Zig-zag: alternate lanes sit a row back, so a full line's billboards separate by depth.
+	if lane % 2 == 1 then
+		position += (spawnPart.Position - position).Unit * SellNpc.STAND_ROW_OFFSET
+	end
+
+	return slot, position
+end
+
 -- Pre-creates the reusable customer rigs and captures the template's default appearance.
 function SellNpcManager:_buildPool()
 	self._defaultDescription = NpcTemplate:FindFirstChildOfClass("Humanoid"):GetAppliedDescription()
@@ -372,12 +387,7 @@ function SellNpcManager:_spawnCustomer(player: Player): boolean
 	end
 
 	-- An explicit slot rather than a count of tracked customers, since visits run concurrently.
-	local slot = self:_claimSlot(player)
-	local standPosition = (standPart.CFrame * CFrame.new(slot * SellNpc.STAND_SPACING, 0, 0)).Position
-	-- Zig-zag: odd slots sit a row back, so a full line's billboards separate by depth.
-	if slot % 2 == 1 then
-		standPosition += (spawnPart.Position - standPosition).Unit * SellNpc.STAND_ROW_OFFSET
-	end
+	local slot, standPosition = self:_claimStandPosition(player, spawnPart, standPart)
 
 	local npc = self:_acquireNpc()
 	local humanoid = npc:FindFirstChildOfClass("Humanoid")
@@ -1117,11 +1127,7 @@ function SellNpcManager:_spawnRichCustomer(player: Player, firstVisit: boolean?)
 	end
 
 	-- The ordinary customers' slot allocator, so a rich one lines up beside them rather than inside them.
-	local slot = self:_claimSlot(player)
-	local standPosition = (standPart.CFrame * CFrame.new(slot * SellNpc.STAND_SPACING, 0, 0)).Position
-	if slot % 2 == 1 then
-		standPosition += (spawnPart.Position - standPosition).Unit * SellNpc.STAND_ROW_OFFSET
-	end
+	local slot, standPosition = self:_claimStandPosition(player, spawnPart, standPart)
 
 	local npc = self:_acquireRichNpc()
 	local humanoid = npc:FindFirstChildOfClass("Humanoid")

@@ -434,8 +434,12 @@ end
 -- @param skipEquip Leave it in the backpack rather than putting it in their hands, for a skewer that
 -- came back off a structure the player picked up: taking the hammer out of their hand there would end
 -- the pickup after every structure, so a base couldn't be cleared in one go.
-function StickManager:AddFilledStick(player: Player, record: FilledStick, skipEquip: boolean?)
-	local uid = HttpService:GenerateGUID(false)
+-- @param uid The uid the skewer went onto the structure with, for one coming back off a structure that
+-- only held it (the sell stand, a sauce plate). Reusing it is what keeps anything seeded off the uid --
+-- the estimate over a held skewer -- from shifting on a round trip. Omitted where what comes back isn't
+-- what went on: a grill hands back a cooked skewer, a stick stand one whose ingredients have changed.
+function StickManager:AddFilledStick(player: Player, record: FilledStick, skipEquip: boolean?, uid: string?)
+	uid = uid or HttpService:GenerateGUID(false)
 
 	-- Flagged before the write, since that's what runs the reconcile that builds the tool to equip.
 	if not skipEquip then

@@ -18,8 +18,9 @@ local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.E
 -- Controllers
 local GrillerController = require(script.Parent.Parent.Parent.Parent.GrillerController)
 
-local NEAR_DISTANCE = 12
-local BEAM_HIDE_DISTANCE = 12
+-- Matches the grill prompts' MaxActivationDistance, so the beat clears where the prompt comes in reach.
+local NEAR_DISTANCE = 15
+local BEAM_HIDE_DISTANCE = 15
 
 return function(self)
 	local slot = self:GetStructure("Grillers")

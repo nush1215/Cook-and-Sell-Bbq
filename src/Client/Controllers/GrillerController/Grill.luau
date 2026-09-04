@@ -34,10 +34,9 @@ local Particles = ReplicatedStorage.Assets.Particles
 --
 local LocalPlayer = Players.LocalPlayer
 
-local GRILL_PROMPT_DISTANCE = 10
+local GRILL_PROMPT_DISTANCE = 15
 local GRILL_PROMPT_HOLD = 0.3
--- Further than the place, since the take is the cook's stop: a player watching the bar from where they
--- can see it must still be able to call it.
+-- Matches the place, so a player watching the bar from where they can see it can still call the stop.
 local TAKE_PROMPT_DISTANCE = 15
 -- The same E as every other prompt, by choice. OnePerButton exclusivity draws one E prompt at a time --
 -- whichever enabled one is nearest -- so the take contends with a neighbouring griller's prompts, and

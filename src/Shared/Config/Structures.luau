@@ -126,7 +126,7 @@ Structures.Data = {
 		Id = "IronGrill",
 		Name = "Iron Grill",
 		Category = "Grillers",
-		Cost = 2_500,
+		Cost = 3_500,
 		-- Carries no CookSpeed or CookInstability on purpose -- this is the baseline every other rung is
 		-- written against. The line only reads as an upgrade because the Rusty rung sits under it.
 		Description = `The good ol' trusted grill! Burns <font color="{SPEED_COLOR}">steady</font> and at <font color="{SPEED_COLOR}">full speed</font>, so the bar is easy to time`,
@@ -144,7 +144,7 @@ Structures.Data = {
 		Id = "GasGrill",
 		Name = "Gas Grill",
 		Category = "Grillers",
-		Cost = 25_000,
+		Cost = 50_000,
 		Description = `Now we're in the big leagues! <font color="{SPEED_COLOR}">25% faster</font> cooking`,
 		Icon = "rbxassetid://139507103650602",
 		TextColor = Color3.fromRGB(90, 170, 255),
@@ -161,7 +161,7 @@ Structures.Data = {
 		Id = "SolarGrill",
 		Name = "Solar Grill",
 		Category = "Grillers",
-		Cost = 100_000,
+		Cost = 250_000,
 		Description = `Harness the power of the sun! <font color="{SPEED_COLOR}">50% faster</font> cooking`,
 		Icon = "rbxassetid://75120638448905",
 		TextColor = Color3.fromRGB(255, 235, 120),

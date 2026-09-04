@@ -81,12 +81,18 @@ return {
 		-- records. Mutation is the grill's doing rather than the player's -- stamped as a cook settles, off
 		-- the structure it settled on -- so a BBQ is only mutated by the grill it was cooked on, and a raw
 		-- pull never gets one. It multiplies the sell value and adds its particles.
+		--
+		-- A skewer sitting on a structure that only holds it -- the sell stall, a sauce plate -- also carries
+		-- Uid, the key it had in FilledSticks, so taking it back hands over the same skewer rather than a
+		-- fresh one: what is seeded off the uid, like the estimate over a held skewer, would otherwise move
+		-- on a round trip. A grill and a stick stand mint instead, since what comes off them is not what
+		-- went on.
 		Sticks = {}, -- [stickId] = amount owned
 		-- [structureUid] = { StickId, Ingredients = { ingredientId }, Cooked? } placed on that stand
 		StickStands = {},
 		-- The sell stall's display: an array (max 6) of cooked skewers in placement order. One stand per
 		-- base, so a plain list rather than slot-keyed.
-		SkewerStand = {}, -- { { StickId, Ingredients = { ingredientId }, Cooked = true, Sauce?, Mutation? }, ... }
+		SkewerStand = {}, -- { { Uid, StickId, Ingredients = { ingredientId }, Cooked = true, Sauce?, Mutation? }, ... }
 		FilledSticks = {}, -- [uid] = { StickId, Ingredients, Cooked?, Sauce?, Mutation? } held as a distinct tool
 		-- [structureUid] = a skewer record sitting on that griller. Setting one down starts its cook, so a
 		-- record here almost always carries Cooking, CookStartedAt and CookTime (the whole 0 -> 1 run in
@@ -101,9 +107,10 @@ return {
 		Grillers = {},
 
 		-- Sauce Dispenser
-		-- [slotId] = { Size, Sauce?, Remaining, Skewer? }. Remaining starts at the size's Capacity (and tops
-		-- up on a size upgrade), dropping one per skewer sauced. A pour in progress also carries Saucing
-		-- and SauceStartedAt, so an interrupted one still finishes across a rejoin.
+		-- [slotId] = { Size, Sauce?, Remaining, Skewer? }, a plated skewer carrying the Uid it came in with.
+		-- Remaining starts at the size's Capacity (and tops up on a size upgrade), dropping one per skewer
+		-- sauced. A pour in progress also carries Saucing and SauceStartedAt, so an interrupted one still
+		-- finishes across a rejoin.
 		SauceDispensers = {},
 		-- Bottles carried, one stacking tool each. Using one on a dispenser loads that flavour and fills
 		-- it to the size's Capacity.

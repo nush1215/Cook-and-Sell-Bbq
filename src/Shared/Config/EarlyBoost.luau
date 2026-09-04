@@ -66,7 +66,7 @@ EarlyBoost.MAX_DECLINE_REDUCTION = 0.5
 -- often. Lower = it stays a surprise. Cheap to be generous with -- it costs them the one ingredient that
 -- stand would have rolled, and the lever is free -- but it is still a pull that fed them nothing, so
 -- this wants to stay well short of common enough to read as the stand wasting their time.
-EarlyBoost.MAX_TEASE_CHANCE = 10
+EarlyBoost.MAX_TEASE_CHANCE = 7
 
 -- How many times over their Bux a teased ingredient has to cost to count as out of reach. At 1 it would
 -- only have to be a dollar clear and the next sale would close it, which makes it a purchase they were
@@ -77,23 +77,27 @@ EarlyBoost.MAX_TEASE_CHANCE = 10
 -- $100 in hand draws from the whole cool roster, $10,000 from Lamb alone, and past $20,000 there's
 -- nothing dear enough left to show them -- which is the teaser bowing out on its own, before the fade
 -- below gets to it.
-EarlyBoost.TEASE_AFFORD_MARGIN = 3
+EarlyBoost.TEASE_AFFORD_MARGIN = 2
 
 -- Lifetime earnings at which the bonus has run out entirely. This is the length of the head start, and
 -- it's in dollars rather than minutes on purpose: a player who found a good loop gets through it sooner
 -- than one still learning, which is the right way round.
 --
 -- What sets it is where the fade is steepest, not where it ends. Smoothstep sheds the bonus fastest at
--- the halfway mark, so this is sized at twice the fourth plot (Config.Plots.Costs) to land that on the
--- plot-4 purchase -- the biggest drop lands on the biggest thing the player buys, instead of part-way
--- between two of them where nothing arrives to cover it. At the 100,000 this used to read, the steep
--- part fell at 50,000, and the only purchases either side of it were roll speed and rolling stands,
--- which add ingredient supply rather than throughput: one stand already feeds about four grills, so
--- they buy nothing at all for a player under that. Income went down and there was no way to spend
--- their way out of it, which is what read as the game stalling.
+-- the halfway mark, so what this has to do is land that on something the player is buying anyway -- the
+-- biggest drop wants covering by the biggest step up, rather than falling part-way between two of them
+-- where nothing arrives to soften it.
 --
--- Re-sizing this means re-checking what the new midpoint lands on, and moving a purchase onto it is
--- as good a fix as moving the threshold.
+-- What that something is has changed. This used to be sized at twice the fourth plot, back when plots
+-- were the expensive thing; ingredients are now, and the ladder that matters is what a roll can land on
+-- and be afforded. Traced against a fresh base, the steep part of the fade falls between roughly ten and
+-- fifteen minutes in, which is exactly the stretch where Rare (about 6 min) gives way to Epic (about 10)
+-- and then Legendary (about 17). Income sagging there is paid for by a roster that just got several
+-- times more valuable, so the drop lands on an upgrade rather than on nothing.
+--
+-- The number is the same 150,000 it was; the reason is not, which matters because the old reason would
+-- send anyone re-tuning this at the plot costs. Re-size it against ingredient affordability, and check
+-- what the new midpoint lands on -- moving a milestone onto it is as good a fix as moving the threshold.
 EarlyBoost.THRESHOLD = 150_000
 
 -- How far through the head start this much lifetime income is: 0 at nothing earned, 1 at and past

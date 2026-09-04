@@ -43,7 +43,7 @@ SellNpc.ARRIVE_DISTANCE = 4
 -- Higher = the line spreads out and might run past the stand. Lower = they overlap.
 SellNpc.STAND_SPACING = 8
 
--- Odd customers sit this far back, forming a second row so a full line's billboards don't stack flat.
+-- Alternate lanes sit this far back, forming a second row so a full line's billboards don't stack flat.
 -- Higher = a deeper stagger. Lower = the rows flatten into one line.
 SellNpc.STAND_ROW_OFFSET = 2.5
 

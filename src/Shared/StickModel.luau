@@ -34,7 +34,7 @@ local StickModel = {}
 
 -- The scale a built skewer is shown at wherever it's displayed small -- on the sell stand and held by a
 -- customer NPC -- so the two always match.
-StickModel.DISPLAY_SCALE = 0.25
+StickModel.DISPLAY_SCALE = 0.32
 
 export type StickRecord = {
 	StickId: string,
@@ -104,7 +104,8 @@ function StickModel.BuildStickModel(record: StickRecord): Model?
 
 		-- Seat the ingredient's bounding-box centre on its slot relative to the stick's pivot.
 		local ingredientModel = sourceModel(ingredient):Clone()
-		local center = base * StickIngredients.GetRestLocalCFrame(index, ingredientId, extents, middleOffset, stickLength)
+		local center = base
+			* StickIngredients.GetRestLocalCFrame(index, ingredientId, extents, middleOffset, stickLength)
 		ingredientModel:PivotTo(center * StickIngredients.GetPivotToCenter(ingredientModel):Inverse())
 
 		-- Painting the burn here is what carries it everywhere the skewer shows -- the grill, above the

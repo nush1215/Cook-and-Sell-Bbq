@@ -133,6 +133,8 @@ function SkewerStandManager:PlaceSkewer(player: Player)
 	-- Carried across as-is rather than stamped cooked: a raw skewer sells for almost nothing, and
 	-- laundering it into a cooked one on the way to the stand is exactly what that has to avoid.
 	local record = {
+		-- Carried across so taking it back hands the same skewer over -- the held estimate is seeded off it.
+		Uid = filled.Uid,
 		StickId = filled.StickId,
 		Ingredients = table.clone(filled.Ingredients),
 		Cooked = filled.Cooked,
@@ -199,7 +201,7 @@ function SkewerStandManager:RemoveSkewer(player: Player, index: number)
 		CookProgress = record.CookProgress,
 		Sauce = record.Sauce,
 		Mutation = record.Mutation,
-	})
+	}, nil, record.Uid)
 
 	local placed = table.clone(skewers)
 	table.remove(placed, index)
@@ -245,6 +247,8 @@ function SkewerStandManager:TakeSkewer(player: Player)
 	PlayerDataManager:SetPlayerDataKey(player, { "SkewerStand" }, placed)
 
 	return {
+		-- Carried so a customer who declines puts the same skewer back rather than a re-minted one.
+		Uid = record.Uid,
 		StickId = record.StickId,
 		Ingredients = table.clone(record.Ingredients),
 		Cooked = record.Cooked,
@@ -271,6 +275,7 @@ function SkewerStandManager:TakeAllSkewers(player: Player)
 	local taken = {}
 	for _, record in data.SkewerStand do
 		table.insert(taken, {
+			Uid = record.Uid,
 			StickId = record.StickId,
 			Ingredients = table.clone(record.Ingredients),
 			Cooked = record.Cooked,
