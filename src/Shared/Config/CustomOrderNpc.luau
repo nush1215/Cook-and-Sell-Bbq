@@ -5,10 +5,10 @@ local CustomOrderNpc = {}
 
 -- Sweep interval and per-player chance out of 100; with COOLDOWN these set how often an order turns up
 CustomOrderNpc.CHECK_INTERVAL = 10
-CustomOrderNpc.SPAWN_CHANCE = 80
+CustomOrderNpc.SPAWN_CHANCE = 60
 
 -- Seconds before that player can draw another, so a lucky run can't queue orders back to back
-CustomOrderNpc.COOLDOWN = 30
+CustomOrderNpc.COOLDOWN = 100
 
 -- What the player needs before an order is fillable at all: either is enough, neither and they never come
 CustomOrderNpc.MIN_GRILLERS = 2
@@ -46,9 +46,9 @@ CustomOrderNpc.OWNED_WEIGHT_BONUS = 3
 CustomOrderNpc.AFFORD_FACTOR = 1.5
 
 -- The premium on a perfect exact fill, climbing with what was asked for. See docs/balance.md
-CustomOrderNpc.BASE_MULTIPLIER = 1.5
-CustomOrderNpc.TIER_STEP = 0.12
-CustomOrderNpc.MULTIPLIER_CAP = 2
+CustomOrderNpc.BASE_MULTIPLIER = 1.2
+CustomOrderNpc.TIER_STEP = 0.05
+CustomOrderNpc.MULTIPLIER_CAP = 1.3
 
 -- What each ingredient they added but weren't asked for costs, so padding the stick out can't pay
 CustomOrderNpc.EXTRA_INGREDIENT_PENALTY = 0.15

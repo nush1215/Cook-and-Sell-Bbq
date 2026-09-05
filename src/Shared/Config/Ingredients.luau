@@ -42,7 +42,7 @@ export type Ingredient = {
 local Ingredients = {}
 
 -- The global economy dial, on top of every tier's ValueMultiplier
-Ingredients.SALE_VALUE_MULTIPLIER = 1.45
+Ingredients.SALE_VALUE_MULTIPLIER = 1.42
 
 -- What each slot past the slowest adds, as a fraction of its own CookTime. Short of 1 so filling a stick pays
 Ingredients.ADDITIONAL_SLOT_FACTOR = 0.75

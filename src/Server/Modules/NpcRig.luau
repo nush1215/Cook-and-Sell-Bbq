@@ -17,6 +17,7 @@ local SellNpc = require(Shared.Config.SellNpc)
 
 -- Assets
 local NpcTemplate = ServerStorage.Assets.NPCTemplate
+local FallbackNpcFolder = ServerStorage.Assets.NPC
 local SkewerToolTemplate = ReplicatedStorage.Assets.Tools.NPCSkewerTool
 
 -- Parked out of workspace so their client replicas die, which tears down the billboards
@@ -36,6 +37,7 @@ local NpcRig = {
 	_defaultDescription = nil, -- the template's own HumanoidDescription, re-applied to reset a released rig
 	_descCache = {}, -- [userId] = HumanoidDescription, so each friend's look is fetched at most once
 	_friendIds = {}, -- [player] = { userId, ... }, the owner's friend list fetched once per player
+	_fallbackDescriptions = {}, -- Assets.NPC's looks, worn when there's no friend to dress a customer as
 }
 
 -- Resolves the base's spawn/stand parts, or nil if the player has no base in the world.
@@ -108,6 +110,10 @@ function NpcRig.BuildPool()
 
 	NpcRig._defaultDescription = NpcTemplate:FindFirstChildOfClass("Humanoid"):GetAppliedDescription()
 
+	for _, rig in FallbackNpcFolder:GetChildren() do
+		table.insert(NpcRig._fallbackDescriptions, rig:FindFirstChildOfClass("Humanoid"):GetAppliedDescription())
+	end
+
 	for _ = 1, SellNpc.NPC_POOL_SIZE do
 		local npc = NpcTemplate:Clone()
 		CollisionManager:SetModelGroup(npc, CollisionManager.NPC)
@@ -143,25 +149,27 @@ function NpcRig.Release(npc: Model)
 	end
 end
 
--- A random friend's HumanoidDescription, or nil. Cached, since both web calls are throttled.
-function NpcRig.GetFriendDescription(player: Player, rng: Random): HumanoidDescription?
+-- A random friend's HumanoidDescription, falling back to an Assets.NPC look. Cached, since both web calls are throttled.
+function NpcRig.GetCustomerDescription(player: Player, rng: Random): HumanoidDescription?
 	local friendIds = NpcRig._friendIds[player]
 	if not friendIds then
-		friendIds = {}
-		NpcRig._friendIds[player] = friendIds
-
 		local success, pages = pcall(function()
 			return Players:GetFriendsAsync(player.UserId)
 		end)
-		if success then
-			for _, friend in pages:GetCurrentPage() do
-				table.insert(friendIds, friend.Id)
-			end
+		-- Only cached on success, so one throttled call doesn't hold them on fallbacks all session
+		if not success then
+			return RandomUtil.GetRandomFromArray(NpcRig._fallbackDescriptions, nil, rng)
+		end
+
+		friendIds = {}
+		NpcRig._friendIds[player] = friendIds
+		for _, friend in pages:GetCurrentPage() do
+			table.insert(friendIds, friend.Id)
 		end
 	end
 
 	if #friendIds == 0 then
-		return nil
+		return RandomUtil.GetRandomFromArray(NpcRig._fallbackDescriptions, nil, rng)
 	end
 
 	local userId = friendIds[rng:NextInteger(1, #friendIds)]
@@ -171,7 +179,7 @@ function NpcRig.GetFriendDescription(player: Player, rng: Random): HumanoidDescr
 			return Players:GetHumanoidDescriptionFromUserId(userId)
 		end)
 		if not success then
-			return nil
+			return RandomUtil.GetRandomFromArray(NpcRig._fallbackDescriptions, nil, rng)
 		end
 		description = result
 		NpcRig._descCache[userId] = description

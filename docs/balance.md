@@ -394,6 +394,14 @@ roll lands, one walks in, waits out of the queue lane asking whether there's any
 after `WAIT_DURATION`. If the player stocks the stand while it waits, it walks over and buys through the
 ordinary flow — decide flip, offer, haggle, payout, all priced off `CookStates` exactly as any other sale.
 
+**The window doesn't shut when it gives up.** It keeps reading the stand through the leave beat and the
+whole walk back to the spawn, so a placement turns it round rather than being punished for arriving a
+second late — the worst possible outcome being the player doing exactly what was asked and missing by a
+step. The real conversion window is therefore `WAIT_DURATION + SellNpc.LEAVE_DELAY + SellNpc.WALK_TIMEOUT`,
+and a customer caught on the way out says so (`NPCCheckingReturned`) rather than reusing the spotted line.
+That tail walks by hand rather than through `NpcRig.WalkTo`, which blocks on its own `MoveTo` loop and
+can't be turned round.
+
 It costs nothing to ignore, which is the point: it is a nudge back to the grill, not a demand. Past the
 cooldown the expected wait is `(100 / SPAWN_CHANCE) * CHECK_INTERVAL` — 20s at today's numbers, so about
 3 minutes between visits once `COOLDOWN` is counted, and only while the stand stays empty.
@@ -410,7 +418,7 @@ way `RichNpc` does. Gotcha: `SPAWN_CHANCE` is out of 100, matching the other two
 | `SALE_IDLE_TIME` | only a real lapse draws one, most players never see it | one turns up between ordinary sales, and nagging starts |
 | `SPAWN_CHANCE` | the lapse is noticed almost at once | the empty stand sits a while before anyone asks |
 | `COOLDOWN` | one ask per lapse, easily missed | they queue up on a player who has genuinely stopped |
-| `WAIT_DURATION` | there's time to run to the grill and cook one, so it converts | it's gone before the player reaches the stand |
+| `WAIT_DURATION` | there's time to run to the grill and cook one, so it converts | it's gone before the player reaches the stand — though the leave walk still catches a late placement |
 | `ASK_INTERVAL` | it asks once and stands quietly | the bubbles overlap and it reads as spam |
 | `LOITER_BACK_DISTANCE` | it hangs back, easy to miss from the grill | it crowds the lane a buying customer needs |
 

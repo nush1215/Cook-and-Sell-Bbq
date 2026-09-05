@@ -16,6 +16,7 @@ local NpcRig = require(Server.Modules.NpcRig)
 local Shared = ReplicatedStorage.Shared
 local Network = require(Shared.Network)
 local Colors = require(Shared.Colors)
+local GuiUtil = require(Shared.GuiUtil)
 local StickModel = require(Shared.StickModel)
 local RandomUtil = require(Shared.RandomUtil)
 local Sticks = require(Shared.Config.Sticks)
@@ -30,6 +31,9 @@ local DELIVERY_POLL_INTERVAL = 0.1
 
 -- The unlock whose level MIN_ROLLING_STANDS is counted in. It defaults to 1, so a buy first lands on 2
 local ROLLING_STANDS_UNLOCK = "RollingStands"
+
+-- The state a quote is priced against, so anything else is a deduction the toast has to explain
+local PERFECT_COOK_STATE = "Perfect"
 
 --
 local PlayerDataManager
@@ -379,6 +383,44 @@ function CustomOrderNpcManager:DeliverOrder(player: Player, npc: Model)
 	self._delivering[player] = nil
 end
 
+-- The payout toast. Graded, so the number is explained by whatever cost them the most -- flat, it read
+-- the same for a perfect fill and for a bag of the wrong thing.
+function CustomOrderNpcManager:_notifyDelivered(player: Player, order, delivered, banked: number)
+	local matched, extras = measureDelivery(order, delivered)
+	local missing = #order.Ingredients - matched
+	local cookState = CookStates.GetStateFromId(StickModel.GetCookStateId(delivered))
+
+	-- One line names one thing, so it names whichever went wrong first: the recipe is the bigger lever,
+	-- and a wrong recipe makes the cook state beside the point
+	local text, effect
+	if matched == 0 then
+		text, effect = "That wasn't their order, so they only paid what it's worth: {value}", "Error"
+	elseif missing > 0 and extras > 0 then
+		text, effect = "Wrong ingredients on that one, so they paid less: {value}", "Error"
+	elseif missing > 0 then
+		text, effect = "Missing ingredients, so they paid less: {value}", "Error"
+	elseif extras > 0 then
+		text, effect = "You added what they didn't ask for, so they paid less: {value}", "Error"
+	elseif cookState.Id ~= PERFECT_COOK_STATE then
+		-- Not an error: they made the right thing, and the cook is what the ordinary sale ladder prices
+		text = "Their order, but " .. GuiUtil.Colorize(cookState.Name, cookState.Color) .. " - they paid {value}"
+	else
+		text, effect = "Perfect order! {value}", "Success"
+	end
+
+	-- {value} is NotificationManager's placeholder for Count, so it must survive uninterpolated
+	NotificationManager:NotifyNormal(player, {
+		Text = text,
+		Duration = 4,
+		Effect = effect,
+		Count = {
+			Value = banked,
+			Format = "Price",
+			Color = Colors.Currency,
+		},
+	})
+end
+
 -- Says the two beats a hand-over earns: what they made, and then how it cooked.
 function CustomOrderNpcManager:_sayDeliveryReaction(npc: Model, order, delivered)
 	local matched, extras = measureDelivery(order, delivered)
@@ -541,7 +583,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	}
 	table.insert(tracked, record)
 
-	local description = NpcRig.GetFriendDescription(player, self._rng)
+	local description = NpcRig.GetCustomerDescription(player, self._rng)
 	if npc.Parent == nil then
 		return
 	end
@@ -565,6 +607,16 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	local rootPart = npc:FindFirstChild("HumanoidRootPart")
 	if rootPart and not rootPart.Anchored then
 		rootPart:SetNetworkOwner(nil)
+	end
+
+	-- A frame between parenting the rig and naming it over a remote. Fired in the same frame the two
+	-- go out together, and a client the model hasn't reached yet decodes the argument as nil and
+	-- silently never builds the billboards. The sell customer never hits this only because it fires
+	-- nothing until after its walk
+	task.wait()
+
+	if npc.Parent == nil then
+		return
 	end
 
 	-- A forced variation is the command bar's, which has already waited for a stand to look over
@@ -703,16 +755,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	-- The payout lets each projectile pop a "+X" that adds up to the counter's jump
 	EffectManager:RunEffect("All", "CollectCash", { npc, banked, player })
 
-	-- {value} is NotificationManager's placeholder for Count, so it must survive uninterpolated.
-	NotificationManager:NotifyNormal(player, {
-		Text = "Custom order filled for {value}!",
-		Duration = 3,
-		Count = {
-			Value = banked,
-			Format = "Price",
-			Color = Colors.Currency,
-		},
-	})
+	self:_notifyDelivered(player, order, delivered, banked)
 
 	self:_sayDeliveryReaction(npc, order, delivered)
 

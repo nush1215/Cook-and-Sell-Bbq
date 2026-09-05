@@ -135,7 +135,7 @@ function SellNpcManager:_spawnCustomer(player: Player): boolean
 	table.insert(tracked, record)
 
 	-- Both calls yield, and a leave during either has already destroyed the parked rig
-	local description = NpcRig.GetFriendDescription(player, self._rng)
+	local description = NpcRig.GetCustomerDescription(player, self._rng)
 	if npc.Parent == nil then
 		return true
 	end
@@ -992,7 +992,7 @@ function SellNpcManager:_spawnCheckingCustomer(player: Player)
 	table.insert(tracked, record)
 
 	-- Both calls yield, and a leave during either has already destroyed the parked rig
-	local description = NpcRig.GetFriendDescription(player, self._rng)
+	local description = NpcRig.GetCustomerDescription(player, self._rng)
 	if npc.Parent == nil then
 		return
 	end
@@ -1069,22 +1069,50 @@ function SellNpcManager:_spawnCheckingCustomer(player: Player)
 		return
 	end
 
-	-- Nothing turned up, so it gives up. Ignoring one costs the player nothing but the trip
+	-- Nothing turned up, so it starts heading out -- but it keeps watching, and a placement now turns it round
+	local caughtLeaving = false
 	if not stocked then
-		self.OnCheckingVisitEnded:Fire(player, false, CheckingNpc.WAIT_DURATION)
 		self.NpcSayEvent:FireAllClients(npc, "NPCCheckingLeaving")
-		task.wait(SellNpc.LEAVE_DELAY)
+
+		-- Walked out by hand: NpcRig.WalkTo blocks on its own MoveTo loop, so it can't be turned round
+		local leaveDeadline = os.clock() + SellNpc.LEAVE_DELAY + SellNpc.WALK_TIMEOUT
+		local walkFrom = os.clock() + SellNpc.LEAVE_DELAY
+
+		while os.clock() < leaveDeadline and npc.Parent ~= nil do
+			if SkewerStandManager:GetPlacedSkewerCount(player) > 0 then
+				stocked = true
+				break
+			end
+
+			-- Holds the verdict a beat before it moves, as an uninterested customer does
+			if os.clock() >= walkFrom then
+				humanoid:MoveTo(spawnPart.Position)
+				if (humanoid.RootPart.Position - spawnPart.Position).Magnitude <= SellNpc.ARRIVE_DISTANCE then
+					break
+				end
+			end
+
+			task.wait(CheckingNpc.POLL_INTERVAL)
+		end
+
 		if npc.Parent == nil then
 			return
 		end
 
-		NpcRig.WalkTo(humanoid, spawnPart.Position)
-		self:_despawnNpc(player, record)
-		return
+		-- Reported as the full wait rather than the walk it spent giving up, so an ignored one reads as one number
+		if not stocked then
+			self.OnCheckingVisitEnded:Fire(player, false, CheckingNpc.WAIT_DURATION)
+			self:_despawnNpc(player, record)
+			return
+		end
+
+		caughtLeaving = true
 	end
 
 	self.OnCheckingVisitEnded:Fire(player, true, os.clock() - startedAt)
-	self.NpcSayEvent:FireAllClients(npc, "NPCCheckingSpotted")
+
+	-- Caught on the way out is its own beat: repeating the waiting-spot line would read as if it never moved
+	self.NpcSayEvent:FireAllClients(npc, if caughtLeaving then "NPCCheckingReturned" else "NPCCheckingSpotted")
 	NpcRig.WalkTo(humanoid, standPosition)
 	if npc.Parent == nil then
 		return

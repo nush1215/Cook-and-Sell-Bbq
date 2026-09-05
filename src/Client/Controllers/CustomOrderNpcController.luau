@@ -1,6 +1,7 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local Players = game:GetService("Players")
 
 -- Packages
 local Packages = ReplicatedStorage.Packages
@@ -12,6 +13,7 @@ local Shared = ReplicatedStorage.Shared
 local Network = require(Shared.Network)
 local GuiUtil = require(Shared.GuiUtil)
 local RandomUtil = require(Shared.RandomUtil)
+local Highlights = require(Shared.Config.Highlights)
 local Ingredients = require(Shared.Config.Ingredients)
 local NpcDialogue = require(Shared.Config.NpcDialogue)
 local CustomOrderNpc = require(Shared.Config.CustomOrderNpc)
@@ -19,9 +21,13 @@ local CustomOrderNpc = require(Shared.Config.CustomOrderNpc)
 -- Modules
 local Modules = script.Parent.Parent.Modules
 local NpcBillboard = require(Modules.NpcBillboard)
+local EquippedItem = require(Modules.EquippedItem)
 
 -- Controllers
 local UIController
+
+--
+local LocalPlayer = Players.LocalPlayer
 
 -- The colour the offered amount is shown in on the offer frame, and the bonus badge beside it.
 local OFFER_AMOUNT_COLOR = "#55ff00"
@@ -61,18 +67,30 @@ function CustomOrderNpcController:_cleanup(npc: Model)
 
 	self._active[npc] = nil
 	state.running = false
+
+	-- A pooled rig outlives its visit, so a tag left on would breathe on the next customer to use it
+	npc:RemoveTag(Highlights.TAG)
+
 	state.trove:Destroy()
 end
 
 -- Builds the customer's billboards. The decide flip runs off NPCUIAttachment, so both are mounted.
 function CustomOrderNpcController:_attach(npc: Model, inspecting: boolean)
-	if not npc or self._active[npc] then
+	-- Said out loud, since a customer standing there with no billboards is the symptom either of
+	-- these used to present as, and neither left anything behind to read
+	if not npc then
+		warn("[CustomOrderNpcController] The arrive event carried no NPC, so no billboards were built")
+		return
+	end
+
+	if self._active[npc] then
 		return
 	end
 
 	-- No variant: it arrives holding nothing, so its lines have no cook state to react to until the hand-over
 	local state = NpcBillboard.Attach(npc, "CustomOrderNPCUIAttachment", nil, "CustomNPC")
 	if not state then
+		warn(`[CustomOrderNpcController] {npc:GetFullName()} has no head yet, so no billboards were built`)
 		return
 	end
 
@@ -100,6 +118,7 @@ function CustomOrderNpcController:_attach(npc: Model, inspecting: boolean)
 	end)
 
 	self._active[npc] = state
+	self:_refreshGlow(npc)
 
 	-- The flip is the sell stand's billboard, so this one mounts it alongside rather than redrawing it
 	if inspecting then
@@ -114,6 +133,43 @@ function CustomOrderNpcController:_attach(npc: Model, inspecting: boolean)
 	end
 
 	state.speak(if inspecting then "CustomNPCInspecting" else "CustomNPCArrived")
+end
+
+-- Breathes the customer while a BBQ is in hand, the same answer and colour the sell stall gives.
+-- Any skewer qualifies, however it cooked -- what it's worth is the grading's business, not the glow's.
+function CustomOrderNpcController:_refreshGlow(npc: Model)
+	npc:SetAttribute("HighlightColor", Highlights.CLAIM)
+
+	if EquippedItem.GetSkewer() then
+		npc:AddTag(Highlights.TAG)
+	else
+		npc:RemoveTag(Highlights.TAG)
+	end
+end
+
+-- Re-reads every live customer, since one equip changes the answer for all of them at once.
+function CustomOrderNpcController:_refreshGlows()
+	for npc in self._active do
+		self:_refreshGlow(npc)
+	end
+end
+
+-- Watches the local character's tools so the glow tracks what they equip.
+function CustomOrderNpcController:_watchCharacter(character: Model)
+	self._characterCleaner:Clean()
+
+	self._characterCleaner:Connect(character.ChildAdded, function(child)
+		if child:IsA("Tool") then
+			self:_refreshGlows()
+		end
+	end)
+	self._characterCleaner:Connect(character.ChildRemoved, function(child)
+		if child:IsA("Tool") then
+			self:_refreshGlows()
+		end
+	end)
+
+	self:_refreshGlows()
 end
 
 -- Runs the flip the inspecting variation opens on, always landing on Not Interested.
@@ -334,6 +390,16 @@ function CustomOrderNpcController:OnInit()
 end
 
 function CustomOrderNpcController:OnStart()
+	self._characterCleaner = Trove.new()
+
+	-- Equipping or unequipping a BBQ changes whether a waiting customer should be lit
+	if LocalPlayer.Character then
+		self:_watchCharacter(LocalPlayer.Character)
+	end
+	LocalPlayer.CharacterAdded:Connect(function(character: Model)
+		self:_watchCharacter(character)
+	end)
+
 	self.CustomOrderArriveEvent:OnClientEvent(function(npc: Model, inspecting: boolean)
 		self:_attach(npc, inspecting)
 	end)
