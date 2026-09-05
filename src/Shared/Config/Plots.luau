@@ -8,6 +8,7 @@ Plots.START = "Start"
 
 -- The grid as it reads in the world, back row first -- the whole source of truth for which plots touch which
 Plots.Grid = {
+	{ "9", "10", "11" },
 	{ "6", "7", "8" },
 	{ "3", "4", "5" },
 	{ "1", Plots.START, "2" },
@@ -22,7 +23,8 @@ Plots.SIGN_UI = "PlotUnlockUI" -- the Assets.UI template that sign's UI is clone
 Plots.FLOOR_NAME = "Floor"
 
 -- Costs[n] is what the nth plot costs, whichever it is; past the end means they own the lot
-Plots.Costs = { 5_000, 50_000, 100_000, 250_000, 500_000, 1_500_000, 5_000_000, 15_000_000 }
+Plots.Costs =
+	{ 5_000, 50_000, 100_000, 250_000, 500_000, 1_500_000, 5_000_000, 7_500_000, 10_000_000, 12_500_000, 15_000_000 }
 
 -- One product per unlock, keyed by how many they own -- BaseManager remembers which plot was picked
 Plots.RobuxProductIds = {
@@ -34,6 +36,9 @@ Plots.RobuxProductIds = {
 	[6] = 3709488993,
 	[7] = 3709489006,
 	[8] = 3709489039,
+	[9] = 3711461679,
+	[10] = 3711461700,
+	[11] = 3711461724,
 }
 
 -- The burn on a bought plot: neon then fade, played client-side, after which the server pulls the folder

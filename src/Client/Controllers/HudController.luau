@@ -21,6 +21,7 @@ local HIDE_HUD_FOR_UI = {
 		"Left",
 		"Right",
 		"BottomLeft",
+		"BottomRight",
 	},
 
 	CodeUI = {
@@ -28,6 +29,7 @@ local HIDE_HUD_FOR_UI = {
 		"Left",
 		"Right",
 		"BottomLeft",
+		"BottomRight",
 	},
 
 	GroupRewardUI = {
@@ -35,12 +37,14 @@ local HIDE_HUD_FOR_UI = {
 		"Left",
 		"Right",
 		"BottomLeft",
+		"BottomRight",
 	},
 
 	ShopUI = {
 		"Top",
 		"Left",
 		"Right",
+		"BottomRight",
 	},
 }
 
@@ -66,6 +70,11 @@ local HUD_FRAMES_POSITIONS = {
 	BottomLeft = {
 		Show = UDim2.fromScale(0.185, 0.875),
 		Hide = UDim2.fromScale(0.185, 1.25),
+	},
+
+	BottomRight = {
+		Show = UDim2.fromScale(0.815, 0.875),
+		Hide = UDim2.fromScale(0.815, 1.25),
 	},
 }
 

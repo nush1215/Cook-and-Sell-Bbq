@@ -36,6 +36,7 @@ local GrillStandShopController
 local GrillerController
 local StickStandController
 local IngredientRollingController
+local BuildController
 
 -- Local Player
 local LocalPlayer = Players.LocalPlayer
@@ -213,6 +214,9 @@ function TutorialController:Start(variant: string)
 
 	-- Released here, so the griller beat doesn't have to know about a lock it has no reason to hold
 	StickStandController:SetPlaceLocked(false)
+
+	-- Held from step 1 on, each build beat narrowing it to the structure it asks for
+	BuildController:SetPlaceCategory(nil)
 
 	ConfettiController:FireSidesConfetti({
 		Images = {
@@ -761,6 +765,7 @@ function TutorialController:OnInit()
 	GrillerController = require(script.Parent.GrillerController)
 	StickStandController = require(script.Parent.StickStandController)
 	IngredientRollingController = require(script.Parent.IngredientRollingController)
+	BuildController = require(script.Parent.BuildController)
 
 	for _, variantFolder in script.Sequence:GetChildren() do
 		local steps, count = {}, 0

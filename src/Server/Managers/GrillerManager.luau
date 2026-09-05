@@ -95,6 +95,19 @@ function GrillerManager:OwnsGrillerStructure(data, uid: string): boolean
 	return structure ~= nil and Structures.IsCategory(structure.Type, GRILLER_CATEGORY)
 end
 
+-- How many grillers the player has placed on their base, the measure of whether they can cook at any scale.
+function GrillerManager:CountPlacedGrillers(data): number
+	local count = 0
+
+	for _, structure in data.Structures do
+		if Structures.IsCategory(structure.Type, GRILLER_CATEGORY) then
+			count += 1
+		end
+	end
+
+	return count
+end
+
 -- The config for the griller at `uid`, so a BBQ is only ever shaped by the grill it was on. Nil when it's gone.
 function GrillerManager:GetGrillerStructure(data, uid: string): Structures.Structure?
 	local placed = data.Structures[uid]

@@ -18,15 +18,19 @@ local Ingredients = require(Shared.Config.Ingredients)
 local RollingConfig = require(Shared.Config.Rolling)
 local BaseUnlocks = require(Shared.Config.BaseUnlocks)
 local EarlyBoost = require(Shared.Config.EarlyBoost)
+local CustomOrderNpc = require(Shared.Config.CustomOrderNpc)
+local Boosts = require(Shared.Config.Boosts)
 
 --
 local PlayerDataManager
+local BoostManager
 local CurrencyManager
 local NotificationManager
 local IngredientManager
 local StatsManager
 local BaseManager
 local ShopManager
+local CustomOrderNpcManager
 
 --
 local IngredientRollingManager = {
@@ -48,6 +52,8 @@ local IngredientRollingManager = {
 	_purchasing = {}, -- [player] = true, held across the CanAfford -> DeductCurrency window
 	_forcedIngredients = {}, -- [player] = ingredientId, consumed by the next roll's first stand
 	_forcedTeasers = {}, -- [player] = true, makes the next pull tease past its chance roll
+	-- [player] = rolls since a live custom order's ingredient landed. Session-only, as the order is
+	_orderRolls = {},
 	-- [player] = { StandId, IngredientId } the open Robux prompt was raised for, so a new pull can't reprice it
 	_pendingRobuxStand = {},
 }
@@ -150,10 +156,13 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 		self._inCooldown[player] = nil
 	end)
 
-	-- Weight is the reciprocal of the authored odds, corrected at load, so these are the odds on the label
+	-- Read once per pull, so every stand in it rolls under the same luck, as SpeedLevel and the teaser are
+	local luck = BoostManager:GetBoostMultiplier(player, "Luck")
+
+	-- Weight is the reciprocal of the authored odds, so at luck 1 these are exactly the odds on the label
 	local weighted = {}
 	for _, ingredient in Ingredients.Data do
-		table.insert(weighted, { ingredient.Id, ingredient.Weight })
+		table.insert(weighted, { ingredient.Id, Boosts.GetLuckWeight(ingredient.Weight, luck) })
 	end
 
 	-- Roll server-side with server-only entropy so the outcome can't be predicted client-side
@@ -167,6 +176,16 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 	-- Cloned and written once -- a pull moves every counter, and one write beats one per tier per stand
 	local pity = table.clone(data.Pity)
 
+	-- What a live custom order still wants. A steer rather than a reweighting, so the labels stay the odds
+	local wanted = {}
+	local wantedIds = CustomOrderNpcManager:GetMissingOrderIngredients(player, data)
+	for _, id in wantedIds do
+		wanted[id] = true
+	end
+
+	-- Carried across pulls, so a wide base reaches the guarantee in rolls rather than in lever pulls
+	local orderRolls = self._orderRolls[player] or 0
+
 	-- Held off through the tutorial, which pins the first stand to something always affordable
 	local teaserIngredientId = if data.TutorialCompleted
 		then self:DrawTeaserIngredient(player, data.Currency, rng)
@@ -179,6 +198,11 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 	for standIndex = 1, standCount do
 		local standId = tostring(standIndex)
 		local ingredientId = self:DrawPityIngredient(pity, rng)
+
+		-- Under a tier guarantee, which is owed from hundreds of rolls back rather than from this order
+		if ingredientId == nil and #wantedIds > 0 and orderRolls >= CustomOrderNpc.ROLL_PITY_THRESHOLD then
+			ingredientId = RandomUtil.GetRandomFromArray(wantedIds, nil, rng)
+		end
 
 		-- A guarantee they're owed outranks a window-shop, so the teaser takes no stand pity claimed
 		local isTeaser = ingredientId == nil and standIndex == teaserStandIndex
@@ -199,6 +223,9 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 			teasedStandId = standId
 		end
 
+		-- Counted off what landed, as the tier counters are, so the forced roll resets its own guarantee
+		orderRolls = if wanted[ingredientId] then 0 else orderRolls + 1
+
 		-- Counted off what landed, so a pity payout resets its own counter. A teaser counts up but resets nothing
 		local landedIndex = Ingredients.GetIngredientFromId(ingredientId).Tier.Index
 		for _, tier in Ingredients.PITY_TIERS do
@@ -211,6 +238,8 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 			SpeedLevel = speedLevel,
 		}
 	end
+
+	self._orderRolls[player] = orderRolls
 
 	PlayerDataManager:SetPlayerDataKey(player, "Pity", pity)
 
@@ -406,6 +435,8 @@ function IngredientRollingManager:OnInit()
 	StatsManager = require(script.Parent.StatsManager)
 	BaseManager = require(script.Parent.BaseManager)
 	ShopManager = require(script.Parent.ShopManager)
+	CustomOrderNpcManager = require(script.Parent.CustomOrderNpcManager)
+	BoostManager = require(script.Parent.BoostManager)
 end
 
 function IngredientRollingManager:OnStart()
@@ -436,6 +467,7 @@ function IngredientRollingManager:OnStart()
 		self._inCooldown[player] = nil
 		self._purchasing[player] = nil
 		self._forcedIngredients[player] = nil
+		self._orderRolls[player] = nil
 		self._forcedTeasers[player] = nil
 		self._pendingRobuxStand[player] = nil
 	end)

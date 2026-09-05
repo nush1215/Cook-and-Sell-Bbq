@@ -7,12 +7,18 @@ local Structures = require(ReplicatedStorage.Shared.Config.Structures)
 -- Modules
 local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 
+-- Controllers
+local BuildController = require(script.Parent.Parent.Parent.Parent.BuildController)
+
 local CATEGORY = "StickStands"
 local GUIDE_NAME = "StickStand"
 
 local BEAM_HIDE_DISTANCE = 12
 
 return function(self)
+	-- Narrowed off step 1's griller. Held to the finish, so nothing granted mid-run can go down out of turn
+	BuildController:SetPlaceCategory(CATEGORY, "Place your Stick Stand first")
+
 	local function isEquipped(): boolean
 		return Structures.IsCategory(EquippedItem.GetStructureId() or "", CATEGORY)
 	end

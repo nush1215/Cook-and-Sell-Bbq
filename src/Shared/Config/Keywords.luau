@@ -76,8 +76,8 @@ end)
 
 -- A price the way every call site writes one: "$500", "$1.2K", "$1,250".
 local MONEY_PATTERN = "^%$%d[%d,]*%.?%d*%a*"
--- The trailing "x" is part of a multiplier ("3x Common Crate"), so it colours with the number.
-local NUMBER_PATTERN = "^%d+%.?%d*x?"
+-- A unit is part of the number it follows -- a multiplier's "x", a duration's "m" -- so it colours with it
+local NUMBER_PATTERN = "^%d+%.?%d*%a*"
 
 -- Bounded, so "Uncommon" can't match as "Common" and "$500" can't match again as "500"
 local function isWordBoundary(character: string?): boolean

@@ -16,6 +16,7 @@ local StickShopManager
 local GrillerManager
 local SkewerStandManager
 local SellNpcManager
+local CustomOrderNpcManager
 local IndexManager
 local BaseManager
 local BadgeManager
@@ -59,6 +60,20 @@ local function logCustom(
 			})
 		end)
 	end)
+end
+
+-- Logs one step of an order's funnel. The id is per-order, so a repeat order is its own run rather than a second step 1.
+local function logOrderFunnelStep(player: Player, funnelId: string, stepIndex: number, stepName: string)
+	task.spawn(function()
+		pcall(function()
+			AnalyticsService:LogFunnelStepEvent(player, "Custom Order 1", funnelId, stepIndex, stepName)
+		end)
+	end)
+end
+
+-- Returns the tier an order reads as, its slots averaged and rounded to the nearest band.
+local function getOrderTier(order): string
+	return Ingredients.Tiers[math.round(order.TierIndex)].Id
 end
 
 -- Returns the ingredient's tier id, or nil for an id the config no longer has.
@@ -144,6 +159,7 @@ function AnalyticsManager:OnInit()
 	GrillerManager = require(script.Parent.GrillerManager)
 	SkewerStandManager = require(script.Parent.SkewerStandManager)
 	SellNpcManager = require(script.Parent.SellNpcManager)
+	CustomOrderNpcManager = require(script.Parent.CustomOrderNpcManager)
 	IndexManager = require(script.Parent.IndexManager)
 	BaseManager = require(script.Parent.BaseManager)
 	BadgeManager = require(script.Parent.BadgeManager)
@@ -207,25 +223,52 @@ function AnalyticsManager:OnStart()
 	SkewerStandManager.OnSkewerPlaced:Connect(function(player, record, placedCount)
 		logCustom(player, "Skewer Placed", 1, StickModel.GetCookStateId(record), tostring(placedCount))
 	end)
-	SellNpcManager.OnSaleCompleted:Connect(function(player, offer, skewerRecords, isRich)
+	SellNpcManager.OnSaleCompleted:Connect(function(player, offer, skewerRecords, customerType)
 		logCustom(
 			player,
 			"Sale Completed",
 			offer,
 			tostring(#skewerRecords),
-			if isRich then "Rich" else "Normal",
+			customerType,
 			getDominantCookState(skewerRecords)
 		)
 	end)
-	SellNpcManager.OnSaleDeclined:Connect(function(player, offer, skewerRecords, isRich, reason)
+	SellNpcManager.OnSaleDeclined:Connect(function(player, offer, skewerRecords, customerType, reason)
+		logCustom(player, "Sale Declined", offer, reason, customerType, getDominantCookState(skewerRecords))
+	end)
+	-- The value is how long they took to stock the stand, so an ignored one reads as the full wait
+	SellNpcManager.OnCheckingVisitEnded:Connect(function(player, converted, waited)
+		logCustom(player, "Checking Visit Ended", math.round(waited), if converted then "Converted" else "Ignored")
+	end)
+	-- The guaranteed first order is given rather than rolled for, so it has to be separable or it flatters the take-up
+	CustomOrderNpcManager.OnCustomOrderOffered:Connect(function(player, order, payout, variation, firstVisit, funnelId)
 		logCustom(
 			player,
-			"Sale Declined",
-			offer,
-			reason,
-			if isRich then "Rich" else "Normal",
-			getDominantCookState(skewerRecords)
+			"Custom Order Offered",
+			payout,
+			variation,
+			`{#order.Ingredients}x{getOrderTier(order)}`,
+			if firstVisit then "First" else "Repeat"
 		)
+		logOrderFunnelStep(player, funnelId, 1, "Offered")
+	end)
+	-- No event of its own: the funnel is what the acceptance is for, and the order's shape is on the offer
+	CustomOrderNpcManager.OnCustomOrderAccepted:Connect(function(player, _, funnelId)
+		logOrderFunnelStep(player, funnelId, 2, "Accepted")
+	end)
+	-- Three fields, so the order is logged by how it ended, how well it matched and how it cooked; the rest is in CustomOrderHistory
+	CustomOrderNpcManager.OnCustomOrderResolved:Connect(function(player, entry, funnelId)
+		local match = if entry.Matched == entry.Slots and entry.Extras == 0
+			then "Exact"
+			elseif entry.Matched > 0 then "Partial"
+			else "Wrong"
+
+		logCustom(player, "Custom Order Resolved", entry.Paid, entry.Outcome, match, entry.CookState)
+
+		-- Only the one ending is a completion; the funnel reads the other three as the drop-off they are
+		if entry.Outcome == "Delivered" then
+			logOrderFunnelStep(player, funnelId, 3, "Delivered")
+		end
 	end)
 	IndexManager.OnIngredientDiscovered:Connect(function(player, ingredientId)
 		logCustom(player, "Ingredient Discovered", 1, ingredientId, getIngredientTier(ingredientId))

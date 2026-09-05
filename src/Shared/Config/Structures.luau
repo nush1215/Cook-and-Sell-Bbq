@@ -207,7 +207,7 @@ Structures.Data = {
 Structures.FOLDER_NAME = "Structures"
 
 -- Studs per grid cell. A coarser grid is easier to place onto and blockier about what fits.
-Structures.CELL_SIZE = 4
+Structures.CELL_SIZE = 2
 
 -- How far above its cell a fresh structure appears before springing down; see docs/balance.md
 Structures.PLACE_DROP_HEIGHT = 6

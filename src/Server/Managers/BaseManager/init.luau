@@ -17,6 +17,7 @@ local Structures = require(Shared.Config.Structures)
 -- Managers
 local StickStandManager = require(script.Parent.StickStandManager)
 local GrillerManager = require(script.Parent.GrillerManager)
+local BoostManager = require(script.Parent.BoostManager)
 
 -- Modules
 local Base = require(script.Base)
@@ -27,6 +28,11 @@ local CurrencyManager
 local NotificationManager
 local ShopManager
 local BuildManager
+
+-- The boost handed out when the sweep below has to take someone's builds back
+local RECLAIM_BOOST_ID = "Luck"
+local RECLAIM_BOOST_AMOUNT = 1.5
+local RECLAIM_BOOST_DURATION = 480 -- seconds
 
 -- Per category: the data key holding a structure's contents and the manager that hands them back on pickup
 local STRUCTURE_CONTENTS = {
@@ -98,8 +104,14 @@ function BaseManager:AssignBaseToPlayer(player: Player)
 			end),
 		}
 
+		-- Before the render, so a build saved under a different CELL_SIZE is never posed in the wrong place
+		self:RescaleStructureCells(player)
+
 		base:AssignOwner(player, data.Unlocks, data.Plots, data.Structures)
 		self.OnBaseAssigned:Fire(player, base)
+
+		-- After it: taking a griller back settles its cook, and GrillerManager restamps a paused one as it binds the grill
+		self:ReclaimStrandedStructures(player)
 
 		return base
 	end
@@ -416,6 +428,118 @@ function BaseManager:RemoveStructureFromBase(player: Player, uid: string): boole
 	self.OnStructureRemoved:Fire(player, structure.Type)
 
 	return true
+end
+
+-- Rewrites saved cells after a CELL_SIZE change, a cell index meaning a distance only against the size it was saved at.
+function BaseManager:RescaleStructureCells(player: Player)
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		return
+	end
+
+	local savedCellSize = data.StructureCellSize
+	if savedCellSize == Structures.CELL_SIZE then
+		return
+	end
+
+	-- The anchor is a block's min corner and footprints rescale with it, so the build lands back on the same studs
+	local scale = savedCellSize / Structures.CELL_SIZE
+
+	for uid, placed in data.Structures do
+		PlayerDataManager:SetPlayerDataKey(player, { "Structures", uid }, {
+			Type = placed.Type,
+			-- Rounded, so coarsening the grid lands on whole cells too
+			CellX = math.round(placed.CellX * scale),
+			CellZ = math.round(placed.CellZ * scale),
+			Rotation = placed.Rotation,
+		})
+	end
+
+	PlayerDataManager:SetPlayerDataKey(player, "StructureCellSize", Structures.CELL_SIZE)
+end
+
+-- Hands back every build that no longer fits -- off the ground they own, or inside another -- with whatever was on it.
+function BaseManager:ReclaimStrandedStructures(player: Player)
+	local base = self:GetBaseFromPlayer(player)
+	if not base then
+		return
+	end
+
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		return
+	end
+
+	-- A base with no grid is a broken base rather than a stranded build, and sweeping one would empty it
+	local ground = base:GetGround(data.Plots)
+	if not ground or #ground.Rects == 0 then
+		warn(`[BaseManager] {player.Name}'s base has no buildable ground, so nothing is being reclaimed`)
+		return
+	end
+
+	local uids = {}
+	for uid in data.Structures do
+		table.insert(uids, uid)
+	end
+
+	-- Sorted, so which of two overlapping structures survives is the same on every load
+	table.sort(uids)
+
+	local kept = {}
+	local stranded = {}
+
+	for _, uid in uids do
+		local placed = data.Structures[uid]
+		local structure = Structures.GetStructureFromId(placed.Type)
+
+		-- One the config no longer has takes up no cells, and the pickup can't hand it back either
+		if not structure then
+			continue
+		end
+
+		local footprintX, footprintZ = Structures.GetFootprint(structure, placed.Rotation)
+
+		if base:IsBlockFree(placed.CellX, placed.CellZ, footprintX, footprintZ, kept, data.Plots) then
+			kept[uid] = placed
+		else
+			table.insert(stranded, uid)
+		end
+	end
+
+	local reclaimed = 0
+
+	for _, uid in stranded do
+		if self:RemoveStructureFromBase(player, uid) then
+			reclaimed += 1
+		end
+	end
+
+	-- Nothing actually came back, so there's nothing to apologise for
+	if reclaimed == 0 then
+		return
+	end
+
+	-- One for the sweep; anything sitting on a structure has already toasted its own way back
+	NotificationManager:NotifyNormal(player, {
+		Text = "Your plots shrank, so some builds went back to your backpack",
+		Duration = 5,
+		Sound = "Notify",
+	})
+
+	self:GrantReclaimCompensation(player)
+end
+
+-- What a player is given for builds the sweep above handed back: a flat luck boost, whatever came back.
+function BaseManager:GrantReclaimCompensation(player: Player)
+	-- Frames the boost's own toast as an apology, since that one only names the boost
+	NotificationManager:NotifyNormal(player, {
+		Text = "Here's a gift for the trouble!",
+		Duration = 4,
+		Sound = "Notify",
+		Effect = "Success",
+	})
+
+	BoostManager:GrantBoost(player, RECLAIM_BOOST_ID, RECLAIM_BOOST_AMOUNT, RECLAIM_BOOST_DURATION)
 end
 
 -- Buys the next slot of an unlock group; the data write re-renders the base through the listener.

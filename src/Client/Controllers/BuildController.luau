@@ -82,6 +82,9 @@ local REFUSAL_OCCUPIED = "Something's already built there"
 local REFUSAL_SELF = "You're standing there"
 local REFUSAL_PLAYER = "Someone's standing there"
 
+-- Stands in for a category lock set without a reason of its own (see SetPlaceCategory)
+local REFUSAL_LOCKED = "You can't place that right now"
+
 -- Matched to the game's other rejections, so being told no while building lands the same way
 local REFUSAL_DURATION = 3
 local REFUSAL_SOUND = "Reject"
@@ -126,7 +129,16 @@ local BuildController = {
 	_floors = {}, -- the floor of every plot the player owns, which is what the ghost's ray is aimed at
 	_ground = nil, -- GridUtil.Ground?, the cells those floors add up to; nil before a base is handed over
 	_lastPlaceTime = 0,
+
+	_placeCategory = nil, -- while set, only this category may go down (see SetPlaceCategory)
+	_placeRefusal = nil, -- what a ghost held off by that lock says when clicked
 }
+
+-- Holds placement to one category, for the tutorial beats asking for a particular structure down. Nil releases it.
+function BuildController:SetPlaceCategory(category: string?, refusal: string?)
+	self._placeCategory = category
+	self._placeRefusal = refusal
+end
 
 -- The base model the local player owns, once they've been given one.
 function BuildController:_getBase(): Model?
@@ -508,7 +520,10 @@ function BuildController:_updateGhost(deltaTime: number)
 	-- A reason, not a boolean, so a refused click can name the check; re-deriving it would test a later frame
 	local refusal = nil
 
-	if not GridUtil.IsBlockOnGround(ground, cellX, cellZ, footprintX, footprintZ) then
+	-- Ahead of the aim checks: a structure that isn't allowed down at all is the real reason, wherever it's pointed
+	if self._placeCategory and structure.Category ~= self._placeCategory then
+		refusal = self._placeRefusal or REFUSAL_LOCKED
+	elseif not GridUtil.IsBlockOnGround(ground, cellX, cellZ, footprintX, footprintZ) then
 		refusal = REFUSAL_OFF_GROUND
 	elseif not self:_isBlockFreeLocally(cellX, cellZ, footprintX, footprintZ) then
 		refusal = REFUSAL_OCCUPIED

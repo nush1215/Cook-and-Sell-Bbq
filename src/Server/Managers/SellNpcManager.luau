@@ -11,34 +11,24 @@ local Signal = require(Packages.Signal)
 -- Server
 local Server = script.Parent.Parent
 local ServerRandom = require(Server.Modules.ServerRandom)
+local NpcRig = require(Server.Modules.NpcRig)
 
 -- Shared
 local Shared = ReplicatedStorage.Shared
 local Network = require(Shared.Network)
-local GlobalUtil = require(Shared.GlobalUtil)
 local Colors = require(Shared.Colors)
 local StickModel = require(Shared.StickModel)
 local RandomUtil = require(Shared.RandomUtil)
-local Animations = require(Shared.Animations)
 local SellNpc = require(Shared.Config.SellNpc)
 local RichNpc = require(Shared.Config.RichNpc)
+local CheckingNpc = require(Shared.Config.CheckingNpc)
 local CookStates = require(Shared.Config.CookStates)
 local EarlyBoost = require(Shared.Config.EarlyBoost)
 
 -- Assets
-local NpcTemplate = ServerStorage.Assets.NPCTemplate
 local RichNpcFolder = ServerStorage.Assets.RichNPC
 local RichUiTemplate = ReplicatedStorage.Assets.UI.RichUI
 local RichParticlesTemplate = ReplicatedStorage.Assets.Particles.RichParticles
-local SkewerToolTemplate = ReplicatedStorage.Assets.Tools.NPCSkewerTool
-
--- Parked out of workspace so their client replicas die, which tears down the billboards
-local PoolFolder = Instance.new("Folder")
-PoolFolder.Name = "SellNpcPool"
-PoolFolder.Parent = ServerStorage
-
--- Each part's real transparency, so a fade-out to 1 isn't read back as the next fade-in target
-local FADE_BASE_TRANSPARENCY_ATTR = "FadeBaseTransparency"
 
 local RICH_LABEL = `<font color="#ffd400">RICH</font>`
 
@@ -79,24 +69,22 @@ local SoundManager
 local SellNpcManager = {
 	NpcDecideEvent = Network.Event("NpcDecide"),
 	NpcRichArriveEvent = Network.Event("NpcRichArrive"),
+	NpcCheckingArriveEvent = Network.Event("NpcCheckingArrive"),
 	NpcOfferEvent = Network.Event("NpcOffer"),
 	NpcOfferEndEvent = Network.Event("NpcOfferEnd"),
 	NpcOfferResponseEvent = Network.Event("NpcOfferResponse"),
 	NpcSayEvent = Network.Event("NpcSay"),
 
-	-- (player, offer, skewerRecords, isRich) once a customer's offer is taken and paid out.
+	-- (player, offer, skewerRecords, customerType) once a customer's offer is taken and paid out.
 	OnSaleCompleted = Signal.new(),
-	-- (player, offer, skewerRecords, isRich, reason) on a leave; reason is "Declined" or "TimedOut"
+	-- (player, offer, skewerRecords, customerType, reason) on a leave; reason is "Declined" or "TimedOut"
 	OnSaleDeclined = Signal.new(),
+	-- (player, converted, waited) when a checking customer's wait ends, either way
+	OnCheckingVisitEnded = Signal.new(),
 
 	_npcs = {}, -- [player] = { { npc = Model, tool = Tool }, ... } spawned instances, for cleanup
-	_slots = {}, -- [player] = { [slotIndex] = true } occupied stand positions, so customers don't overlap
 	_rng = ServerRandom.MakeRNG("SellNpc"),
 
-	_pool = {}, -- available parked rigs, handed out and returned instead of cloning/destroying each visit
-	_defaultDescription = nil, -- the template's own HumanoidDescription, re-applied to reset a released rig
-	_descCache = {}, -- [userId] = HumanoidDescription, so each friend's look is fetched at most once
-	_friendIds = {}, -- [player] = { userId, ... }, the owner's friend list fetched once per player
 	_guaranteed = {}, -- [player] = true while their customers skip the wait and always come in interested
 	_noticedRefusals = {}, -- [player] = refusals they were last told about, so the all-clear fires once
 	-- [player] = true once the free first counter is given, so concurrent visits don't all grant it
@@ -110,107 +98,6 @@ local function validatePlayer(player: Player): boolean
 	return player:IsDescendantOf(Players) and player:GetAttribute("BaseId") ~= nil
 end
 
--- Resolves the base's spawn/stand parts, or nil if the player has no base in the world.
-local function getBaseParts(player: Player): (BasePart?, BasePart?)
-	local baseId = player:GetAttribute("BaseId")
-	if not baseId then
-		return nil, nil
-	end
-
-	local baseModel = workspace.Base:FindFirstChild(baseId)
-	local core = baseModel and baseModel:FindFirstChild("Core")
-	if not core then
-		return nil, nil
-	end
-
-	return core:FindFirstChild("NPCSpawnPart"), core:FindFirstChild("NPCStandPart")
-end
-
--- A random point on the top surface of a part, so customers don't all spawn on the same spot.
-function SellNpcManager:_randomPointOn(part: BasePart): Vector3
-	local size = part.Size
-	local x = self._rng:NextNumber(-size.X / 2, size.X / 2)
-	local z = self._rng:NextNumber(-size.Z / 2, size.Z / 2)
-	return (part.CFrame * CFrame.new(x, size.Y / 2, z)).Position
-end
-
--- Claims the lowest free stand slot, spacing concurrent customers along the stand (see STAND_SPACING).
-function SellNpcManager:_claimSlot(player: Player): number
-	local slots = self._slots[player]
-	if not slots then
-		slots = {}
-		self._slots[player] = slots
-	end
-
-	local index = 0
-	while slots[index] do
-		index += 1
-	end
-	slots[index] = true
-	return index
-end
-
--- Frees a claimed stand slot. Tolerates a missing map: _cleanupPlayer may have cleared it already.
-function SellNpcManager:_releaseSlot(player: Player, slot: number)
-	local slots = self._slots[player]
-	if slots then
-		slots[slot] = nil
-	end
-end
-
--- Claims a slot and its wait position; lanes alternate around the stand's centre to stay centred.
-function SellNpcManager:_claimStandPosition(player: Player, spawnPart: BasePart, standPart: BasePart): (number, Vector3)
-	local slot = self:_claimSlot(player)
-	local lane = math.ceil(slot / 2) * (if slot % 2 == 0 then 1 else -1)
-	local position = (standPart.CFrame * CFrame.new(lane * SellNpc.STAND_SPACING, 0, 0)).Position
-
-	-- Zig-zag: alternate lanes sit a row back, so a full line's billboards separate by depth.
-	if lane % 2 == 1 then
-		position += (spawnPart.Position - position).Unit * SellNpc.STAND_ROW_OFFSET
-	end
-
-	return slot, position
-end
-
--- Pre-creates the reusable customer rigs and captures the template's default appearance.
-function SellNpcManager:_buildPool()
-	self._defaultDescription = NpcTemplate:FindFirstChildOfClass("Humanoid"):GetAppliedDescription()
-
-	for _ = 1, SellNpc.NPC_POOL_SIZE do
-		local npc = NpcTemplate:Clone()
-		CollisionManager:SetModelGroup(npc, CollisionManager.NPC)
-		npc.Parent = PoolFolder
-		table.insert(self._pool, npc)
-	end
-end
-
--- Hands out a parked rig, cloning only if the pool is empty. Stays in the pool folder; the caller places it.
-function SellNpcManager:_acquireNpc(): Model
-	local npc = table.remove(self._pool)
-	if npc then
-		return npc
-	end
-
-	npc = NpcTemplate:Clone()
-	CollisionManager:SetModelGroup(npc, CollisionManager.NPC)
-	npc.Parent = PoolFolder
-	return npc
-end
-
--- Parks a rig back in the pool and resets its look, so the next customer doesn't inherit it.
-function SellNpcManager:_releaseNpc(npc: Model)
-	npc.Parent = PoolFolder
-
-	local humanoid = npc:FindFirstChildOfClass("Humanoid")
-	humanoid:ApplyDescriptionReset(self._defaultDescription)
-
-	if #self._pool < SellNpc.NPC_POOL_SIZE then
-		table.insert(self._pool, npc)
-	else
-		npc:Destroy()
-	end
-end
-
 -- Clones a random rich rig with its badge and particles. Not pooled -- each is its own character.
 function SellNpcManager:_acquireRichNpc(): Model
 	local npc = RandomUtil.GetRandomFromArray(RichNpcFolder:GetChildren(), nil, self._rng):Clone()
@@ -219,126 +106,14 @@ function SellNpcManager:_acquireRichNpc(): Model
 	RichUiTemplate:Clone().Parent = npc.Head
 	RichParticlesTemplate:Clone().Parent = npc.Torso
 
-	npc.Parent = PoolFolder
+	-- Parked with the pooled rigs, so a leave tears its billboards down the same way
+	npc.Parent = NpcRig.PoolFolder
 	return npc
-end
-
--- A random friend's HumanoidDescription, or nil. Cached, since both web calls are throttled.
-function SellNpcManager:_getFriendDescription(player: Player): HumanoidDescription?
-	local friendIds = self._friendIds[player]
-	if not friendIds then
-		friendIds = {}
-		self._friendIds[player] = friendIds
-
-		local success, pages = pcall(function()
-			return Players:GetFriendsAsync(player.UserId)
-		end)
-		if success then
-			for _, friend in pages:GetCurrentPage() do
-				table.insert(friendIds, friend.Id)
-			end
-		end
-	end
-
-	if #friendIds == 0 then
-		return nil
-	end
-
-	local userId = friendIds[self._rng:NextInteger(1, #friendIds)]
-	local description = self._descCache[userId]
-	if not description then
-		local success, result = pcall(function()
-			return Players:GetHumanoidDescriptionFromUserId(userId)
-		end)
-		if not success then
-			return nil
-		end
-		description = result
-		self._descCache[userId] = description
-	end
-
-	return description
-end
-
--- Fades a rig's parts and decals. Fading out tweens to 1 and yields until it finishes.
-function SellNpcManager:_fadeNpc(npc: Model, fadeIn: boolean, duration: number)
-	local tweenInfo = TweenInfo.new(duration)
-
-	for _, descendant in npc:GetDescendants() do
-		if not (descendant:IsA("BasePart") or descendant:IsA("Decal")) then
-			continue
-		end
-
-		-- Captured while still opaque: a reused rig sits at 1, so the live value would fade it invisible
-		local base = descendant:GetAttribute(FADE_BASE_TRANSPARENCY_ATTR)
-		if base == nil then
-			base = descendant.Transparency
-			descendant:SetAttribute(FADE_BASE_TRANSPARENCY_ATTR, base)
-		end
-
-		if fadeIn then
-			descendant.Transparency = 1
-			TweenService:Create(descendant, tweenInfo, { Transparency = base }):Play()
-		else
-			TweenService:Create(descendant, tweenInfo, { Transparency = 1 }):Play()
-		end
-	end
-
-	if not fadeIn then
-		task.wait(duration)
-	end
-end
-
--- Equips an NPCSkewerTool holding the skewer built from `record`, in the Npc collision group.
-function SellNpcManager:_giveSkewer(npc: Model, record): (Tool, Model?)
-	local humanoid = npc:FindFirstChildOfClass("Humanoid")
-
-	local tool = SkewerToolTemplate:Clone()
-	tool.Parent = workspace
-	humanoid:EquipTool(tool)
-	CollisionManager:SetModelGroup(tool, CollisionManager.NPC)
-
-	local handle = tool:FindFirstChild("Handle")
-	local skewer = StickModel.BuildStickModel(record)
-	if skewer and handle then
-		skewer:ScaleTo(StickModel.DISPLAY_SCALE)
-
-		GlobalUtil.WeldModel(skewer, false)
-		skewer:PivotTo(handle.CFrame * SellNpc.SKEWER_HOLD_OFFSET)
-		GlobalUtil.Weld(handle, skewer.PrimaryPart)
-
-		for _, descendant in skewer:GetDescendants() do
-			if descendant:IsA("BasePart") then
-				descendant.CanCollide = false
-				descendant.Massless = true
-				descendant.CollisionGroup = CollisionManager.NPC
-			end
-		end
-
-		skewer.Parent = tool
-	end
-
-	return tool, skewer
-end
-
--- Walks the NPC to `destination`, re-issuing MoveTo until it arrives or WALK_TIMEOUT elapses.
-function SellNpcManager:_walkTo(humanoid: Humanoid, destination: Vector3)
-	local rootPart = humanoid.RootPart
-	local startTime = os.clock()
-
-	while os.clock() - startTime < SellNpc.WALK_TIMEOUT do
-		humanoid:MoveTo(destination)
-		local reached = humanoid.MoveToFinished:Wait()
-
-		if reached or (rootPart.Position - destination).Magnitude <= SellNpc.ARRIVE_DISTANCE then
-			return
-		end
-	end
 end
 
 -- Runs one whole visit. Returns true once settled, false if the customer walked off unsold.
 function SellNpcManager:_spawnCustomer(player: Player): boolean
-	local spawnPart, standPart = getBaseParts(player)
+	local spawnPart, standPart = NpcRig.GetBaseParts(player)
 	if not spawnPart or not standPart then
 		return true
 	end
@@ -350,9 +125,9 @@ function SellNpcManager:_spawnCustomer(player: Player): boolean
 	end
 
 	-- An explicit slot rather than a count of tracked customers, since visits run concurrently.
-	local slot, standPosition = self:_claimStandPosition(player, spawnPart, standPart)
+	local slot, standPosition = NpcRig.ClaimStandPosition(player, spawnPart, standPart)
 
-	local npc = self:_acquireNpc()
+	local npc = NpcRig.Acquire()
 	local humanoid = npc:FindFirstChildOfClass("Humanoid")
 
 	-- Tracked before the lookup yields, so a mid-lookup cleanup destroys the rig rather than orphaning it
@@ -360,7 +135,7 @@ function SellNpcManager:_spawnCustomer(player: Player): boolean
 	table.insert(tracked, record)
 
 	-- Both calls yield, and a leave during either has already destroyed the parked rig
-	local description = self:_getFriendDescription(player)
+	local description = NpcRig.GetFriendDescription(player, self._rng)
 	if npc.Parent == nil then
 		return true
 	end
@@ -374,9 +149,9 @@ function SellNpcManager:_spawnCustomer(player: Player): boolean
 	end
 
 	-- Primed while still parked, so the rig fades in rather than popping when it's revealed
-	self:_fadeNpc(npc, true, SellNpc.FADE_IN_DURATION)
+	NpcRig.Fade(npc, true, SellNpc.FADE_IN_DURATION)
 
-	local point = self:_randomPointOn(spawnPart)
+	local point = NpcRig.RandomPointOn(spawnPart, self._rng)
 	npc:PivotTo(CFrame.lookAt(point + Vector3.new(0, 3, 0), standPosition))
 	npc.Parent = workspace
 
@@ -386,26 +161,39 @@ function SellNpcManager:_spawnCustomer(player: Player): boolean
 		rootPart:SetNetworkOwner(nil)
 	end
 
-	self:_walkTo(humanoid, standPosition)
+	NpcRig.WalkTo(humanoid, standPosition)
 
 	-- The player may have left (and their NPCs been cleaned up) during the walk.
 	if npc.Parent == nil then
 		return true
 	end
 
+	return self:_serveStandSkewer(player, npc, record, humanoid, spawnPart, standPart, standPosition)
+end
+
+-- Takes a skewer off the stand and runs the decide beat, then the haggle. Returns true once settled.
+function SellNpcManager:_serveStandSkewer(
+	player: Player,
+	npc: Model,
+	record,
+	humanoid: Humanoid,
+	spawnPart: BasePart,
+	standPart: BasePart,
+	standPosition: Vector3
+): boolean
 	-- An empty stand means nothing to sell, so the customer just leaves (no retry).
 	local taken = SkewerStandManager:TakeSkewer(player)
 	if not taken then
-		self:_walkTo(humanoid, spawnPart.Position)
+		NpcRig.WalkTo(humanoid, spawnPart.Position)
 		self:_despawnNpc(player, record)
 		return true
 	end
 	-- An array of one, so the offer maths, return paths and cleanup work the same for a rich haul
 	record.skewerRecords = { taken }
-	record.tool, record.skewerModel = self:_giveSkewer(npc, taken)
+	record.tool, record.skewerModel = NpcRig.GiveSkewer(npc, taken)
 
 	-- Loops through the decide pause and any haggle, until the eat animation replaces it.
-	self:_playNpcAnimation(record, "Inspect")
+	NpcRig.PlayAnimation(record, "Inspect", self._rng)
 
 	-- New players get turned down less often; scaling the walk-off share keeps 1 the ceiling
 	local declineScale = EarlyBoost.GetDeclineScale(CurrencyManager:GetEarlyBoostEarnings(player))
@@ -452,8 +240,8 @@ function SellNpcManager:_spawnCustomer(player: Player): boolean
 		record.tool = nil
 	end
 
-	self:_stopNpcAnimation(record)
-	self:_walkTo(humanoid, spawnPart.Position)
+	NpcRig.StopAnimation(record)
+	NpcRig.WalkTo(humanoid, spawnPart.Position)
 	self:_despawnNpc(player, record)
 	return false
 end
@@ -461,7 +249,7 @@ end
 -- Removes one spawned customer: clears its skewer and tool, fades the rig out, pools or destroys it.
 function SellNpcManager:_despawnNpc(player: Player, record)
 	-- Catch-all for leave paths that despawn without walking, so no looped track rides the rig into the pool.
-	self:_stopNpcAnimation(record)
+	NpcRig.StopAnimation(record)
 
 	if record.skewerModel then
 		record.skewerModel:Destroy()
@@ -471,9 +259,9 @@ function SellNpcManager:_despawnNpc(player: Player, record)
 	end
 
 	-- Freed up front so a concurrent arrival can take the spot while this one fades
-	self:_releaseSlot(player, record.slot)
+	NpcRig.ReleaseSlot(player, record.slot)
 
-	self:_fadeNpc(record.npc, false, SellNpc.FADE_OUT_DURATION)
+	NpcRig.Fade(record.npc, false, SellNpc.FADE_OUT_DURATION)
 
 	-- The player may have left during the fade, in which case _cleanupPlayer already destroyed the rig.
 	if record.npc.Parent == nil then
@@ -484,7 +272,7 @@ function SellNpcManager:_despawnNpc(player: Player, record)
 	if record.isRich then
 		record.npc:Destroy()
 	else
-		self:_releaseNpc(record.npc)
+		NpcRig.Release(record.npc)
 	end
 
 	local tracked = self._npcs[player]
@@ -494,45 +282,6 @@ function SellNpcManager:_despawnNpc(player: Player, record)
 			table.remove(tracked, index)
 		end
 	end
-end
-
--- Stops and destroys the looped track -- pooled rigs would otherwise stack one Animator track per visit.
-function SellNpcManager:_stopNpcAnimation(record)
-	local track = record.animationTrack
-	if not track then
-		return
-	end
-
-	record.animationTrack = nil
-	track:Stop()
-	track.Animation:Destroy()
-	track:Destroy()
-end
-
--- Plays a random Animations.Npc[animationName] clip on a rig, or nil if there's no id yet.
-function SellNpcManager:_playNpcAnimation(record, animationName: string): AnimationTrack?
-	self:_stopNpcAnimation(record)
-
-	local ids = Animations.Npc[animationName]
-	local animationId = ids and RandomUtil.GetRandomFromArray(ids, nil, self._rng)
-	if not animationId then
-		return nil
-	end
-
-	local humanoid = record.npc:FindFirstChildOfClass("Humanoid")
-	local animator = humanoid and humanoid:FindFirstChildOfClass("Animator")
-	if not animator then
-		return nil
-	end
-
-	local animation = Instance.new("Animation")
-	animation.Name = animationName
-	animation.AnimationId = animationId
-
-	local track = animator:LoadAnimation(animation)
-	track:Play()
-	record.animationTrack = track
-	return track
 end
 
 -- Fades the skewer's ingredients out in order over `duration`, so the food looks eaten off the stick.
@@ -627,6 +376,11 @@ function SellNpcManager:SetCustomersGuaranteed(player: Player, guaranteed: boole
 	self._guaranteed[player] = guaranteed or nil
 end
 
+-- Whether the player is in guaranteed mode, so other customers can stay out of the tutorial's way.
+function SellNpcManager:AreCustomersGuaranteed(player: Player): boolean
+	return self._guaranteed[player] == true
+end
+
 -- Haggles and, on a deal, sells. Returns true once settled, false if the customer put the skewers back.
 function SellNpcManager:_negotiateSale(
 	player: Player,
@@ -641,6 +395,9 @@ function SellNpcManager:_negotiateSale(
 	local isRich = record.isRich
 	local prefix = if isRich then "RichNPC" else "NPC"
 	local config = if isRich then RichNpc else SellNpc
+
+	-- A checking customer haggles as a normal one does, so it only differs to whoever is watching the sale
+	local customerType = if isRich then "Rich" elseif record.isChecking then "Checking" else "Normal"
 
 	-- Offer, counter and cap scale with value; the cook state then decides how hard the customer haggles
 	local count = #record.skewerRecords
@@ -816,7 +573,13 @@ function SellNpcManager:_negotiateSale(
 		-- No deal: the skewers go back on the stand and the customer leaves, so another comes for them.
 		self.NpcSayEvent:FireAllClients(npc, `{prefix}PlayerDeclined`)
 		StatsManager:RecordSaleDeclined(player)
-		self.OnSaleDeclined:Fire(player, offer, record.skewerRecords, isRich, if timedOut then "TimedOut" else "Declined")
+		self.OnSaleDeclined:Fire(
+			player,
+			offer,
+			record.skewerRecords,
+			customerType,
+			if timedOut then "TimedOut" else "Declined"
+		)
 
 		-- Only a deliberate refusal counts: a lapse already cost them OFFER_TIMEOUT and wasn't a choice.
 		if not timedOut then
@@ -849,8 +612,8 @@ function SellNpcManager:_negotiateSale(
 			record.tool = nil
 		end
 
-		self:_stopNpcAnimation(record)
-		self:_walkTo(humanoid, spawnPart.Position)
+		NpcRig.StopAnimation(record)
+		NpcRig.WalkTo(humanoid, spawnPart.Position)
 		self:_despawnNpc(player, record)
 		return false
 	end
@@ -866,7 +629,7 @@ function SellNpcManager:_negotiateSale(
 	record.skewerRecords = nil
 
 	StatsManager:RecordSaleCompleted(player, soldRecords)
-	self.OnSaleCompleted:Fire(player, offer, soldRecords, isRich)
+	self.OnSaleCompleted:Fire(player, offer, soldRecords, customerType)
 
 	-- Down here because it yields, which is only safe once the record's skewers are cleared
 	self:ForgiveSaleRefusal(player)
@@ -892,7 +655,7 @@ function SellNpcManager:_negotiateSale(
 	local eatPosition = standPosition
 		+ backDir * self._rng:NextNumber(SellNpc.EAT_BACK_DISTANCE_MIN, SellNpc.EAT_BACK_DISTANCE_MAX)
 		+ sideDir * self._rng:NextNumber(-SellNpc.EAT_SPREAD, SellNpc.EAT_SPREAD)
-	self:_walkTo(humanoid, eatPosition)
+	NpcRig.WalkTo(humanoid, eatPosition)
 	if npc.Parent == nil then
 		return true
 	end
@@ -900,7 +663,7 @@ function SellNpcManager:_negotiateSale(
 	-- Face a random direction while eating, so eaters don't all stare the same way.
 	npc:PivotTo(CFrame.new(npc:GetPivot().Position) * CFrame.Angles(0, self._rng:NextNumber(0, math.pi * 2), 0))
 
-	self:_playNpcAnimation(record, "Eat")
+	NpcRig.PlayAnimation(record, "Eat", self._rng)
 	self.NpcSayEvent:FireAllClients(npc, `{prefix}Eating`)
 
 	-- A rich customer only built the skewer it holds; the rest of its haul it just carries off
@@ -923,8 +686,8 @@ function SellNpcManager:_negotiateSale(
 	end
 
 	self.NpcSayEvent:FireAllClients(npc, `{prefix}Leaving`)
-	self:_stopNpcAnimation(record)
-	self:_walkTo(humanoid, spawnPart.Position)
+	NpcRig.StopAnimation(record)
+	NpcRig.WalkTo(humanoid, spawnPart.Position)
 	self:_despawnNpc(player, record)
 	return true
 end
@@ -1004,7 +767,7 @@ end
 
 -- Sends one rich customer, which takes the whole stand as one sum. No retry -- the roll must come round again.
 function SellNpcManager:_spawnRichCustomer(player: Player, firstVisit: boolean?)
-	local spawnPart, standPart = getBaseParts(player)
+	local spawnPart, standPart = NpcRig.GetBaseParts(player)
 	if not spawnPart or not standPart then
 		return
 	end
@@ -1016,7 +779,7 @@ function SellNpcManager:_spawnRichCustomer(player: Player, firstVisit: boolean?)
 	end
 
 	-- The ordinary customers' slot allocator, so a rich one lines up beside them rather than inside them.
-	local slot, standPosition = self:_claimStandPosition(player, spawnPart, standPart)
+	local slot, standPosition = NpcRig.ClaimStandPosition(player, spawnPart, standPart)
 
 	local npc = self:_acquireRichNpc()
 	local humanoid = npc:FindFirstChildOfClass("Humanoid")
@@ -1026,9 +789,9 @@ function SellNpcManager:_spawnRichCustomer(player: Player, firstVisit: boolean?)
 	table.insert(tracked, record)
 
 	-- A rich customer is its own character, so there's no appearance lookup to yield on before the fade.
-	self:_fadeNpc(npc, true, SellNpc.FADE_IN_DURATION)
+	NpcRig.Fade(npc, true, SellNpc.FADE_IN_DURATION)
 
-	local point = self:_randomPointOn(spawnPart)
+	local point = NpcRig.RandomPointOn(spawnPart, self._rng)
 	npc:PivotTo(CFrame.lookAt(point + Vector3.new(0, 3, 0), standPosition))
 	npc.Parent = workspace
 
@@ -1041,13 +804,13 @@ function SellNpcManager:_spawnRichCustomer(player: Player, firstVisit: boolean?)
 	-- Their first says what a rich one is, since the gold UI shows it's different but not why it's worth stocking for
 	NotificationManager:NotifyNormal(player, {
 		Text = if firstVisit
-			then `A {RICH_LABEL} customer is heading to your stand! They buy every BBQ at once, and pay more than selling them one at a time`
+			then `A {RICH_LABEL} customer is heading to your stand! They buy every BBQ at once, and pay extra for it`
 			else `A {RICH_LABEL} customer is heading to your stand!`,
 		Duration = if firstVisit then 5 else 3,
 		Sound = "RichSpawn",
 	})
 
-	self:_walkTo(humanoid, standPosition)
+	NpcRig.WalkTo(humanoid, standPosition)
 
 	if npc.Parent == nil then
 		return
@@ -1056,7 +819,7 @@ function SellNpcManager:_spawnRichCustomer(player: Player, firstVisit: boolean?)
 	-- One write. The stand was stocked when the roll landed, but can have emptied during the walk.
 	local taken = SkewerStandManager:TakeAllSkewers(player)
 	if #taken == 0 then
-		self:_walkTo(humanoid, spawnPart.Position)
+		NpcRig.WalkTo(humanoid, spawnPart.Position)
 		self:_despawnNpc(player, record)
 		return
 	end
@@ -1071,9 +834,9 @@ function SellNpcManager:_spawnRichCustomer(player: Player, firstVisit: boolean?)
 			best, bestValue = taken[index], skewerValue
 		end
 	end
-	record.tool, record.skewerModel = self:_giveSkewer(npc, best)
+	record.tool, record.skewerModel = NpcRig.GiveSkewer(npc, best)
 
-	self:_playNpcAnimation(record, "Inspect")
+	NpcRig.PlayAnimation(record, "Inspect", self._rng)
 
 	-- No decide beat -- a walk-off would burn a long roll. The client is still told, since that builds its UI
 	self.NpcRichArriveEvent:FireAllClients(npc)
@@ -1205,6 +968,217 @@ function SellNpcManager:ForceRichVisit(player: Player): (boolean, string?)
 	return true
 end
 
+-- Sends one customer to ask whether there's any BBQ going. Waits out of the queue lane, and buys if one lands.
+function SellNpcManager:_spawnCheckingCustomer(player: Player)
+	local spawnPart, standPart = NpcRig.GetBaseParts(player)
+	if not spawnPart or not standPart then
+		return
+	end
+
+	local tracked = self._npcs[player]
+	if not tracked then
+		tracked = {}
+		self._npcs[player] = tracked
+	end
+
+	-- Claimed like any other customer, so the walk over to a skewer lands in a free lane rather than inside one
+	local slot, standPosition = NpcRig.ClaimStandPosition(player, spawnPart, standPart)
+
+	local npc = NpcRig.Acquire()
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+
+	-- Tracked before the lookup yields, so a mid-lookup cleanup destroys the rig rather than orphaning it
+	local record = { npc = npc, tool = nil, slot = slot, isChecking = true, thread = coroutine.running() }
+	table.insert(tracked, record)
+
+	-- Both calls yield, and a leave during either has already destroyed the parked rig
+	local description = NpcRig.GetFriendDescription(player, self._rng)
+	if npc.Parent == nil then
+		return
+	end
+	if description then
+		humanoid:ApplyDescriptionReset(description)
+		if npc.Parent == nil then
+			return
+		end
+		-- Applying a description rebuilds the rig's accessory parts, so re-stamp the collision group.
+		CollisionManager:SetModelGroup(npc, CollisionManager.NPC)
+	end
+
+	-- Primed while still parked, so the rig fades in rather than popping when it's revealed
+	NpcRig.Fade(npc, true, SellNpc.FADE_IN_DURATION)
+
+	local point = NpcRig.RandomPointOn(spawnPart, self._rng)
+	npc:PivotTo(CFrame.lookAt(point + Vector3.new(0, 3, 0), standPosition))
+	npc.Parent = workspace
+
+	-- Server-driven movement, so hand the root to the server rather than a nearby client.
+	local rootPart = npc:FindFirstChild("HumanoidRootPart")
+	if rootPart and not rootPart.Anchored then
+		rootPart:SetNetworkOwner(nil)
+	end
+
+	-- The whole point of the visit: they're at the grill or away from the stand, so the bubble alone would miss
+	NotificationManager:NotifyNormal(player, {
+		Text = "A customer is asking if you have any BBQ for sale",
+		Duration = 3,
+	})
+
+	-- The client builds its billboards and speaks the arrival line, as a rich customer's arrival does
+	self.NpcCheckingArriveEvent:FireAllClients(npc)
+
+	-- Emitted off the rig rather than through the toast, so it lands with the bubble and carries a direction
+	SoundManager:PlaySound("All", "CustomerChecking", npc:GetPivot())
+
+	-- Waits back and off to one side, leaving the stand lanes free for a customer that has something to buy
+	local backDir = (spawnPart.Position - standPosition).Unit
+	local sideDir = Vector3.new(-backDir.Z, 0, backDir.X)
+	local side = self._rng:NextNumber(CheckingNpc.LOITER_SIDE_DISTANCE_MIN, CheckingNpc.LOITER_SIDE_DISTANCE_MAX)
+		* (if self._rng:NextNumber() < 0.5 then -1 else 1)
+
+	NpcRig.WalkTo(humanoid, standPosition + backDir * CheckingNpc.LOITER_BACK_DISTANCE + sideDir * side)
+	if npc.Parent == nil then
+		return
+	end
+
+	-- Left idle, no Inspect track: that beat is for looking a skewer over, and _serveStandSkewer plays it once one lands
+	npc:PivotTo(CFrame.lookAt(npc:GetPivot().Position, standPosition))
+
+	-- Server-local wait, so os.clock rather than the synced clock the client paces beats off
+	local startedAt = os.clock()
+	local deadline = startedAt + CheckingNpc.WAIT_DURATION
+	local nextAsk = os.clock() + self._rng:NextNumber(CheckingNpc.ASK_INTERVAL_MIN, CheckingNpc.ASK_INTERVAL_MAX)
+	local stocked = false
+
+	while os.clock() < deadline and npc.Parent ~= nil do
+		if SkewerStandManager:GetPlacedSkewerCount(player) > 0 then
+			stocked = true
+			break
+		end
+
+		if os.clock() >= nextAsk then
+			nextAsk = os.clock()
+				+ self._rng:NextNumber(CheckingNpc.ASK_INTERVAL_MIN, CheckingNpc.ASK_INTERVAL_MAX)
+			self.NpcSayEvent:FireAllClients(npc, "NPCCheckingWaiting")
+		end
+
+		task.wait(CheckingNpc.POLL_INTERVAL)
+	end
+
+	if npc.Parent == nil then
+		return
+	end
+
+	-- Nothing turned up, so it gives up. Ignoring one costs the player nothing but the trip
+	if not stocked then
+		self.OnCheckingVisitEnded:Fire(player, false, CheckingNpc.WAIT_DURATION)
+		self.NpcSayEvent:FireAllClients(npc, "NPCCheckingLeaving")
+		task.wait(SellNpc.LEAVE_DELAY)
+		if npc.Parent == nil then
+			return
+		end
+
+		NpcRig.WalkTo(humanoid, spawnPart.Position)
+		self:_despawnNpc(player, record)
+		return
+	end
+
+	self.OnCheckingVisitEnded:Fire(player, true, os.clock() - startedAt)
+	self.NpcSayEvent:FireAllClients(npc, "NPCCheckingSpotted")
+	NpcRig.WalkTo(humanoid, standPosition)
+	if npc.Parent == nil then
+		return
+	end
+
+	-- It can still turn the skewer down, and the returned one lands on a stand no visit thread owns
+	if not self:_serveStandSkewer(player, npc, record, humanoid, spawnPart, standPart, standPosition) then
+		task.spawn(function()
+			self:_runVisit(player)
+		end)
+	end
+end
+
+-- One pass of the checking-customer roll, cheapest checks first so the data reads are rare.
+function SellNpcManager:_rollCheckingVisits()
+	for _, player in Players:GetPlayers() do
+		if not validatePlayer(player) then
+			continue
+		end
+
+		-- Not during the tutorial, whose sequence expects one customer per placement and nothing else
+		if self._guaranteed[player] == true then
+			continue
+		end
+
+		-- Any customer at all means they aren't being ignored -- and a rich one mid-haggle leaves the stand reading empty
+		if next(self._npcs[player] or {}) ~= nil then
+			continue
+		end
+
+		if not RandomUtil.RollChance(CheckingNpc.SPAWN_CHANCE, self._rng) then
+			continue
+		end
+
+		-- In their data on the synced clock, so rejoining can't hand out a fresh one
+		local hasStamp, lastCheckingVisit = PlayerDataManager:GetPlayerDataKey(player, "LastCheckingVisit"):await()
+		if not hasStamp or (workspace:GetServerTimeNow() - lastCheckingVisit) < CheckingNpc.COOLDOWN then
+			continue
+		end
+
+		-- A zero stamp is a player who has never sold, still working towards their first rather than drifting off
+		local hasSale, lastSaleAt = PlayerDataManager:GetPlayerDataKey(player, "LastSaleAt"):await()
+		if not hasSale or lastSaleAt == 0 then
+			continue
+		end
+		if (workspace:GetServerTimeNow() - lastSaleAt) < CheckingNpc.SALE_IDLE_TIME then
+			continue
+		end
+
+		-- Last: a stocked stand draws ordinary customers already, and asking about one in front of them reads wrong
+		if SkewerStandManager:GetPlacedSkewerCount(player) > 0 then
+			continue
+		end
+
+		-- Stamped before the visit, so a long wait can't let another be rolled the moment this one leaves.
+		PlayerDataManager:SetPlayerDataKey(player, "LastCheckingVisit", workspace:GetServerTimeNow())
+
+		task.spawn(function()
+			self:_runGuardedVisit(player, function()
+				self:_spawnCheckingCustomer(player)
+			end)
+		end)
+	end
+end
+
+-- Sends a checking customer now off the command bar, keeping only the checks that would leave it meaningless.
+function SellNpcManager:ForceCheckingVisit(player: Player): (boolean, string?)
+	if not validatePlayer(player) then
+		return false, `{player.Name} has no base to send a customer to.`
+	end
+
+	for _, record in self._npcs[player] or {} do
+		if record.isChecking then
+			return false, `{player.Name} already has a customer asking at their stand.`
+		end
+	end
+
+	-- Stamped as the roll stamps it, but not read, so the command can still be re-run straight away
+	PlayerDataManager:SetPlayerDataKey(player, "LastCheckingVisit", workspace:GetServerTimeNow())
+
+	task.spawn(function()
+		self:_runGuardedVisit(player, function()
+			self:_spawnCheckingCustomer(player)
+		end)
+	end)
+
+	-- A stocked stand is the idle-stand gate being skipped, so say it rather than let the instant buy look like a bug
+	if SkewerStandManager:GetPlacedSkewerCount(player) > 0 then
+		return true, `Sent a checking customer to {player.Name}. Their stand is stocked, so it'll buy rather than wait.`
+	end
+
+	return true
+end
+
 -- Tears down a leaving player's customers. Destroyed, not pooled -- clearing the parent is what mid-visit guards bail on.
 function SellNpcManager:_cleanupPlayer(player: Player)
 	local tracked = self._npcs[player]
@@ -1221,27 +1195,8 @@ function SellNpcManager:_cleanupPlayer(player: Player)
 		self._npcs[player] = nil
 	end
 
-	-- Dropped unless someone still here shares them, or the cache holds every friend of everyone who joined
-	local friendIds = self._friendIds[player]
-	self._friendIds[player] = nil
-	if friendIds then
-		local stillWanted = {}
-		for _, otherIds in self._friendIds do
-			for _, userId in otherIds do
-				stillWanted[userId] = true
-			end
-		end
+	-- The slots and the appearance cache are NpcRig's, and it drops them on the same PlayerRemoving
 
-		for _, userId in friendIds do
-			local description = self._descCache[userId]
-			if description and not stillWanted[userId] then
-				self._descCache[userId] = nil
-				description:Destroy()
-			end
-		end
-	end
-
-	self._slots[player] = nil
 	self._guaranteed[player] = nil
 	self._noticedRefusals[player] = nil
 	self._grantedFirstCounter[player] = nil
@@ -1287,7 +1242,7 @@ function SellNpcManager:OnInit()
 end
 
 function SellNpcManager:OnStart()
-	self:_buildPool()
+	NpcRig.BuildPool()
 
 	-- One skewer, one customer. The placement that first stocks the stand hands its visit to a rich one
 	SkewerStandManager.OnSkewerPlaced:Connect(function(player: Player, _record, count: number)
@@ -1319,6 +1274,14 @@ function SellNpcManager:OnStart()
 		while true do
 			task.wait(RichNpc.CHECK_INTERVAL)
 			self:_rollRichVisits()
+		end
+	end)
+
+	-- The mirror of the rich sweep: an empty stand and no recent sale is what draws one asking
+	task.spawn(function()
+		while true do
+			task.wait(CheckingNpc.CHECK_INTERVAL)
+			self:_rollCheckingVisits()
 		end
 	end)
 

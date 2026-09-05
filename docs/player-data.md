@@ -19,6 +19,19 @@ buying a plot opens up cells rather than starting a new grid.
 
 `Grillers` and `StickStands` are keyed by these same uids: whatever is sitting on each.
 
+**`StructureCellSize`** — a cell index only means a *distance* against the `Structures.CELL_SIZE` it was
+saved at, so that size is stored beside the cells rather than assumed. `BaseManager:RescaleStructureCells`
+reads it on handover and, when it doesn't match the config, multiplies every cell by the ratio and restamps
+it — a build survives the grid being retuned instead of collapsing toward the base's corner. The template
+default is `4` because that's what every profile written before the key existed used; a new profile rescales
+an empty table and gets stamped, which costs nothing.
+
+Cells are re-checked on every handover too, not only at placement. `BaseManager:ReclaimStrandedStructures`
+tests each one against `Base:IsBlockFree` and hands back anything now off the ground its owner holds or
+overlapping something already kept — the same path the pickup hammer takes, so the structure returns to
+`OwnedStructures` and its contents to the player. That's what a resized plot leaves behind. It bails out
+entirely on a base with no buildable ground, since that's a broken base rather than a stranded build.
+
 **`OwnedStructures`** — structures owned but not yet placed. A structure is only ever in one of the two
 places, and picking one back up returns it here, so nothing is lost to a bad spot.
 
@@ -114,6 +127,77 @@ teach it. Saved rather than session-scoped, so a rejoin neither re-hands the les
 **`SeenRichCustomer`** — whether a rich customer has ever visited. Their first is given rather than rolled
 for (`SellNpcManager:TrySendFirstRichVisit`) the moment their stand first holds `RichNpc.MIN_SKEWERS`,
 because otherwise whether they ever meet one is down to luck. Saved for the same reason as above.
+
+**`LastSaleAt`** — when they last completed a sale of any kind. Written in
+`StatsManager:RecordSaleCompleted` rather than in `SellNpcManager`, so rich hauls and custom order
+deliveries stamp it too — it answers "are they still playing the game", not "did the sell stand fire".
+**0 means they have never sold**, which the checking-customer roll reads as a player still working towards
+their first rather than one who has drifted off, and so leaves alone. Wall-clock, as above.
+
+**`LastCheckingVisit`** — when the last customer was sent to *ask* whether they had any BBQ for sale.
+Wall-clock for the same reason as `LastRichVisit`, and stamped *before* the visit runs, so a long wait
+can't let another be rolled the moment this one leaves.
+
+## Custom orders
+
+**`LastCustomOrderVisit`** — when the last order was put to the player. Wall-clock rather than
+session-clock, so a rejoin, or a hop to a server that has never sent one, doesn't hand out a fresh one.
+Stamped *before* the visit runs, so a long order can't let another be rolled the moment this one leaves.
+
+**`SeenCustomOrder`** — whether one has ever visited. Their first is *given* rather than rolled for
+(`CustomOrderNpcManager:TrySendFirstCustomOrder`) the moment they reach the requirement, because
+otherwise whether they ever meet the feature is down to luck — and a first one that arrives unexplained
+teaches nothing. Saved rather than session-scoped, so a rejoin neither re-hands the introduction nor
+skips it. Same reasoning as `SeenRichCustomer` and `SeenHaggle` above.
+
+The grant is also latched in memory for the session, because the saved key is written behind a yield
+and three separate signals can race to be the one that reaches it.
+
+**`CustomOrderHistory`** — the last `CustomOrderNpc.HISTORY_LENGTH` resolved orders, oldest first. This
+is the `RecentSales` idiom and it is here for the same reason: a rating has to be able to fall as well as
+climb, which a lifetime tally never can, and it is **stored as facts rather than a score** so retuning
+what a good order is worth re-rates the whole window rather than leaving old entries priced by old rules.
+
+An entry is `{ At, Outcome, Slots, TierIndex, Matched, Extras, CookState?, Mutation?, StickId?, Seconds,
+SecondsLeft, Quote, Paid }`. Nothing here computes a rating — it records what a rating would need, so the
+formula can be written and changed later without re-instrumenting the feature:
+
+| Axis | Read from |
+|---|---|
+| Accuracy | `Matched / Slots`, penalised by `Extras` |
+| Quality | `CookState` across the window |
+| Promptness | `SecondsLeft / Seconds` |
+| Reliability | share of `Outcome == "Delivered"` |
+| Difficulty | `Slots` and `TierIndex`, so a hard order can count for more |
+| Value realised | `Paid / Quote` |
+
+`SecondsLeft` is zero on anything that never got a clock, which is what tells a lapsed order from one
+handed over on the buzzer. `Outcome` is `Delivered`, `Expired`, `Declined` or `Ignored` — and a refused
+order is kept rather than dropped, because a rating blind to refusals can't tell a picky player from a
+busy one. `Declined` and `Ignored` are split because they are different failures: one is an answer, the
+other is an offer that never reached the player, and only the second says the ask itself went unseen.
+
+The flat counters beside it (`CustomOrdersOffered` through `CustomOrderCookStateCounts`, under Stats) are
+the lifetime half: what a badge or an index entry reads, where the window above is what a rating averages.
+`CustomOrdersOffered` counts at the **ask**, not the acceptance, for the same reason.
+
+## Boosts
+
+**`Boosts`** — timed consumables, keyed by a uid minted at the grant, each `{ Type, Amount, ExpiresAt }`.
+`Type` names a `Config.Boosts` entry. Wall-clock and **absolute** rather than a remaining duration, the same
+reasoning as `LastRichVisit`: a boost has to survive a rejoin or a hop to another server, and time off has to
+count against it. `workspace:GetServerTimeNow()` rather than `os.time()` because it is client-synced too, so
+the HUD's countdown needs no server tick behind it.
+
+A player holds several at once and **the biggest one applies**, falling to the next as it expires. That is
+not stored: `BoostManager:GetBoostMultiplier` takes a max over the entries still in date, which promotes the
+next one on its own. So there is no queue, no "active" flag, and nothing that can disagree with the icons —
+the HUD sorts the same list by the same rule. Suppressed boosts keep counting down, so a stack is worth its
+longest boost rather than the sum (see docs/balance.md).
+
+Swept every `Boosts.SWEEP_INTERVAL` by one pass over the players rather than a timer per boost, and capped at
+`Boosts.MAX_ACTIVE`, which drops the weakest first. Every reader re-checks `ExpiresAt` itself rather than
+trusting the sweep, since a roll can land in the gap between two of them.
 
 ## Tutorial
 

@@ -91,9 +91,9 @@ not a rounding difference — measured over three million rolls:
 
 | Band | Label | Really | Ratio |
 |---|---|---|---|
-| Rare | 1 in 46 | 1 in 33 | 1.38x |
-| Epic | 1 in 368 | 1 in 196 | 1.88x |
-| Legendary | 1 in 2,200 | 1 in 566 | 3.89x |
+| Rare | 1 in 52 | 1 in 40 | 1.30x |
+| Epic | 1 in 442 | 1 in 297 | 1.49x |
+| Legendary | 1 in 2,200 | 1 in 563 | 3.91x |
 
 The labels are the authored odds and stay that way: pity is meant to be something the player feels rather
 than reads. **So don't "fix" a rate that comes in ahead of its label** — the gap *is* the pity, and it
@@ -102,7 +102,7 @@ these rates and folded them back into Chance, and git history has that if a true
 the numbers.
 
 Worth knowing rather than acting on: understating odds is the forgiving direction for Roblox's accuracy
-requirement — players get more than promised — but a 3.89x understatement on Lamb is a long way from the
+requirement — players get more than promised — but a 3.91x understatement on Lamb is a long way from the
 authored number.
 
 The thresholds don't re-solve themselves. Rebalance the chance column and the guarantees keep their old
@@ -385,6 +385,148 @@ instead, and a haul that opened high has least left to gain — the same way a w
 | `OFFER_CAP_FACTOR` | a lucky haggle pays enormously, every round jumps further | pushing flattens out early |
 | `OFFER_TIMEOUT` | players can wander off and still come back | the stand frees sooner, slow players lose the biggest sale |
 
+## Selling — checking customers
+
+`Shared/Config/CheckingNpc.luau`. The only customer sent *because* there's nothing to sell. Every
+`CHECK_INTERVAL` the server looks over each player: if their stand is empty, their last completed sale was
+more than `SALE_IDLE_TIME` ago, their last checking visit was more than `COOLDOWN` ago and a `SPAWN_CHANCE`
+roll lands, one walks in, waits out of the queue lane asking whether there's any BBQ going, and leaves
+after `WAIT_DURATION`. If the player stocks the stand while it waits, it walks over and buys through the
+ordinary flow — decide flip, offer, haggle, payout, all priced off `CookStates` exactly as any other sale.
+
+It costs nothing to ignore, which is the point: it is a nudge back to the grill, not a demand. Past the
+cooldown the expected wait is `(100 / SPAWN_CHANCE) * CHECK_INTERVAL` — 20s at today's numbers, so about
+3 minutes between visits once `COOLDOWN` is counted, and only while the stand stays empty.
+
+**A player who has never sold anything never draws one.** `LastSaleAt` starts at 0, and a zero stamp is
+read as "still working towards their first" rather than "drifted off" — otherwise every new player would
+be pestered while cooking their opener, and the tutorial (which sets `_guaranteed`) is skipped outright.
+
+Only the cadence lives in this config; how it walks, fades and haggles it reads off `SellNpc`, the same
+way `RichNpc` does. Gotcha: `SPAWN_CHANCE` is out of 100, matching the other two NPC configs.
+
+| Knob | Higher | Lower |
+|---|---|---|
+| `SALE_IDLE_TIME` | only a real lapse draws one, most players never see it | one turns up between ordinary sales, and nagging starts |
+| `SPAWN_CHANCE` | the lapse is noticed almost at once | the empty stand sits a while before anyone asks |
+| `COOLDOWN` | one ask per lapse, easily missed | they queue up on a player who has genuinely stopped |
+| `WAIT_DURATION` | there's time to run to the grill and cook one, so it converts | it's gone before the player reaches the stand |
+| `ASK_INTERVAL` | it asks once and stands quietly | the bubbles overlap and it reads as spam |
+| `LOITER_BACK_DISTANCE` | it hangs back, easy to miss from the grill | it crowds the lane a buying customer needs |
+
+## Selling — custom orders
+
+`Shared/Config/CustomOrderNpc.luau`. A rarer customer that skips the stand entirely: it names a recipe,
+quotes one number, and gives the player a clock to roll for what they're missing, build it, cook it and
+hand it over. It is the only thing in the game that makes a *named* ingredient worth wanting — everywhere
+else the roster is a lottery to be cashed in.
+
+Gated on 2 placed grillers **or** 2 ingredient roll stands, because an order is only a request if the
+player has the machinery to fill it. Past the cooldown the expected wait is
+`(100 / SPAWN_CHANCE) * CHECK_INTERVAL` — 75s at today's numbers, so about six minutes between orders
+once `COOLDOWN` is counted. Deliberately rarer than a rich visit: this one interrupts what the player was
+doing, where a rich one rewards what they already did.
+
+Only what makes it a custom order lives in this config; how it walks, fades, stands and eats it reads off
+`SellNpc`, the same way `RichNpc` does. Gotcha: `SPAWN_CHANCE` and `INSPECT_CHANCE` are out of 100.
+
+**`SPAWN_CHANCE` does not govern the first one.** The moment a player reaches the requirement their
+first order is *given* rather than rolled for, forced to the Direct variation and carrying a two-part
+explanation of what a custom order is — the same guarantee `RichNpc` gets, for the same reason: whether
+a player ever meets the feature should not be luck. So this dial sets the pace *after* the introduction,
+and lowering it makes orders rarer without ever making the first one rarer. Its Direct variation is not
+a coincidence either: opening a player's first encounter on a Not Interested verdict over their own
+stand reads as a rejection. See `SeenCustomOrder` in docs/player-data.md.
+
+### What it asks for
+
+Slots are rolled 2--3 and then **capped by the roomiest stick the player owns**, so an order is never
+wider than anything they could build it on. Each slot rolls a tier off `TIER_WEIGHTS` and then draws from
+that tier's entries that are either already in stock or priced under `Currency * AFFORD_FACTOR`; a tier
+with nothing reachable in it steps *down* rather than failing, so a poor player gets a common order
+instead of no order.
+
+`OWNED_WEIGHT_BONUS` is what stops an order reading as a shopping list: stock weighs three times as
+heavily, so most orders start part-filled and the clock is spent on one or two things rather than all of
+them.
+
+### The quote, and what it is actually worth
+
+The quote is **what a perfect exact fill earns**, priced off the requested ingredients on the player's
+best owned stick cooked Perfect, times
+`min(BASE_MULTIPLIER + TIER_STEP * (averageTierIndex - 1), MULTIPLIER_CAP)`. An all-common order badges
+about `[+140%]`, a mixed-uncommon one about `[+152%]`, and a Legendary request reaches the cap. Against a
+normal customer's 1.1--1.35x opening that is roughly 1.8x what the same skewer fetches off the stand.
+
+**If it plays as too thin for the interruption, `BASE_MULTIPLIER` is the dial, not `TIER_STEP`** — the
+first moves what an order pays, the second only moves how much better a rare request is than a common
+one, which is a different question.
+
+**Nothing is ever refused.** Any skewer can be handed over, and what it earns is graded:
+
+```
+payout = max(quote * accuracy * cookFactor, GetSellValue(delivered))
+```
+
+- `cookFactor` is `CookStates.GetMultiplier(delivered) / CookStates.GetMultiplier("Perfect")` — derived
+  rather than authored again, so a cook state is worth the same *relatively* here as it is anywhere else
+  in the economy, and retuning the ladder retunes this with it. Perfect 1, Cooked 0.75, Raw 0.56,
+  Overcooked 0.5, Charred 0.44.
+- `accuracy` is the share of the recipe that landed, less `EXTRA_INGREDIENT_PENALTY` per ingredient
+  nobody asked for. Padding a stick out with cheap commons must not pay.
+- **The floor is plain sell value**, the same doctrine as the refusal penalty above: a wholly wrong
+  skewer banks exactly what it is worth, so it is never a loss, and never a premium either. Dumping junk
+  on the customer is quietly *worse* than selling it off the stand, which is the incentive doing the work
+  that a refusal would otherwise have to do — and a refusal on a timer would read as the feature
+  punishing a player who did turn up with something.
+
+The quote assumes their best owned stick, so delivering on a worse one slightly overpays. That is
+deliberate: pricing off the delivered stick would let an order go unfulfillable.
+
+### The clock
+
+`Ingredients.GetTotalCookTime(ids) / CookStates.RAW_END + LEEWAY_BASE + LEEWAY_PER_INGREDIENT * slots`.
+
+The division is not optional: `GetTotalCookTime` is *ingredient* seconds and the bar runs that over
+`RAW_END`, exactly as `GrillerManager:StartCookRecord` does it. A clock built on the undivided figure
+would be short by two thirds of the cook.
+
+The leeway is split because the two costs scale differently: `LEEWAY_BASE` covers walking, building and
+the trip to a grill however big the order is, while `LEEWAY_PER_INGREDIENT` covers rolling for and
+claiming each slot, which is per-ingredient by nature. A 3-slot order with a Rare in it lands around
+`5m 20s`.
+
+### Biasing the rolls
+
+While an order is live the rolling stand is steered toward what it still wants — but as a **pity
+counter, not a reweighted table**. After `ROLL_PITY_THRESHOLD` rolls without one landing, the next is
+forced to a still-missing ingredient, which is the same forced-roll path `DrawPityIngredient` already
+uses. It sits *under* the tier guarantees, which are owed from hundreds of rolls back rather than from
+this order, and *above* the teaser, which is only window-shopping.
+
+This matters for the same reason the section above does: the authored `Chance` column stays the odds on
+the label, and what changes is only how often a forced roll fires — which is already the documented gap
+between the labels and the real rates. A flat reweighting would instead make every *other* ingredient
+rarer than its printed number, which is the direction the 100% rule exists to protect.
+
+| Knob | Higher | Lower |
+|---|---|---|
+| `SPAWN_CHANCE` | orders become the main way to earn | they're a novelty nobody plans around |
+| `COOLDOWN` | orders are an event | they chain, and the normal loop stops mattering |
+| `MIN_GRILLERS` / `MIN_ROLLING_STANDS` | opens later, when the player can definitely cope | opens onto a player who can't fill one |
+| `INSPECT_CHANCE` | more visits open at the stand | they all cut straight to the ask |
+| `SLOT_COUNT` | bigger recipes, longer clocks | orders stop feeling like recipes |
+| `TIER_WEIGHTS` | rarer requests, more rolling | every order is commons |
+| `OWNED_WEIGHT_BONUS` | orders are nearly filled already | every order is a shopping trip |
+| `AFFORD_FACTOR` | orders reach past what they can pay for | only what's already in the box |
+| `BASE_MULTIPLIER` | orders outpay everything else | not worth the interruption |
+| `TIER_STEP` / `MULTIPLIER_CAP` | a rare request pays much better | tier stops mattering to the price |
+| `EXTRA_INGREDIENT_PENALTY` | padding a stick is ruinous | padding is free |
+| `LEEWAY_BASE` / `LEEWAY_PER_INGREDIENT` | comfortable, the clock stops biting | unfillable, and the timer is the whole feature |
+| `OFFER_TIMEOUT` | players can wander off mid-ask | the cooldown frees sooner, slow players lose orders |
+| `ROLL_PITY_THRESHOLD` | the steer is barely felt | the stand may as well hand it over |
+| `HURRY_THRESHOLD` | a long anxious run-out | no warning worth having |
+
 ## Crates
 
 `Shared/Config/Crates.luau`. A crate rolls one entry per slot from each of its groups; a group's chances
@@ -469,6 +611,15 @@ cook settles, so it's neither predictable nor forgeable.
 ### Placement geometry
 
 `CELL_SIZE` is studs per grid cell — a coarser grid is easier to place onto and blockier about what fits.
+Keep it a whole divisor of a plot floor's width: extents round to the nearest cell, so a floor that isn't a
+multiple of it leaves the lattice seams half a cell off the physical plot seams and the outer cells hanging
+over the edge.
+
+**Retuning it rewrites saved builds.** Data stores cells, not poses, and a cell index only means a distance
+against the size it was saved at — so halving `CELL_SIZE` would otherwise collapse every existing build to
+half its spread. `StructureCellSize` in player data records what each build was written under and
+`BaseManager:RescaleStructureCells` rescales it on handover; anything that no longer fits afterwards is
+handed back by `ReclaimStrandedStructures`. See `docs/player-data.md`.
 
 A structure is measured against its **`Hitbox`** if it has one, else the model's bounding box. A Hitbox is
 how a model *states* what it occupies rather than having it guessed, which is what lets a chimney hang off
@@ -556,6 +707,84 @@ upgrades of their own to cover the drop.
 Every dial runs off this one fade, so none of them can drift onto its own curve or threshold. Each getter
 returns the identity at and past `THRESHOLD` (0 for the additive ones, 1 for the multiplicative), so a
 caller can apply it unconditionally.
+
+## Boosts
+
+`Shared/Config/Boosts.luau`. Timed consumables, held several at a time. **The biggest live one applies and
+the rest sit under it**, each counting down on its own wall clock — so a stack is worth its longest boost,
+not the sum of them, and nothing is banked by being suppressed. That falls out of the storage rather than
+being enforced: `BoostManager:GetBoostMultiplier` is a max over the unexpired entries, which promotes the
+next one on its own as the top expires. There is no queue, and so no queue to get out of step with the HUD.
+
+Not to be confused with the *permanent* income boosts — gamepasses, friends in-server and the early boost —
+which live on `CurrencyManager:GetPlayerBoostFraction` and are a different system entirely. A timed cash
+boost would be an entry here that that function reads; the two compose rather than merge.
+
+Expiry is stored **absolute, on `workspace:GetServerTimeNow()`** — the `LastRichVisit` doctrine, so a boost
+survives a rejoin or a server hop and keeps running while offline. That the clock is client-synced is the
+second half of it: the HUD counts down against the same number with no server tick behind it.
+
+The one grant a player doesn't ask for is the reclaim apology. When `BaseManager:ReclaimStrandedStructures`
+has to hand builds back because the plots no longer fit them, `GrantReclaimCompensation` gives a flat
+**Luck 1.5x for 8 minutes**. Flat rather than scaled to how much was lost: it's an apology for the
+interruption, not a valuation of the build — the structures and everything on them come back in full
+regardless (see `docs/player-data.md`). `GrantBoost` announces itself, so the sweep's own toast only has to
+say why the boost is coming.
+
+### Luck
+
+The one boost today. It scales the ingredient roll's weights and **nothing else** — the tier guarantees,
+the custom-order steer and the teaser all sit above the weighted roll in `IngredientRollingManager` and are
+left alone.
+
+```
+adjustedWeight = baseWeight ^ (1 / luck ^ LUCK_STEEPNESS)
+```
+
+`Ingredients.Weight` is already `1 / authoredChance`, so this is one exponent on a number the config
+derives anyway. **At `luck = 1` it returns the weight bit-for-bit unchanged**, which is what lets the
+roller apply it unconditionally with no branch — and is the regression test worth keeping: luck 1 must
+reproduce today's table exactly.
+
+**`LUCK_STEEPNESS` runs the opposite way to its name, and this is the trap.** A bigger value means a bigger
+`luck ^ S`, means a *smaller* exponent, means *more* flattening. Legendary at 1.5x luck: `0.25` → 0.071%,
+`0.5` → 0.106%, `0.75` → 0.152%. **0.25 is the gentle one.** Set the dial by measuring, never by the name.
+
+Measured over three million rolls, with pity running:
+
+| luck | Rare | Epic | Legendary | Common share |
+|---|---|---|---|---|
+| 1x | 1 in 40 | 1 in 297 | 1 in 563 | 85.1% |
+| 1.25x | 1 in 34 | 1 in 236 | 1 in 517 | 82.7% |
+| 1.5x | 1 in 30 | 1 in 195 | 1 in 472 | 80.7% |
+| 2x | 1 in 25 | 1 in 144 | 1 in 391 | 77.5% |
+| 3x | 1 in 19 | 1 in 95 | 1 in 281 | 73.1% |
+
+**Luck does most for Epic and least for Legendary** — 52% against 19% at 1.5x — which is the opposite of
+what a player buying it expects. The reason is the section above: 74% of Legendaries already arrive on the
+pity counter, and luck doesn't touch pity. This is the accepted cost of leaving the guarantee alone. If it
+ever needs fixing, the lever is scaling `PityThreshold` by luck as well, not steepening this.
+
+### Why `MAX_LUCK` is 3
+
+**Luck eats pity.** The share of Legendaries arriving on the counter goes 74% → 51% at 1.5x → 13% at 3x. Past
+3x the guarantee stops being the floor it was built as, and the ladder goes back to being luck-delivered —
+which is the thing this economy is deliberately not. Clamped in `GetLuckWeight`, where it is *read* rather
+than where it is granted (the `MAX_INSTABILITY` precedent), so a bad grant can't reach the economy.
+
+There is a second ceiling worth knowing before anyone raises this dial. **As luck climbs, every adjusted
+weight converges on 1** — that is, on a flat draw over the roster. So the asymptote is shaped by *how many
+entries a tier has*, not by rarity: Legendary tops out at 1 in 33 because Lamb is one entry of 33, and
+Common at 45% because it has fifteen. Two consequences, both bad:
+
+- Adding five commons weakens what maximum luck means, without touching a single `Chance`.
+- Mythic ships empty, so it stays at 0% at any luck — and the day it gets one entry it inherits Lamb's
+  ceiling exactly.
+
+It also saturates: 100x to 1000x moves Legendary from 2.1% to 2.7%. A luck ladder built past ~10x would
+have several rungs that feel identical. None of this bites in the 1.25x–3x band the boost ships in, which
+is why the formula is fine as it stands — but going higher means solving the ceiling first, not raising the
+clamp.
 
 ## Sticks
 

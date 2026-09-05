@@ -4,6 +4,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Shared
 local Shared = ReplicatedStorage.Shared
 local StickModel = require(Shared.StickModel)
+local CustomOrderNpc = require(Shared.Config.CustomOrderNpc)
 
 ----
 local PlayerDataManager
@@ -47,6 +48,9 @@ function StatsManager:RecordSaleCompleted(player: Player, skewerRecords: { Stick
 	PlayerDataManager:IncrementDataKey(player, "SalesCompleted")
 	PlayerDataManager:IncrementDataKey(player, "SkewersSold", #skewerRecords)
 
+	-- Written here rather than in SellNpcManager, so rich hauls and custom order deliveries stamp it too
+	PlayerDataManager:SetPlayerDataKey(player, "LastSaleAt", workspace:GetServerTimeNow())
+
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
 		return
@@ -80,6 +84,52 @@ end
 -- Records a customer leaving empty-handed. Off the sale window -- it counts custom lost, not quality.
 function StatsManager:RecordSaleDeclined(player: Player)
 	PlayerDataManager:IncrementDataKey(player, "SalesDeclined")
+end
+
+-- Records a custom order being put to the player, at the ask -- a rating blind to declines can't tell picky from busy.
+function StatsManager:RecordCustomOrderOffered(player: Player)
+	PlayerDataManager:IncrementDataKey(player, "CustomOrdersOffered")
+end
+
+-- Records an order taken on. Split from the resolve, since accepting and finishing are different promises.
+function StatsManager:RecordCustomOrderAccepted(player: Player)
+	PlayerDataManager:IncrementDataKey(player, "CustomOrdersAccepted")
+end
+
+-- Records a custom order resolving, however it went: the counters, the per-state tally, and one window entry.
+function StatsManager:RecordCustomOrderResolved(player: Player, entry)
+	local outcomeKey = `CustomOrders{entry.Outcome}`
+	PlayerDataManager:IncrementDataKey(player, outcomeKey)
+
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		return
+	end
+
+	if entry.Outcome == "Delivered" then
+		PlayerDataManager:IncrementDataKey(player, "CustomOrderEarnings", entry.Paid)
+
+		-- An exact fill cooked Perfect: what a five-star order is, tallied so a badge needn't re-derive it
+		if entry.Matched == entry.Slots and entry.Extras == 0 and entry.CookState == "Perfect" then
+			PlayerDataManager:IncrementDataKey(player, "CustomOrdersPerfect")
+		end
+
+		local cookStateCounts = table.clone(data.CustomOrderCookStateCounts)
+		cookStateCounts[entry.CookState] = (cookStateCounts[entry.CookState] or 0) + 1
+		PlayerDataManager:SetPlayerDataKey(player, "CustomOrderCookStateCounts", cookStateCounts)
+	end
+
+	-- Facts rather than a score, so retuning what a good order is worth re-rates the whole window
+	local history = table.clone(data.CustomOrderHistory)
+	table.insert(history, entry)
+
+	-- Oldest first, so trimming the front is what ages entries out of the window
+	local overflow = #history - CustomOrderNpc.HISTORY_LENGTH
+	if overflow > 0 then
+		history = table.move(history, overflow + 1, #history, 1, {})
+	end
+
+	PlayerDataManager:SetPlayerDataKey(player, "CustomOrderHistory", history)
 end
 
 function StatsManager:OnInit()

@@ -7,6 +7,9 @@ local Structures = require(ReplicatedStorage.Shared.Config.Structures)
 -- Modules
 local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 
+-- Controllers
+local BuildController = require(script.Parent.Parent.Parent.Parent.BuildController)
+
 -- The category, not the id, so a later model of griller still counts (see Config.Structures)
 local CATEGORY = "Grillers"
 local GUIDE_NAME = "Grill"
@@ -14,6 +17,9 @@ local GUIDE_NAME = "Grill"
 local BEAM_HIDE_DISTANCE = 12
 
 return function(self)
+	-- Taken before the hotbar is even lit: putting the other structure down here leaves the beat that asks for it with no tool
+	BuildController:SetPlaceCategory(CATEGORY, "Place your Griller first")
+
 	local function isEquipped(): boolean
 		return Structures.IsCategory(EquippedItem.GetStructureId() or "", CATEGORY)
 	end

@@ -15,6 +15,8 @@ return {
 
 		-- The build, keyed by a uid minted at placement. Cells and quarter-turns, not poses -- see docs/player-data.md
 		Structures = {}, -- [uid] = { Type, CellX, CellZ, Rotation }
+		-- The CELL_SIZE those cells were saved under; 4 is what every profile predating this key wrote
+		StructureCellSize = 4,
 		-- Owned but unplaced. Seeded with one of each, since a new player needs both to have a game at all
 		OwnedStructures = { RustyGrill = 1, WoodenStickStand = 1 }, -- [structureId] = amount owned
 
@@ -78,6 +80,22 @@ return {
 		SeenHaggle = false,
 		-- Whether a rich customer has ever visited; the first is given, so meeting one isn't down to luck
 		SeenRichCustomer = false,
+		-- When they last completed a sale, of any kind. Wall-clock; 0 means they never have
+		LastSaleAt = 0,
+		-- When the last checking customer was sent. Wall-clock, so a rejoin can't hand out a fresh one
+		LastCheckingVisit = 0,
+
+		-- Custom Orders
+		-- When the last custom order was put to them. Wall-clock, so a rejoin can't hand out a fresh one
+		LastCustomOrderVisit = 0,
+		-- Whether one has ever visited; the first is given the moment they can fill one, not rolled for
+		SeenCustomOrder = false,
+		-- The last HISTORY_LENGTH resolved orders, oldest first. Facts rather than a score -- see docs/player-data.md
+		CustomOrderHistory = {},
+
+		-- Boosts
+		-- Timed boosts, keyed by a uid minted at grant. ExpiresAt is absolute, so it runs down while offline
+		Boosts = {}, -- [uid] = { Type, Amount, ExpiresAt }
 
 		-- Codes
 		RedeemedCodes = {}, -- code strings already claimed, one claim each forever
@@ -105,6 +123,16 @@ return {
 		CookStateCounts = {},
 		-- The sell-side counterpart, kept apart because the two diverge -- see docs/player-data.md
 		SoldCookStateCounts = {},
+		CustomOrdersOffered = 0, -- orders put to them, counted at the ask so declines are visible to a rating
+		CustomOrdersAccepted = 0, -- offers taken on
+		CustomOrdersDeclined = 0, -- offers turned down
+		CustomOrdersIgnored = 0, -- offers left to lapse, which is a different thing from turning one down
+		CustomOrdersDelivered = 0, -- orders a skewer was actually handed over for, however well it matched
+		CustomOrdersExpired = 0, -- orders accepted and then run out of time
+		CustomOrdersPerfect = 0, -- delivered as an exact fill cooked Perfect: the five-star case
+		CustomOrderEarnings = 0, -- every dollar taken in from orders, so their share of income is readable
+		-- [cookStateId] = lifetime orders delivered in that state; grows on demand, as CookStateCounts does
+		CustomOrderCookStateCounts = {},
 		-- The last RECENT_SALES skewers sold, oldest first. Stored as facts, so retuning re-rates the whole window
 		RecentSales = {},
 	},
