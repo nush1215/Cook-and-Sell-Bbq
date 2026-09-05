@@ -25,27 +25,19 @@ local UI = ReplicatedStorage.Assets.UI
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer.PlayerGui
 
--- Drives the always-on upgrade board adorned to the owner's Base.Upgrades.Board part. Each section
--- buys the next level of a BaseUnlocks group by firing the existing PurchaseUnlockUpgrade remote --
--- the server owns all validation, currency, and the world re-render, so this is display + a fire.
--- It also raises the owner-only icon on the base nameplate, the one piece of that plate the server
--- can't put up itself, since it has to show to the owner and nobody else.
--- Its second job is the affordability nudge: the board only ever shows a price, so without this the
--- player has to keep coming back to it to find out whether they can afford anything yet.
+-- Drives the owner's upgrade board: paints each unlock group's next level, fires the purchase, raises the owner-only nameplate icon, and nudges when a level first becomes affordable.
 local UpgradeBoardController = {
 	PurchaseUnlockUpgradeEvent = Network.Event("PurchaseUnlockUpgrade"),
 
 	_baseCleaner = Trove.new(), -- board clone, button bindings and data listeners for the current base
 
-	-- [unlockId] = the next level we've already told the player they can afford, so crossing the same
-	-- threshold twice stays quiet. Buying the level makes the stored number stale and re-arms the next.
+	-- [unlockId] = the level already announced, so crossing the same threshold twice stays quiet
 	_notifiedLevels = {},
 
 	_sections = {}, -- { frame, unlock } per section of the board currently mounted; empty off a base
 }
 
--- The one ScreenGui the board lives under. It sits in PlayerGui (adorned back onto the world board)
--- rather than in the world, because that's what makes its buttons clickable.
+-- The board's ScreenGui. In PlayerGui adorned back onto the world board, which makes buttons clickable.
 local function getScreenGui(): ScreenGui
 	local screenGui = PlayerGui:FindFirstChild("UpgradeBoard")
 	if screenGui == nil then
@@ -58,17 +50,14 @@ local function getScreenGui(): ScreenGui
 	return screenGui
 end
 
--- Paints one section from current player data: the title ("Ingredient Rolls (2)"), the level line
--- ("2>3" or "Max (6)"), the currency price, and hides the buy buttons once the group is maxed so a
--- fully-upgraded one can't be fired at.
+-- Paints one section from player data, hiding the buy buttons once the group is maxed.
 function UpgradeBoardController:_refreshSection(frame: Frame, unlock: BaseUnlocks.Unlock)
 	local unlocks = PlayerDataController:GetKey("Unlocks") or {}
 	local level = unlocks[unlock.Id] or 0
-	-- Gate on Limit, not #Costs: RollingStands keeps costs dense past its cap.
+	-- Gate on Limit, not #Costs: RollingStands keeps costs dense past its cap
 	local isMax = level >= unlock.Limit
 
-	-- A group whose level is a count of something reads as the number; one that tunes a stat reads as
-	-- what the stat becomes ("1.7s"), since the number on its own says nothing to the player.
+	-- A count group reads as the number; a stat group reads as what the stat becomes ("1.7s")
 	local formatLevel = unlock.FormatLevel or tostring
 
 	frame.Title.Text = `{unlock.Name} ({formatLevel(level)})`
@@ -81,28 +70,24 @@ function UpgradeBoardController:_refreshSection(frame: Frame, unlock: BaseUnlock
 		return
 	end
 
-	-- Matches the server's Costs[currentLevel + 1] next-level cost.
+	-- Matches the server's Costs[currentLevel + 1] next-level cost
 	frame.Buttons.CurrencyPurchase.Title.Text = `${GuiUtil.ConvertNumberWithSuffix(unlock.Costs[level + 1])}`
 
-	-- Robux is only offered on a level a dev product was actually made for, so a stand whose top step
-	-- has no product (the sixth rolling stand) shows the currency button on its own.
+	-- Only on a level with a dev product, so a step without one shows the currency button alone
 	local productId = unlock.RobuxProductIds and unlock.RobuxProductIds[level + 1]
 	frame.Buttons.RobuxPurchase.Visible = productId ~= nil
 
 	if productId then
-		-- "-" until the MarketplaceService lookup lands (or if it failed), matching ShopController:GetPrice.
+		-- "-" until the MarketplaceService lookup lands, matching ShopController:GetPrice
 		local stringId = BaseUnlocks.GetProductStringId(unlock.Id, level + 1)
 		frame.Buttons.RobuxPurchase.Title.Text = `{GuiUtil.ROBUX_ICON}{ShopController:GetCachedPrice(stringId) or "-"}`
 	end
 end
 
--- Wires a section's buy buttons once. Currency fires the upgrade remote, Robux prompts that level's dev
--- product; either way the server is the one that decides what the next level is and grants it.
+-- Wires a section's buy buttons once; the server decides the next level and grants it either way.
 function UpgradeBoardController:_bindSection(frame: Frame, unlock: BaseUnlocks.Unlock)
 	local currencyBinding = UIController:BindButtonClick(frame.Buttons.CurrencyPurchase, function()
-		-- The server rejects this too; saying so here keeps the press from costing a round trip. The board
-		-- stays up and priced through the run rather than hiding -- the player is meant to see what's
-		-- waiting for them once they're done.
+		-- The server rejects it too; the board stays priced through the run so they see what's waiting
 		if unlock.TutorialLocked and not PlayerDataController:GetKey("TutorialCompleted") then
 			NotificationController:NotifyNormal({
 				Text = "Finish the tutorial first!",
@@ -123,14 +108,12 @@ function UpgradeBoardController:_bindSection(frame: Frame, unlock: BaseUnlocks.U
 	self._baseCleaner:Add(robuxBinding.Disconnect)
 end
 
--- Buys the next level of a stand with Robux. The product is per level -- the tier only sets the price,
--- the server grants whatever the player's next level is -- so the one to prompt is read off the level
--- they're on, the same way the currency button's price is.
+-- Buys the next level with Robux. The product is read off the level they're on, as the price is.
 function UpgradeBoardController:_onRobuxPurchase(unlockId: string)
 	local unlock = BaseUnlocks.GetUnlockFromId(unlockId)
 	local level = (PlayerDataController:GetKey("Unlocks") or {})[unlockId] or 0
 
-	-- The button hides on a level with no product, so this only catches a press that raced the refresh.
+	-- The button hides on a level with no product, so this only catches a press that raced the refresh
 	if not unlock.RobuxProductIds or not unlock.RobuxProductIds[level + 1] then
 		return
 	end
@@ -138,11 +121,7 @@ function UpgradeBoardController:_onRobuxPurchase(unlockId: string)
 	ShopController:PromptProductPurchaseFromId(BaseUnlocks.GetProductStringId(unlockId, level + 1))
 end
 
--- Warms ShopController's price cache for every unlock level a dev product was made for, since GetPrice
--- yields on its first MarketplaceService call for an id and the buttons are painted from a data change.
--- Repaints the board afterwards so a section drawn while the lookups were in flight picks its price up.
--- Walks the whole config rather than the board's sections, the same way _notifyAffordableUpgrades does,
--- so an unlock group that gains a section later is warmed by this without anything being added here.
+-- Warms the price cache for every product level, then repaints. Walks the config, so a new section is covered.
 function UpgradeBoardController:_cacheRobuxPrices()
 	for _, unlock in BaseUnlocks.Data do
 		if not unlock.RobuxProductIds then
@@ -157,20 +136,14 @@ function UpgradeBoardController:_cacheRobuxPrices()
 	self:_refreshSections()
 end
 
--- Repaints every section of the mounted board. Nothing to do before a base is claimed, since the board
--- is only ever mounted on the local player's own.
+-- Repaints every section of the mounted board, which only ever sits on the local player's own base.
 function UpgradeBoardController:_refreshSections()
 	for _, section in self._sections do
 		self:_refreshSection(section.frame, section.unlock)
 	end
 end
 
--- Tells the player when their balance first covers the next level of a base upgrade, so they know to
--- go and buy it rather than having to re-read the prices themselves. Latched per level: the next
--- level already announced is remembered, so a balance that dips under the cost and climbs back stays
--- quiet, while buying the level makes the stored number stale and re-arms the one after it.
--- Walks the whole config rather than the board's sections, so an unlock group with no section on the
--- board is still announced.
+-- Announces when a balance first covers the next level. Latched per level, and walks the config so a group with no section is still announced.
 function UpgradeBoardController:_notifyAffordableUpgrades(currency: number)
 	local unlocks = PlayerDataController:GetKey("Unlocks") or {}
 
@@ -178,7 +151,7 @@ function UpgradeBoardController:_notifyAffordableUpgrades(currency: number)
 		local level = unlocks[unlock.Id] or 0
 		local nextLevel = level + 1
 
-		-- Same gate as the board and the server: past Limit (or the last cost) is fully upgraded.
+		-- Same gate as the board and the server: past Limit, or the last cost, is fully upgraded
 		local cost = unlock.Costs[nextLevel]
 		if nextLevel > unlock.Limit or not cost then
 			continue
@@ -199,13 +172,11 @@ function UpgradeBoardController:_notifyAffordableUpgrades(currency: number)
 	end
 end
 
--- Rebuilds the board on whichever base the local player currently owns. Owner-only: Unlocks only
--- replicate to the owner, so the board only mounts on their own base.
+-- Rebuilds the board on the local player's base. Owner-only, since Unlocks only replicate to them.
 function UpgradeBoardController:_setupBase()
 	self._baseCleaner:Clean()
 
-	-- The clean above destroyed the frames these point at, so they're dropped with them rather than
-	-- left for a refresh to index.
+	-- The clean above destroyed the frames these point at, so they're dropped with them
 	self._sections = {}
 
 	local baseId = LocalPlayer:GetAttribute("BaseId")
@@ -215,10 +186,7 @@ function UpgradeBoardController:_setupBase()
 
 	local base = workspace.Base[baseId]
 
-	-- The "this one's yours" marker on the base nameplate. The server puts the plate up for everyone
-	-- with this piece down, since it's the only part of it that differs per viewer. Waited on rather
-	-- than indexed: the plate is made the moment the base is claimed, so it can still be in flight
-	-- when BaseId lands here.
+	-- The owner-only nameplate marker. Waited on, since the plate is made as the base is claimed
 	task.spawn(function()
 		local baseIcon = base.BaseAttachment:WaitForChild("BaseUI").BaseIcon
 		baseIcon.Visible = true
@@ -245,7 +213,7 @@ function UpgradeBoardController:_setupBase()
 		self:_bindSection(section.frame, section.unlock)
 	end
 
-	-- GetKey awaits the replica, so keep the first refresh and the listener off the setup thread.
+	-- GetKey awaits the replica, so keep the first refresh and the listener off the setup thread
 	task.spawn(function()
 		self:_refreshSections()
 
@@ -266,18 +234,14 @@ function UpgradeBoardController:OnStart()
 		self:_setupBase()
 	end)
 
-	-- Sweep once, since BaseId may already be set by the time we start.
+	-- Sweep once, since BaseId may already be set by the time we start
 	self:_setupBase()
 
 	task.spawn(function()
 		self:_cacheRobuxPrices()
 	end)
 
-	-- Kept off the base cleaner on purpose: the latch and this listener outlive a base being handed
-	-- back and reassigned, since the unlocks they track are the player's rather than the base's.
-	-- ListenForChange awaits the replica, so keep it off the start thread. Only gains are checked: a
-	-- purchase drops the balance and raises the level together, so re-checking on the way down would
-	-- stack the next level's notification straight on top of the "Upgraded!" one the server just sent.
+	-- Off the base cleaner, since the unlocks are the player's not the base's. Gains only, or a purchase would stack on the server's own toast
 	task.spawn(function()
 		PlayerDataController:ListenForChange("Currency", function(new, old)
 			if new <= old then

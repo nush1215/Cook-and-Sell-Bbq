@@ -1,76 +1,6 @@
 --!strict
--- Network.luau
--- A custom, fully-typed networking layer for client <-> server messaging.
---
--- A high-performance messaging layer: per-frame batching, 1-2 byte identifier compression,
--- a single RemoteEvent per direction, and recycled-thread dispatch. Features:
---   * UnreliableRemoteEvent support via a per-event flag.
---   * Optimized multi-argument fires (arity-aware encoding; single-value fires avoid any
---     wrapper allocation).
---   * Typed generics for Fire*/On*Event/Invoke/OnInvoke.
---   * Client -> server request/response (Function).
---   * Per-event inbound/outbound middleware and server-side rate limiting.
---   * Hardened server inbound: defensive payload decode, per-player flood caps,
---     per-event direction locks, and optional argument validators.
---
--- All remote instances live under ReplicatedStorage.NetworkRemotes.
---
--- USAGE
---   local Network = require(ReplicatedStorage.Shared.Network)
---
---   -- 1) Define remotes once with the same name on client and server.
---   --    Event = fire-and-forget messages.
---   --    Function = request/response (client yields until server replies).
---   local SetSlot = Network.Event("SetSlot") :: Network.Event<number, CFrame>
---   local TransformSync = Network.Event("TransformSync", { Unreliable = true }) :: Network.Event<CFrame>
---   local GetData = Network.Function("GetData") :: Network.Function<{ any }, string>
---
---   -- 2) Client -> Server
---   SetSlot:FireServer(slotIndex, cf)
---   TransformSync:FireServer(cameraCFrame) -- unreliable/best-effort stream
---   local coins = GetData:Invoke("coins") -- throws on timeout or server error
---
---   -- 3) Server receives Client -> Server events
---   SetSlot:OnServerEvent(function(player, slotIndex, cf)
---       print(player.Name, slotIndex, cf)
---   end)
---
---   -- 4) Server -> Client
---   SetSlot:FireClient(player, slotIndex, cf) -- single player
---   SetSlot:FireClients(players, slotIndex, cf) -- specific list
---   SetSlot:FireAllClients(slotIndex, cf) -- everyone
---   SetSlot:FireAllClientsExcept({ player }, slotIndex, cf) -- everyone except list
---
---   -- 5) Client receives Server -> Client events
---   SetSlot:OnClientEvent(function(slotIndex, cf) end)
---
---   -- 6) Server handles Function invokes
---   GetData:OnInvoke(function(player, key)
---       return PlayerStore[player][key]
---   end)
---
---   -- 7) Convenience helpers (either side, depends on context)
---   local onceConnection = SetSlot:Once(function(...) end)
---   local slotIndex, cf = SetSlot:Wait() -- yields for next event fire
---   onceConnection:Disconnect()
---
---   -- 8) Optional security/rules (server):
---   local Move = Network.Event("Move", {
---       Direction = "ClientToServer",
---       RateLimit = { MaxPerSecond = 30 },
---       Validate = function(player, x, y, z)
---           return typeof(x) == "number" and typeof(y) == "number" and typeof(z) == "number"
---       end,
---   })
---
--- NOTE: event/function names must be attribute-safe (letters, digits, underscores) because
--- the identifier table replicates through Folder attributes.
---
--- SERIALIZATION CAVEATS (Roblox remote limitations; they apply to the VALUES you pass):
---   * Don't pass a MIXED table -- one with both a 1..n array part AND string keys. Roblox
---     silently drops the string keys in transit. Pass a pure array or a pure dictionary.
---   * Avoid interior/leading nils in a multi-arg fire, e.g. Fire(a, nil, b). Args are packed
---     positionally and sparse arrays don't round-trip reliably; trailing nils are fine.
+-- A fully-typed networking layer: per-frame batching, id compression, one RemoteEvent per direction.
+-- Usage, serialization caveats and hardening notes are in docs/network.md.
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -78,9 +8,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local IS_SERVER = RunService:IsServer()
 
--- ============================================================================
 -- Constants
--- ============================================================================
 
 local IDENTIFIER_CAP = 65535 -- 2^16, matches the 1/2-byte packing scheme
 local IDENTIFIER_TIMEOUT = 10 -- seconds a client waits for an identifier to replicate
@@ -98,16 +26,13 @@ local PACK_VALUES = "@v" -- wire-safe key holding the packed values array (kept 
 local EMPTY_ARGS = table.freeze({ [PACK_KEY] = 0 }) -- shared zero-arg payload (no per-fire allocation)
 local DROP = {} -- sentinel returned by encodeOutbound when middleware drops a fire
 
--- ============================================================================
 -- Types
--- ============================================================================
 
 export type Connection = {
 	Disconnect: (self: Connection) -> (),
 }
 
--- Middleware receives the (packed) args table (args.n = count). Return false to drop the
--- message; optionally return a replacement packed args table to transform it.
+-- Receives the packed args table. Return false to drop, or a replacement packed table to transform
 export type Middleware = (player: Player?, args: { any }) -> (boolean, { any }?)
 
 export type RateLimitConfig = {
@@ -115,9 +40,7 @@ export type RateLimitConfig = {
 	OnExceeded: ((player: Player) -> ())?,
 }
 
--- Restricts which way an event may legitimately travel. The server drops any inbound
--- traffic on a "ServerToClient" event, and the client refuses to FireServer on one;
--- "ClientToServer" likewise refuses a server-side FireClient*.
+-- Restricts which way an event may travel; the wrong-side send or receive is refused
 export type NetworkDirection = "ServerToClient" | "ClientToServer"
 
 export type EventConfig = {
@@ -129,9 +52,7 @@ export type EventConfig = {
 	OutboundMiddleware: { Middleware }?,
 }
 
--- Global server-side security knobs. OnViolation fires (at most once per player per frame)
--- when inbound traffic is dropped for flooding, a malformed payload, a direction lock, or a
--- failed validator. reason is one of: "flood" | "malformed" | "direction" | "validate".
+-- Global server-side security knobs. OnViolation reason is "flood", "malformed", "direction" or "validate"
 export type SecurityConfig = {
 	MaxInboundPerFrame: number?,
 	OnViolation: ((player: Player, reason: string) -> ())?,
@@ -162,9 +83,7 @@ export type Function<R, A...> = {
 	OnInvoke: (self: Function<R, A...>, handler: (player: Player, A...) -> R) -> (), -- server
 }
 
--- ============================================================================
 -- Recycled-thread spawner (avoids allocating a thread per dispatched callback)
--- ============================================================================
 
 local freeThreads: { thread } = {}
 
@@ -192,21 +111,9 @@ local function spawnCallback<T...>(callback: (T...) -> (), ...: T...)
 	task.spawn(thread, callback, thread, ...)
 end
 
--- ============================================================================
 -- Argument packing (the multi-arg optimization)
--- ============================================================================
 
--- Encodes a fire's arguments into a single wire payload, minimising allocations:
---   * 0 args  -> shared frozen sentinel (no allocation)
---   * 1 arg   -> the raw value (no wrapper allocation; the common fast path)
---   * >=2 args -> a dictionary wrapper { [PACK_KEY] = n, [PACK_VALUES] = { v1, ..., vn } }
--- The wrapper is a PURE DICTIONARY (string keys only) holding the values in a nested array.
--- This matters because Roblox RemoteEvent serialization silently drops the string keys of a
--- MIXED table (one with both a 1..n array part and string keys). Storing the count as a string
--- key alongside the array values would lose it in transit, so the client would receive the bare
--- values array as a single argument.
--- The rare arity-1 cases that would be ambiguous on decode (nil, or a table that itself
--- carries PACK_KEY) are wrapped so they still round-trip exactly.
+-- Encodes a fire's arguments into one payload: sentinel for 0, raw value for 1, pure-dictionary wrapper beyond. See docs/network.md.
 local function pack(...): any
 	local n = select("#", ...)
 	if n == 0 then
@@ -241,9 +148,7 @@ local function unpackArgs(payload: any): ...any
 	return payload
 end
 
--- ============================================================================
 -- Middleware
--- ============================================================================
 
 local function runMiddleware(list: { Middleware }, player: Player?, args: { any }): (boolean, { any }?)
 	local current = args
@@ -274,13 +179,9 @@ local function encodeOutbound(self: any, ...): any
 	return pack(...)
 end
 
--- ============================================================================
 -- Shared state
--- ============================================================================
 
--- callbacksById holds the listener list for every identifier (user events AND the internal
--- request/response channels of Functions). eventsById only holds user-event metadata so the
--- middleware / rate-limit paths can be skipped entirely when unconfigured.
+-- callbacksById holds every listener; eventsById only user events, so unconfigured paths can be skipped
 local callbacksById: { [string]: { (...any) -> () } } = {}
 local eventsById: { [string]: any } = {}
 
@@ -298,10 +199,7 @@ local function makeConnection(list: { (...any) -> () }, callback: (...any) -> ()
 	}
 end
 
--- Returns a stable list to iterate while dispatching. spawnCallback runs callbacks synchronously,
--- so a listener that disconnects a sibling mid-fire (Once/Wait, or any self-removing handler)
--- would shift the live array and skip the next listener. Cloning only when there's more than one
--- listener fixes that without allocating on the common single-listener path.
+-- A stable list to dispatch over, cloned only when there's more than one listener -- a self-removing handler would shift the live array.
 local function snapshot<T>(list: { T }): { T }
 	return if #list > 1 then table.clone(list) else list
 end
@@ -320,9 +218,7 @@ local createFunction: (name: string, config: FunctionConfig?) -> Function<any, .
 local configureSecurity: (config: SecurityConfig) -> ()
 
 if IS_SERVER then
-	-- ========================================================================
 	-- Server runtime
-	-- ========================================================================
 
 	-- Remote instances (created once, replicate to clients together).
 	local folder = ReplicatedStorage:FindFirstChild("NetworkRemotes")
@@ -354,8 +250,7 @@ if IS_SERVER then
 		identifierFolder = folder:WaitForChild("Identifiers") :: Folder
 	end
 
-	-- Identifier registry: assign incrementing ids, pack to 1 byte (<256) or 2 bytes, publish
-	-- as Folder attributes for clients to read.
+	-- Identifier registry: incrementing ids packed to 1-2 bytes, published as Folder attributes
 	local identifierCount = 0
 	local nameToId: { [string]: string } = {}
 
@@ -498,8 +393,7 @@ if IS_SERVER then
 		end
 	end
 
-	-- Sends a player's unreliable batch, splitting into multiple packets to stay under the
-	-- UnreliableRemoteEvent size limit (best-effort, by payload count).
+	-- Sends a player's unreliable batch, split by payload count to stay under the packet size limit
 	local function fireUnreliableChunks(player: Player, dict: { [string]: { any } })
 		local chunk: { [string]: { any } } = {}
 		local count = 0
@@ -542,9 +436,7 @@ if IS_SERVER then
 			return
 		end
 
-		-- Defensive decode: a hostile client can hand-craft a payload whose PACK_KEY ("@n")
-		-- is non-integer or absurdly large, which would make unpackArgs error inside this
-		-- (non-isolated) loop. Drop it instead.
+		-- A hostile PACK_KEY would make unpackArgs error inside this non-isolated loop, so drop it instead
 		if type(payload) == "table" then
 			local n = (payload :: any)[PACK_KEY]
 			if n ~= nil then
@@ -552,8 +444,7 @@ if IS_SERVER then
 					flagViolation(player, "malformed")
 					return
 				end
-				-- A forged { [PACK_KEY] = n } without a valid values array would make unpackArgs
-				-- error inside this non-isolated loop; drop it instead.
+				-- A forged PACK_KEY with no values array would error inside this non-isolated loop, so drop it
 				if n > 0 and type((payload :: any)[PACK_VALUES]) ~= "table" then
 					flagViolation(player, "malformed")
 					return
@@ -610,8 +501,7 @@ if IS_SERVER then
 		end
 	end
 
-	-- Inbound: both remotes feed the same per-player packet queue. A per-frame budget bounds
-	-- memory/CPU so a single client can't flood the queue before PostSimulation drains it.
+	-- Both remotes feed one per-player queue; the budget stops a client flooding it before the drain
 	local function receivePacket(player: Player, packet: any)
 		if type(packet) ~= "table" then
 			return
@@ -824,9 +714,7 @@ if IS_SERVER then
 		return (self :: any) :: Function<any, ...any>
 	end
 else
-	-- ========================================================================
 	-- Client runtime
-	-- ========================================================================
 
 	local folder = ReplicatedStorage:WaitForChild("NetworkRemotes")
 	reliableRemote = folder:WaitForChild("Reliable") :: RemoteEvent
@@ -1057,9 +945,7 @@ else
 	end
 end
 
--- ============================================================================
 -- Public API
--- ============================================================================
 
 local Network = {
 	Event = createEvent,

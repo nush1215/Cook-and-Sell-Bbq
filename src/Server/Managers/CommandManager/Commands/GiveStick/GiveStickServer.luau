@@ -5,9 +5,7 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Managers = ServerScriptService.Server.Managers
 local StickManager = require(Managers.StickManager)
 
--- Added to the owned count rather than put anywhere, the same as the stick shop does it: sticks are a
--- stacking backpack tool the reconcile builds off player data, so granting one is a write and nothing
--- else. GrantStick is what the shop, the crates and the starter pack all call too.
+-- Added to the owned count, as the shop does it -- the reconcile builds the tool off player data
 return function(context, stickId: string, amount: number?, player: Player?)
 	local target = player or context.Executor
 	local count = amount or 1

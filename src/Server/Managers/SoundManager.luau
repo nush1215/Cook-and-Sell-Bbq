@@ -26,9 +26,7 @@ local SoundManager = {
 	ReplicateToOthersEvent = Network.Event("ReplicateSoundToOthers"),
 }
 
--- Gets all current players except the excluded list.
--- @param excludedPlayers: The players to exclude
--- @returns The players except the excluded list
+-- Every current player except those in `excludedPlayers`.
 local function getPlayersExcept(excludedPlayers: { Player }): { Player }
 	local excluded = {}
 	for _, player in excludedPlayers do
@@ -47,9 +45,7 @@ local function getPlayersExcept(excludedPlayers: { Player }): { Player }
 	return players
 end
 
--- Expands a replication descriptor into concrete recipients.
--- @param replication: The replication type to use
--- @returns The recipients of the sound
+-- Expands a replication descriptor into the concrete recipients.
 local function getRecipients(replication: SoundReplication): { Player }?
 	if replication == "All" then
 		return Players:GetPlayers()
@@ -77,13 +73,7 @@ local function getRecipients(replication: SoundReplication): { Player }?
 	return nil
 end
 
--- Tells selected clients to play a sound.
--- @param replication: The replication type to use
--- @param soundName: The name of the sound to play
--- @param location: The location to play the sound from
--- @param customProperties: Optional custom properties to pass to the sound
--- @param options: Optional options to pass to the sound
--- @returns The sound instance that was played
+-- Tells the described clients to play a sound at `location`, returning the Sound instance.
 function SoundManager:PlaySound(
 	replication: SoundReplication,
 	soundName: string,

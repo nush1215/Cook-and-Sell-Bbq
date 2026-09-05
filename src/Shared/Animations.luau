@@ -1,8 +1,7 @@
 return {
 	Hold = "rbxassetid://101035500511929",
 
-	-- Customer NPC animations. Each beat picks one clip at random (see SellNpcManager). These are looped,
-	-- so the manager stops the track when the beat ends.
+	-- Customer NPC animations; each beat picks one at random. Looped, so the manager stops the track
 	Npc = {
 		Eat = {
 			"rbxassetid://75945199689021",

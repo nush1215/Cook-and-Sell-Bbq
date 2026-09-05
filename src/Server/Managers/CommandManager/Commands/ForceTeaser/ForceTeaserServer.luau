@@ -29,8 +29,7 @@ return function(context, player: Player?)
 		return `{armed} Not until they've finished the tutorial though -- it pins their first stand, so this will sit armed until then.`
 	end
 
-	-- Forcing skips the chance roll but can't conjure a pool, so the other way this comes to nothing is a
-	-- player rich enough that nothing cool is out of reach.
+	-- Forcing skips the roll but can't conjure a pool, so a rich enough player still teases nothing
 	local candidates = IngredientRollingManager:GetTeaserCandidates(data.Currency)
 	if #candidates == 0 then
 		return `{armed} Nothing's out of reach at ${GuiUtil.ConvertNumberWithCommas(data.Currency)} in hand though, so it'll draw an empty pool and the arming will be spent on nothing.`

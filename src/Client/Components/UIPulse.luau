@@ -31,8 +31,7 @@ function UIPulse:Start()
 	self._tween = pulseTween
 end
 
--- The tween repeats forever, so it has to be cancelled by hand or TweenService keeps stepping it (and
--- holding the UI) after the element is gone.
+-- Repeats forever, so it must be cancelled by hand or TweenService keeps stepping the destroyed UI
 function UIPulse:Stop()
 	self._tween:Cancel()
 	self._tween = nil

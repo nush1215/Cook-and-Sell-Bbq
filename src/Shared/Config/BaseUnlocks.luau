@@ -21,61 +21,31 @@ export type Unlock = {
 	Limit: number, -- highest level this can reach; caps render, purchase, and (for rolling) the roll
 	Costs: { number }, -- Costs[n] is what level n costs to own; kept dense to at least Limit
 	RobuxProductIds: { [number]: number }?, -- Robux dev-product id per level, keyed by the level it
-	-- buys (level 1 is free, so these start at 2). Products.luau generates one product per entry; a
-	-- level with no entry has no Robux option and its button stays hidden. The same id may repeat
-	-- across neighbouring levels -- one product covering a band of them -- since a product only sets
-	-- the price and the server grants whatever the player's next level is.
+	-- buys, from level 2. An id may repeat across levels -- a product only sets the price, the server grants
 	FormatLevel: ((level: number) -> string)?, -- how a level reads on the upgrade board. Defaults to
 	-- the bare number, which is right for a group whose level *is* a count of something.
 	TutorialLocked: boolean?, -- held off the currency button until the tutorial is finished. The run's
-	-- own beats measure against these -- the settle window in Sequence/*/6.luau is read off the roll
-	-- speed -- and buying one spends money the sequence still needs. Robux is unaffected.
+	-- the tutorial's beats measure against these, and buying spends money the sequence still needs
 }
 
 --
 local BaseUnlocks = {}
 
--- How a Layout clone springs to its slot on the client (LayoutStand component). Damping/frequency
--- feed spr.target; Rise is how far below its slot a fresh clone starts, so it rises up into place;
--- EntranceScale is the size a fresh clone starts at before it springs up to full, for a pop-in.
---
--- Placed structures ride the same component and the same spring, but start above their slot at full
--- size instead (see Structures.PLACE_DROP_HEIGHT) -- so a bought upgrade grows into place while a
--- built structure is set down onto it. The Rise and EntranceScale below are the unlocks' alone.
+-- How a Layout clone springs to its slot: it rises from Rise below, popping up from EntranceScale. Placed structures ride the same spring the other way up (see Structures.PLACE_DROP_HEIGHT).
 BaseUnlocks.LAYOUT_DAMPING = 0.6
 BaseUnlocks.LAYOUT_FREQUENCY = 3.5
 BaseUnlocks.LAYOUT_RISE = 0.5
 BaseUnlocks.LAYOUT_ENTRANCE_SCALE = 0.4
 
--- How long the server waits before settling its own copy onto its slot at full size and dropping the
--- spawn flash. The rise is the client's to play and the server has no signal for when its spring
--- landed, so it waits the spring out -- see Structures.PLACE_SETTLE_TIME, which is the same thing for
--- the placed structures riding this component the other way up.
+-- How long the server waits out the client's rise before settling its own copy, having no signal for it.
 BaseUnlocks.LAYOUT_SETTLE_TIME = 3
 
--- The one-shot gold flash a slot wears the moment it's bought, so the thing you just paid for is
--- obvious on a base that already has five of them. Fed straight to the HighlightPulse effect:
--- START_TRANSPARENCY is where the fill begins before it tweens out over DURATION seconds.
+-- The gold flash a bought slot wears, so what you just paid for stands out. Fed to HighlightPulse.
 BaseUnlocks.UNLOCK_PULSE_COLOR = Color3.fromRGB(255, 205, 65)
 BaseUnlocks.UNLOCK_PULSE_START_TRANSPARENCY = 0
 BaseUnlocks.UNLOCK_PULSE_DURATION = 1.2
 
--- Maps each Unlocks key in player data onto the folder its render lives in. A level of N shows N of
--- the thing. How the place file authors that folder depends on LockStyle:
---   Layout -- the folder holds ONE template model. The base clones it N times into a centered grid,
---             so the count is the level. MaxPerRow sets the wrap (5 = a row of up to 5; 3 = a 3x3),
---             Padding the gap between copies. The template's authored position is the grid's centre.
---   Ghost  -- the folder holds the single real model. It's just faded + made non-collidable while
---             locked, and restored when owned.
---
--- Costs[n] is what level n costs to own, so a purchase reads Costs[currentLevel + 1] and being past
--- the end of the list means fully upgraded -- which also makes #Costs the max level. Levels the data
--- template already grants are never bought, so their entries never get read; they're kept anyway to
--- hold the array dense.
---
--- Grillers and stick stands used to be here too. They're freely-placed structures now (see
--- Config.Structures) -- a player builds as many as they like, wherever they like, rather than buying
--- them one at a time in a fixed order -- so nothing about them is a level any more.
+-- Each Unlocks key's render folder. Layout clones one template into a centred grid; Ghost fades the single real model while locked. Costs[n] is what level n costs, so #Costs is the max.
 BaseUnlocks.Data = {
 	{
 		Id = "RollingStands",
@@ -86,7 +56,7 @@ BaseUnlocks.Data = {
 		Layout = { MaxPerRow = 3, Padding = 3 },
 		Limit = 6,
 		Costs = { 0, 5_000, 18_000, 200_000, 500_000, 1_500_000 },
-		-- Level 6 has no product made for it yet, so that last step is currency-only.
+		-- Level 6 has no product made for it yet, so that last step is currency-only
 		RobuxProductIds = { [2] = 3709025046, [3] = 3709025081, [4] = 3709025105, [5] = 3709025123, [6] = 3710581384 },
 		TutorialLocked = true,
 	},
@@ -95,15 +65,9 @@ BaseUnlocks.Data = {
 		Name = "Roll Speed",
 		Sound = "Upgrade",
 		LockStyle = "Stat",
-		-- One rung per entry in Rolling.LEVEL_DURATIONS, which is what the level is read against.
+		-- One rung per entry in Rolling.LEVEL_DURATIONS, which is what the level is read against
 		Limit = #Rolling.LEVEL_DURATIONS,
-		-- Level 1 is granted by the data template, so its 0 is only here to hold the array dense.
-		--
-		-- The first six buyable rungs are priced to be bought on impulse -- a new player should feel the
-		-- roll get faster several times over on their first few sells, since a slow roll is what gates
-		-- everything else they can do. From level 8 the ladder ramps on its own curve, starting at about
-		-- 1.6x a rung and easing out towards 2x by the top, so there's no single wall to hit; it's the
-		-- steady climb that prices the last rungs, not one spike part-way up.
+		-- The first six rungs are impulse-priced, since a slow roll gates everything; from 8 the ladder ramps 1.6x toward 2x, so there's no single wall
 		Costs = {
 			0,
 			100,
@@ -127,16 +91,7 @@ BaseUnlocks.Data = {
 			3_500_000,
 			7_000_000,
 		},
-		-- Ten products over the twenty buyable levels, so each one covers a band of two. Banded rather
-		-- than one per level so the Robux button never disappears part-way up the ladder, and the same
-		-- id can sit on both rungs safely because a product only sets the price -- the server grants
-		-- whatever the player's next level is (see Products.luau), so a receipt can't skip a level or
-		-- hand out one already owned.
-		--
-		-- The bands run cheapest-first against the Bux costs above, which climb towards doubling every
-		-- rung while a tier's Robux price holds flat across its two. That's deliberate: the early levels
-		-- are cheap enough in Bux that nobody needs to pay for them, and the deal only gets better the
-		-- further up someone is, where the currency cost is the one actually worth skipping.
+		-- Ten products over twenty levels, so the Robux button never disappears part-way up. The bands hold flat while Bux costs double, so the deal improves the further up you are
 		RobuxProductIds = {
 			[2] = 3710074572, -- Tier 1
 			[3] = 3710074572,
@@ -159,16 +114,13 @@ BaseUnlocks.Data = {
 			[20] = 3710074728, -- Tier 10
 			[21] = 3710074728,
 		},
-		-- Reads as what it does rather than as a count: "Roll Speed (1.7s)".
+		-- Reads as what it does rather than as a count: "Roll Speed (1.7s)"
 		FormatLevel = function(level: number): string
 			return string.format("%.1fs", Rolling.GetRollDuration(level))
 		end,
 		TutorialLocked = true,
 	},
-	-- Sauce dispensers are postponed to a future update and their models are out of the workspace, so
-	-- the unlock is out of the list too -- otherwise every base warns about the missing path and the
-	-- sign sells something that can't be built. Un-comment it alongside SauceDispenserManager -- though
-	-- by then it's probably a Config.Structures entry rather than a level, like the grillers went.
+	-- Dormant while sauce dispensers are postponed; un-comment alongside SauceDispenserManager
 	--[==[
 	{
 		Id = "SauceDispenser",
@@ -182,8 +134,7 @@ BaseUnlocks.Data = {
 	]==]
 }
 
--- Every unlock at level 0. A base renders from this before anyone owns it and again once its owner
--- leaves, so the next player through can't inherit the last one's build.
+-- Every unlock at level 0, so a base renders unowned and the next player can't inherit a build.
 BaseUnlocks.NO_UNLOCKS = {}
 for _, unlock in BaseUnlocks.Data do
 	BaseUnlocks.NO_UNLOCKS[unlock.Id] = 0
@@ -192,8 +143,7 @@ end
 table.freeze(BaseUnlocks.Data)
 table.freeze(BaseUnlocks.NO_UNLOCKS)
 
--- The Products.luau string id for buying one level of an unlock with Robux. Built in one place so the
--- config that generates the product and the client that prompts it can't drift apart.
+-- The Products id for one unlock level, built in one place so the config and the prompt can't drift.
 function BaseUnlocks.GetProductStringId(unlockId: string, level: number): string
 	return `{unlockId}_L{level}`
 end

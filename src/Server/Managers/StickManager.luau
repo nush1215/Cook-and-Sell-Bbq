@@ -41,21 +41,7 @@ export type FilledStick = {
 	Mutation: string?, -- a Mutations id, stamped by the grill it cooked on; multiplies what it sells for
 }
 
---[[
-    Projects a player's owned sticks onto tools in their backpack: one tool per stick tier they own,
-    carrying how many on a Count attribute.
-
-    Player data is the only source of truth here -- nothing grants a tool directly. Any write to
-    Sticks re-runs the reconcile, which diffs what the player owns against what's in their backpack
-    and creates, updates or destroys tools to match. Stacking, respawn and rejoin all fall out of
-    that one path.
-
-    Nothing here listens to the client. Every way a stick is handed over -- the stick shop, a crate,
-    the starter pack, the group reward, a code -- goes through GrantStick from the server side that
-    already decided the player had earned it. There is deliberately no remote that grants one on
-    request: giving a stick for testing is the giveStick command, which the CommandManager's BeforeRun
-    hook gates on staff rank.
-]]
+-- Owns the player's stick and filled-skewer tools, reconciling them against player data on every change and spawn.
 
 --
 local StickManager = {
@@ -63,8 +49,7 @@ local StickManager = {
 	_pendingEquips = {}, -- [player] = the stick id or filled-stick uid to equip once its tool exists
 }
 
--- Puts a tool straight into the player's hands, swapping out whatever they were holding. Nothing to
--- do if they're mid-respawn -- the reconcile the new character kicks off rebuilds their tools anyway.
+-- Equips a tool. A no-op mid-respawn, since the new character's reconcile rebuilds their tools.
 local function equipTool(player: Player, tool: Tool)
 	local humanoid = player.Character and player.Character:FindFirstChildOfClass("Humanoid")
 	if humanoid then
@@ -72,8 +57,7 @@ local function equipTool(player: Player, tool: Tool)
 	end
 end
 
--- Collects the player's stick tools, keyed by stick id. An equipped tool sits in the character
--- rather than the backpack, so both get scanned.
+-- The player's stick tools by id. Both containers, since an equipped tool sits in the character.
 local function getStickTools(player: Player): { [string]: Tool }
 	local tools = {}
 	local containers = { player:FindFirstChildOfClass("Backpack"), player.Character }
@@ -98,8 +82,7 @@ local function getStickTools(player: Player): { [string]: Tool }
 	return tools
 end
 
--- Collects the player's filled-stick tools, keyed by their uid. Like getStickTools but for the
--- distinct, non-stacking skewers.
+-- The player's filled-stick tools by uid -- the distinct, non-stacking skewers.
 local function getFilledStickTools(player: Player): { [string]: Tool }
 	local tools = {}
 	local containers = { player:FindFirstChildOfClass("Backpack"), player.Character }
@@ -124,10 +107,7 @@ local function getFilledStickTools(player: Player): { [string]: Tool }
 	return tools
 end
 
--- Returns the filled skewer the player currently has equipped as { StickId, Ingredients, Cooked,
--- CookState, CookProgress, Sauce, Mutation, Uid }, or nil. Only FilledStickTools qualify; a character holds at
--- most one equipped tool. `data` is the caller's already-awaited player data, so this doesn't yield --
--- every caller has read it to act on the skewer anyway.
+-- The equipped filled skewer's record, or nil. Takes the caller's already-awaited `data`, so it doesn't yield.
 function StickManager:GetEquippedFilledStick(player: Player, data)
 	local character = player.Character
 	if not character then
@@ -156,8 +136,7 @@ function StickManager:GetEquippedFilledStick(player: Player, data)
 	return nil
 end
 
--- Builds the tool for one stick: an empty tagged tool carrying its id + count. The held visual is
--- drawn client-side by the HeldItem component off these attributes.
+-- An empty tagged tool carrying a stick's id and count; HeldItem draws the visual off these.
 function StickManager:_buildTool(stick: Sticks.Stick, count: number): Tool
 	local tool = ToolTemplate:Clone()
 
@@ -174,14 +153,7 @@ function StickManager:_buildTool(stick: Sticks.Stick, count: number): Tool
 	return tool
 end
 
--- What a filled skewer is called, as one line: the distinct ingredients on it in first-appearance
--- order joined with "+", duplicates collapsed into "Name xN", capped at LABEL_MAX_INGREDIENTS with a
--- trailing "..." when there are more, then NAME_SUFFIX -- "Tomato+Garlic BBQ". The overflow marker is
--- "..." rather than another "+" so it can't be read as a separator with the last name missing. Built
--- twice off the same tally -- plain for the slot label, which is a 70px square with no room for colour,
--- and coloured for the tooltip that slot pops up, which has room for it. A skewer always carries at
--- least one ingredient, since StickStandManager hands a stick taken off a stand empty back as a plain
--- stick rather than a filled one.
+-- A filled skewer's name: distinct ingredients joined with "+", duplicates as "Name xN", capped with "...". Built plain for the slot and coloured for its tooltip.
 local function buildSkewerName(record: FilledStick, colored: boolean): string
 	-- Tally duplicates while keeping each ingredient's first-appearance order
 	local order = {}
@@ -211,14 +183,9 @@ local function buildSkewerName(record: FilledStick, colored: boolean): string
 	return `{list} {NAME_SUFFIX}`
 end
 
--- Builds the tooltip the skewer's slot pops up on hover: a coloured tag for whichever cook state it
--- landed on, then the mutation's and the sauce's own tags if it carries them, then the skewer's name
--- with every ingredient in it tinted its own colour. The slot itself only has room for that name plain
--- and a badge for the cook state, so everything else lives here. The mutation comes first of the two
--- because it's the rarer thing to be carrying. Rendered as RichText by Satchel off the tool's ToolTip.
+-- The skewer's hover tooltip: cook-state tag, then mutation and sauce, then the name tinted per ingredient.
 local function buildSkewerToolTip(record: FilledStick): string
-	-- The tag is whatever state the cook landed on, and the same read the sell price comes off, so the
-	-- tooltip and the money always agree.
+	-- The same read the sell price comes off, so the tooltip and the money always agree
 	local stateId = StickModel.GetCookStateId(record)
 	local tag = GuiUtil.Colorize(`[{string.upper(stateId)}]`, CookStates.GetStateFromId(stateId).Color)
 
@@ -235,10 +202,7 @@ local function buildSkewerToolTip(record: FilledStick): string
 	return `{tag} {buildSkewerName(record, true)}`
 end
 
--- Builds the distinct tool for a filled skewer: an empty tagged tool carrying the ids the HeldItem
--- component needs to rebuild the skewer client-side. The composition rides on the tool (not the
--- owner's private data) so every client can draw it; attributes can't hold a list, so the ingredients
--- go on as a JSON string. Non-stacking -- one tool per uid.
+-- The distinct tool for a filled skewer. Composition rides the tool so every client can draw it, ingredients as JSON.
 function StickManager:_buildFilledTool(record: FilledStick, uid: string): Tool?
 	local stick = Sticks.GetStickFromId(record.StickId)
 	if not stick then
@@ -265,17 +229,14 @@ function StickManager:_buildFilledTool(record: FilledStick, uid: string): Tool?
 	return tool
 end
 
--- Builds the filled skewer as a static, anchored model for showing in the world (e.g. on a grill),
--- via the shared StickModel builder so it matches the held skewer exactly. The caller pivots and
--- parents the returned model.
+-- Builds the skewer as a static anchored model through the shared builder, for the caller to place.
 function StickManager:BuildPlacedStickModel(record: FilledStick): Model?
 	local model = StickModel.BuildStickModel(record)
 	if not model then
 		return nil
 	end
 
-	-- Static display: anchored so it just sits there, non-collidable so players walk through it. PivotTo
-	-- moves anchored parts too, so the caller can still place the whole thing.
+	-- Anchored and non-collidable; PivotTo still moves it, so the caller can place the whole thing
 	for _, descendant in model:GetDescendants() do
 		if descendant:IsA("BasePart") then
 			descendant.Anchored = true
@@ -318,8 +279,7 @@ function StickManager:_reconcileTools(player: Player)
 		if tool then
 			tool:SetAttribute("Count", count)
 		else
-			-- Data can hold an id the config no longer has, either removed outright or dropped at load
-			-- because its model went missing from Assets.
+			-- Data can hold an id the config no longer has, removed outright or dropped at load
 			local stick = Sticks.GetStickFromId(stickId)
 			if not stick then
 				continue
@@ -337,13 +297,7 @@ function StickManager:_reconcileTools(player: Player)
 	end
 end
 
--- Adds some of the given stick tier to the player's owned count (default one), which the reconcile
--- turns into a backpack tool or a higher Count, equipped. The one way a stick is ever handed over, so
--- it's what the stick shop, the crates, the starter pack and the giveStick command all call -- the
--- last three of those hand over several of one tier at a time.
--- @param skipEquip Leave it in the backpack rather than putting it in their hands, for a stick that
--- came back off a structure the player picked up: taking the hammer out of their hand there would end
--- the pickup after every structure, so a base couldn't be cleared in one go.
+-- The one way a stick is handed over. `skipEquip` keeps the hammer in hand so a base can be cleared in one go.
 function StickManager:GrantStick(player: Player, stickId: string, amount: number?, skipEquip: boolean?)
 	local stick = Sticks.GetStickFromId(stickId)
 	if not stick then
@@ -364,8 +318,7 @@ function StickManager:GrantStick(player: Player, stickId: string, amount: number
 	PlayerDataManager:SetPlayerDataKey(player, { "Sticks", stickId }, owned + (amount or 1))
 end
 
--- Takes some of the player's owned sticks of a tier (default one), which the reconcile turns into a
--- lower Count or a destroyed tool. Reused by placing a stick on a stand and, later, by cooking.
+-- Takes from the player's owned sticks; the reconcile turns it into a lower Count or a destroyed tool.
 function StickManager:ConsumeStick(player: Player, stickId: string, amount: number?)
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
@@ -376,11 +329,7 @@ function StickManager:ConsumeStick(player: Player, stickId: string, amount: numb
 	PlayerDataManager:SetPlayerDataKey(player, { "Sticks", stickId }, math.max(0, owned - (amount or 1)))
 end
 
--- Brings the player's filled-skewer tools in line with data.FilledSticks: one distinct tool per uid.
--- A filled skewer's composition never changes once built, so existing tools are left alone -- only new
--- uids are built and removed ones destroyed. The one exception is sauce, which a dispenser applies to a
--- skewer that's already in the inventory: a tool whose Sauce no longer matches its record is rebuilt so
--- its label and held visual catch up.
+-- Reconciles filled-skewer tools by uid. Existing ones are left alone unless their Sauce no longer matches.
 function StickManager:_reconcileFilledSticks(player: Player)
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData or not player:IsDescendantOf(Players) then
@@ -395,7 +344,7 @@ function StickManager:_reconcileFilledSticks(player: Player)
 	local owned = data.FilledSticks
 	local existing = getFilledStickTools(player)
 
-	-- Drop tools whose filled skewer is gone (placed back on a stand, or cooked later).
+	-- Drop tools whose filled skewer is gone (placed back on a stand, or cooked later)
 	for uid, tool in existing do
 		if not owned[uid] then
 			tool:Destroy()
@@ -409,8 +358,7 @@ function StickManager:_reconcileFilledSticks(player: Player)
 				continue
 			end
 
-			-- Sauce was applied to a skewer already in the inventory: rebuild it so the label and the
-			-- held visual pick the sauce up. Rebuilding an equipped tool unequips it for a frame.
+			-- Rebuilt so the label and held visual pick the sauce up; an equipped tool unequips for a frame
 			current:Destroy()
 		end
 
@@ -427,17 +375,7 @@ function StickManager:_reconcileFilledSticks(player: Player)
 	end
 end
 
--- Adds a filled skewer to the player's inventory as a fresh, distinct tool, equipped. Reused by
--- taking a loaded stick off a stand or a griller (where it comes back carrying however its cook
--- went), or off the sell stand (where it may come back sauced). The record goes straight into player
--- data, so callers hand over one they've built rather than one they're still holding.
--- @param skipEquip Leave it in the backpack rather than putting it in their hands, for a skewer that
--- came back off a structure the player picked up: taking the hammer out of their hand there would end
--- the pickup after every structure, so a base couldn't be cleared in one go.
--- @param uid The uid the skewer went onto the structure with, for one coming back off a structure that
--- only held it (the sell stand, a sauce plate). Reusing it is what keeps anything seeded off the uid --
--- the estimate over a held skewer -- from shifting on a round trip. Omitted where what comes back isn't
--- what went on: a grill hands back a cooked skewer, a stick stand one whose ingredients have changed.
+-- Adds a filled skewer as a distinct tool. `uid` is reused where a structure only held it, so uid-seeded values don't shift.
 function StickManager:AddFilledStick(player: Player, record: FilledStick, skipEquip: boolean?, uid: string?)
 	uid = uid or HttpService:GenerateGUID(false)
 
@@ -450,8 +388,7 @@ function StickManager:AddFilledStick(player: Player, record: FilledStick, skipEq
 end
 
 function StickManager:_setupPlayer(player: Player)
-	-- The signals only report the top-level key, so they can't say which stick moved. The reconciles
-	-- re-diff everything anyway, so they don't need to know.
+	-- The signals only report the top-level key, but the reconciles re-diff everything anyway
 	self._listeners[player] = {
 		sticks = PlayerDataManager:ListenForChanges(player, "Sticks", function()
 			self:_reconcileTools(player)
@@ -461,8 +398,7 @@ function StickManager:_setupPlayer(player: Player)
 		end),
 	}
 
-	-- CharacterAutoLoads is off and Base drives every respawn through LoadCharacterAsync, which
-	-- clears the backpack. Runtime tools aren't in StarterGear, so rebuild them on each spawn.
+	-- Every respawn clears the backpack and runtime tools aren't in StarterGear, so they're rebuilt
 	player.CharacterAdded:Connect(function()
 		self:_reconcileTools(player)
 		self:_reconcileFilledSticks(player)

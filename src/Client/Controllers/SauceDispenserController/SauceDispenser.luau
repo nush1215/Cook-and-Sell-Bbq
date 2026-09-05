@@ -1,5 +1,4 @@
--- Dormant alongside its controller while sauce dispensers are postponed to a future update. Everything
--- below is intact -- un-comment it together with SauceDispenserController's init.
+-- Dormant while sauce dispensers are postponed -- un-comment together with SauceDispenserController's init.
 
 --[==[
 -- Services

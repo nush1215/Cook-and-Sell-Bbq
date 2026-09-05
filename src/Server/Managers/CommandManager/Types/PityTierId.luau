@@ -6,9 +6,7 @@ local Shared = ReplicatedStorage.Shared
 local Ingredients = require(Shared.Config.Ingredients)
 
 return function(registry)
-	-- Only the tiers that actually carry a counter, so the enum can't offer a Common whose pity would never
-	-- fire. Built from PITY_TIERS rather than Tiers, which means a tier added to the ladder shows up here
-	-- and one that loses its multiplier drops out, without this file being touched.
+	-- Only tiers carrying a counter, built from PITY_TIERS so the ladder changing needs no edit here
 	local pityTierIds = {}
 	for _, tier in Ingredients.PITY_TIERS do
 		table.insert(pityTierIds, tier.Id)

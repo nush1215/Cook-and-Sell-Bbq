@@ -19,30 +19,10 @@ local IngredientManager
 local STICK_TOOL_TAG = "StickTool"
 local INGREDIENT_TOOL_TAG = "IngredientTool"
 
--- The structure category stick stands are, which is also the tag every placed one wears. The category
--- and not one model's id, so a second kind of stand added to Config.Structures is picked up here with
--- nothing changed: this manager owns stands, not one particular stand.
+-- The category, not one model's id, so a second kind of stand is picked up here unchanged
 local STAND_CATEGORY = "StickStands"
 
---[[
-    Drives the stick stands: placing a stick, loading ingredients onto it, and taking it back off.
-
-    Player data is the source of truth -- data.StickStands[structureUid] = { StickId, Ingredients }.
-    One prompt does three things depending on state and what the player holds: place the equipped stick
-    on an empty stand, load the equipped ingredient onto a placed stick (up to the stick's Capacity), or
-    take the stick off (a loaded stick leaves as a distinct filled tool, an empty one stacks back).
-    Placing a filled skewer restores its ingredients. Everything moves through StickManager /
-    IngredientManager so inventory tools reconcile.
-
-    Stands are structures the player builds rather than slots authored into their base (see
-    Config.Structures), so which ones exist is discovered off the StickStand tag: every placed one is
-    bound as it appears and dropped as it goes, keyed by the uid on it -- which is also the key its
-    record sits under.
-
-    The only world state this writes is the replicated PlacedStickId / PlacedIngredients attributes on
-    each stand -- the client renders the models from those, and it animates the stand itself into place
-    on a fresh placement, so the server never holds its real on-screen pose.
-]]
+-- Placing a stick on a stand and loading ingredients onto it. Player data is the source of truth; the models render off it.
 
 --
 local StickStandManager = {
@@ -58,8 +38,7 @@ local function validatePlayer(player: Player?): boolean
 	return player ~= nil and player:IsDescendantOf(Players)
 end
 
--- Returns the id of the ingredient tool the player currently has equipped, or nil. An equipped tool
--- sits in the character rather than the backpack, and a character holds at most one.
+-- The equipped ingredient tool's id, or nil. An equipped tool sits in the character, not the backpack.
 local function getEquippedIngredientId(player: Player): string?
 	local character = player.Character
 	if not character then
@@ -75,17 +54,14 @@ local function getEquippedIngredientId(player: Player): string?
 	return nil
 end
 
--- What placing the player's equipped stick would put on a stand, or nil if they aren't holding one.
--- An empty StickTool places a bare stick; a FilledStickTool brings its skewer's ingredients along and
--- is consumed from FilledSticks when placed.
+-- What the equipped stick would put on a stand, or nil. A filled one brings its ingredients and is consumed.
 local function getEquippedStickPlacement(player: Player, data)
 	local character = player.Character
 	if not character then
 		return nil
 	end
 
-	-- A filled skewer's placement is just the equipped skewer StickManager already resolves, flagged so
-	-- the caller knows to consume it from FilledSticks rather than the plain stick count.
+	-- Flagged so the caller consumes it from FilledSticks rather than the plain stick count
 	local filled = StickManager:GetEquippedFilledStick(player, data)
 	if filled then
 		filled.IsFilled = true
@@ -108,8 +84,7 @@ local function getEquippedStickPlacement(player: Player, data)
 	return nil
 end
 
--- Writes each stand clone's PlacedStickId attribute to match the player's records, so the client can
--- render (or clear) the stick sitting on it. Setting nil removes the attribute.
+-- Mirrors the player's stand records onto each clone's attributes so the client can render them.
 function StickStandManager:_renderStands(player: Player)
 	local stands = self._stands[player]
 	if not stands then
@@ -122,14 +97,13 @@ function StickStandManager:_renderStands(player: Player)
 	end
 
 	for uid, stand in stands do
-		-- A record is { StickId, Ingredients }; guard the type so a legacy string-shaped entry (from
-		-- before ingredients existed) reads as empty rather than erroring on .Ingredients.
+		-- Guarded so a legacy string-shaped entry reads as empty rather than erroring on .Ingredients
 		local record = data.StickStands[uid]
 		local isRecord = type(record) == "table"
 		stand:SetAttribute("PlacedStickId", if isRecord then record.StickId else nil)
-		-- Ingredients replicate as a csv so every client (visitors too) can render them in order.
+		-- Ingredients replicate as a csv so every client, visitors too, can render them in order
 		stand:SetAttribute("PlacedIngredients", if isRecord then table.concat(record.Ingredients, ",") else nil)
-		-- A cooked skewer renders from the cooked models on the stand too.
+		-- A cooked skewer renders from the cooked models on the stand too
 		stand:SetAttribute("PlacedCooked", if isRecord then record.Cooked or nil else nil)
 	end
 end
@@ -138,7 +112,7 @@ end
 function StickStandManager:_bindStand(model: Model)
 	local player = Players:GetPlayerByUserId(model:GetAttribute(Structures.OWNER_ATTRIBUTE))
 
-	-- The owner can leave between their base being torn down and this signal being handled.
+	-- The owner can leave between their base being torn down and this signal being handled
 	if not player then
 		return
 	end
@@ -165,15 +139,13 @@ function StickStandManager:_unbindStand(model: Model)
 	self._stands[player][model:GetAttribute(Structures.UID_ATTRIBUTE)] = nil
 end
 
--- Places the player's equipped stick on an empty stand, or takes the placed one back off. The
--- StickStands write re-renders the attribute through the listener; nothing here touches the world.
+-- Places the equipped stick on an empty stand or takes it back off; the data write re-renders it.
 function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 	if not validatePlayer(player) then
 		return
 	end
 
-	-- The read yields, so guard the whole window: without it a spammed prompt could place twice or
-	-- place-and-remove off one stale read.
+	-- The read yields, so guard the whole window or a spammed prompt could place twice off one stale read
 	if self._toggling[player] then
 		return
 	end
@@ -185,27 +157,24 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 		return
 	end
 
-	-- The uid comes off a remote, so it can be anything -- only act on one of their own stands. Read
-	-- off their build rather than the world, which proves the structure exists, is a stand, and is
-	-- theirs, in one.
+	-- Read off their build rather than the world, which proves it exists, is a stand, and is theirs
 	local structure = data.Structures[uid]
 	if not structure or not Structures.IsCategory(structure.Type, STAND_CATEGORY) then
 		self._toggling[player] = nil
 		return
 	end
 
-	-- A valid record is a table; a legacy string-shaped entry is treated as empty (and gets overwritten).
+	-- A valid record is a table; a legacy string-shaped entry is treated as empty and overwritten
 	local record = data.StickStands[uid]
 	if type(record) ~= "table" then
 		record = nil
 	end
 
 	if not record then
-		-- Empty stand: place whatever stick they're holding (a filled skewer brings its ingredients).
+		-- Empty stand: place whatever stick they're holding, ingredients and all
 		local placement = getEquippedStickPlacement(player, data)
 		if not placement then
-			-- Holding an ingredient over an empty stand means they're trying to load it but skipped the
-			-- stick -- point them at that rather than the generic "equip a stick" they'd get empty-handed.
+			-- They skipped the stick, so point them at that rather than the generic empty-handed advice
 			local holdingIngredient = getEquippedIngredientId(player) ~= nil
 			NotificationManager:NotifyNormal(player, {
 				Text = if holdingIngredient then "Place a stick first!" else "Equip a stick first!",
@@ -217,7 +186,7 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 			return
 		end
 
-		-- A cooked skewer is done -- it stays in the inventory rather than going back on a stand.
+		-- A cooked skewer is done -- it stays in the inventory rather than going back on a stand
 		if placement.Cooked then
 			NotificationManager:NotifyNormal(player, {
 				Text = "This BBQ's already cooked!",
@@ -229,9 +198,7 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 			return
 		end
 
-		-- CookProgress is dropped here rather than carried, and that's the rule and not an oversight: a
-		-- stand is where ingredients go on, and a raw one added to a part-cooked skewer means the cook
-		-- starts over. Coming back off the stand it's a skewer nobody's ever lit.
+		-- Dropped, not carried: adding a raw ingredient means the cook starts over
 		PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid }, {
 			StickId = placement.StickId,
 			Ingredients = table.clone(placement.Ingredients),
@@ -239,7 +206,7 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 		})
 
 		if placement.IsFilled then
-			-- The filled skewer moves onto the stand, so it leaves the inventory.
+			-- The filled skewer moves onto the stand, so it leaves the inventory
 			PlayerDataManager:SetPlayerDataKey(player, { "FilledSticks", placement.Uid }, nil)
 		else
 			StickManager:ConsumeStick(player, placement.StickId)
@@ -249,7 +216,7 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 		return
 	end
 
-	-- Stick on the stand. Holding an ingredient loads it; holding nothing takes the stick off.
+	-- Stick on the stand: holding an ingredient loads it, holding nothing takes the stick off
 	local ingredientId = getEquippedIngredientId(player)
 	if ingredientId then
 		local stick = Sticks.GetStickFromId(record.StickId)
@@ -275,28 +242,14 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 		return
 	end
 
-	-- Not holding an ingredient: take the stick off.
+	-- Not holding an ingredient: take the stick off
 	self:ReturnContentsToPlayer(player, data, uid, record)
 	PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid }, nil)
 
 	self._toggling[player] = nil
 end
 
--- Hands whatever was on a stand back to the player. With ingredients it's a distinct filled tool that
--- can't stack; empty, it just stacks back onto the plain stick tool.
---
--- Shared by the prompt above and by BaseManager taking the whole stand down, so a stand picked up with
--- a stick on it gives back exactly what taking that stick off by hand would have. Clearing the record
--- is the caller's, since only they know what else is being written alongside it.
---
--- @param fromPickup The stand was taken down with the pickup tool rather than the stick taken off it.
--- The stick goes quietly to the backpack instead of into their hands -- the hammer stays equipped, so
--- a base can be cleared in one go -- and a toast says what came back, since without the tool appearing
--- in their hand nothing on screen otherwise would.
--- @return Whether the pickup may go ahead. Always true here: a stand has nothing going on that a stick
--- coming off it could interrupt, so there's no state it refuses in. The griller's takes these parameters
--- plus a timing stamp it alone needs, and can say no; BaseManager calls whichever owns the structure
--- without knowing which, on the parameters both share.
+-- Hands a stand's stick back: a distinct filled tool with ingredients, or stacked back if empty. Always returns true -- a stand has nothing to interrupt.
 function StickStandManager:ReturnContentsToPlayer(player: Player, _data, _uid: string, record, fromPickup: boolean?): boolean
 	local isFilled = #record.Ingredients > 0
 
@@ -325,20 +278,19 @@ function StickStandManager:ReturnContentsToPlayer(player: Player, _data, _uid: s
 	return true
 end
 
--- Registers the player's data listener. Guarded so two stands being bound in the same frame can't
--- set the same player up twice.
+-- Registers the player's data listener, guarded against two stands binding in one frame.
 function StickStandManager:_setupPlayer(player: Player)
 	if self._listeners[player] then
 		return
 	end
 
-	-- The signal only reports the top-level key, so re-render every stand off the whole table.
+	-- The signal only reports the top-level key, so re-render every stand off the whole table
 	self._listeners[player] = PlayerDataManager:ListenForChanges(player, "StickStands", function()
 		self:_renderStands(player)
 	end)
 end
 
--- Drops the player's listener. The stand models (and their attributes) are Base's to destroy.
+-- Drops the player's listener. The stand models and their attributes are Base's to destroy.
 function StickStandManager:_cleanupPlayer(player: Player)
 	local listener = self._listeners[player]
 	if listener then
@@ -358,8 +310,7 @@ function StickStandManager:OnInit()
 end
 
 function StickStandManager:OnStart()
-	-- A stand placed on any base wires itself up here, so nothing has to be told about it -- not the
-	-- base going up on join, and not a player building one mid-session.
+	-- A stand placed on any base wires itself up here, join or mid-session
 	CollectionService:GetInstanceAddedSignal(STAND_CATEGORY):Connect(function(model: Model)
 		self:_bindStand(model)
 	end)
@@ -368,8 +319,7 @@ function StickStandManager:OnStart()
 		self:_unbindStand(model)
 	end)
 
-	-- Bases assigned before this manager started won't have fired the signal above, so sweep them.
-	-- Binding yields on the owner's data, so keep it off the main thread.
+	-- Sweeps bases assigned before this manager started; binding yields, so keep it off the main thread
 	for _, model in CollectionService:GetTagged(STAND_CATEGORY) do
 		task.spawn(function()
 			self:_bindStand(model)

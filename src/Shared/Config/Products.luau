@@ -29,11 +29,7 @@ export type Product = {
 local Products = {}
 Products.Data = {}
 
--- Stick Robux products, one per stick that has a real RobuxProductId (buying it grants the stick, see
--- StickShopManager). Generated from the stick config so name/icon stay in one place; a stick still on
--- the placeholder id of 0 is skipped, so its RobuxPurchase button stays disabled.
--- Every stick is walked rather than only the restockable ones: the diamond has no shop row and can't
--- be bought with currency at all, which is exactly why it needs a product to be gettable.
+-- One product per stick with a real id, generated from the stick config. Every stick is walked -- the diamond has no shop row, which is why it needs one.
 for _, stick in Sticks.GetAllSticks() do
 	if not stick.RobuxProductId or stick.RobuxProductId == 0 then
 		continue
@@ -50,14 +46,7 @@ for _, stick in Sticks.GetAllSticks() do
 	})
 end
 
--- Base-unlock Robux products, one per level a dev product was made for (see BaseUnlocks.RobuxProductIds).
--- The tier only sets the price: every one of these buys the player's *next* level of that unlock, so a
--- receipt that lands out of order can't skip a level or hand out one they already own.
---
--- Which is also what lets one id cover a band of levels (Roll Speed sells ten products across twenty
--- levels): the entries are identical but for the price, so the one a receipt happens to resolve back to
--- can't change what's granted. The name is kept off the level for the same reason -- it's what the
--- purchase toast and the purchase log read, and a banded product has no single level to name.
+-- One per unlock level with a product. The tier only sets the price -- every one buys the player's next level, so one id can cover a band and a receipt can't skip or repeat.
 for _, unlock in BaseUnlocks.Data do
 	if not unlock.RobuxProductIds then
 		continue
@@ -83,9 +72,7 @@ for _, unlock in BaseUnlocks.Data do
 	end
 end
 
--- Plot Robux products, one per plot a player can buy (see Plots.RobuxProductIds). The index only sets
--- the price: every one of these buys one plot, and which plot that is was chosen at the sign rather
--- than carried on the product, so BaseManager remembers it when it raises the prompt.
+-- One per plot. The index only sets the price; which plot was chosen is remembered by BaseManager.
 for index, productId in Plots.RobuxProductIds do
 	table.insert(Products.Data, {
 		Id = Plots.GetProductStringId(index),
@@ -105,9 +92,7 @@ for index, productId in Plots.RobuxProductIds do
 	})
 end
 
--- Crate Robux products, one per bundle a dev product was made for (see Crates.RobuxProductIds). The
--- amount is baked into the product rather than asked for at purchase time, so a receipt grants exactly
--- the bundle it was sold as.
+-- One per crate bundle. The amount is baked in, so a receipt grants exactly the bundle it was sold as.
 for _, crate in Crates.Data do
 	if not crate.RobuxProductIds then
 		continue
@@ -127,7 +112,7 @@ for _, crate in Crates.Data do
 					return
 				end
 
-				-- Lazy require to avoid pulling CrateManager's dependency graph at module load.
+				-- Lazy require, to avoid pulling CrateManager's dependency graph at module load
 				local CrateManager = require(ServerScriptService.Server.Managers.CrateManager)
 				CrateManager:GrantCrate(player, crate.Id, amount)
 			end,
@@ -135,10 +120,7 @@ for _, crate in Crates.Data do
 	end
 end
 
--- Ingredient Robux products, one per price band (see Ingredients.RobuxProductIds). The band only sets
--- the price: every one of these buys whatever ingredient is sitting on the stand the player raised the
--- prompt from, which IngredientRollingManager remembers, so a receipt can't be spent on something dearer
--- than the band it was sold as. The band rides along to the grant for exactly that check.
+-- One per ingredient price band. Which stand the prompt came from is remembered, and the band rides along so a receipt can't buy something dearer.
 for tier, productId in Ingredients.RobuxProductIds do
 	table.insert(Products.Data, {
 		Id = Ingredients.GetProductStringId(tier),
@@ -151,20 +133,14 @@ for tier, productId in Ingredients.RobuxProductIds do
 				return
 			end
 
-			-- Lazy require to avoid pulling IngredientRollingManager's dependency graph at module load.
+			-- Lazy require, to avoid pulling IngredientRollingManager's dependency graph at module load
 			local IngredientRollingManager = require(ServerScriptService.Server.Managers.IngredientRollingManager)
 			IngredientRollingManager:GrantIngredientFromProduct(player, tier)
 		end,
 	})
 end
 
--- Structure Robux products, one per structure a dev product was made for (see Structures.RobuxProductId).
--- The product's Id IS the structure's Id, which is what lets the grant resolve a receipt back to a
--- structure without carrying anything on the product -- and what the Grill & Stand Shop's RobuxPurchase
--- button prompts with. A structure still on the placeholder id of 0 is skipped, so its button stays hidden.
---
--- No Callback: GrillStandShopManager already listens on ShopManager.PlayerPurchased and grants off the
--- structure id (see GrantStructureFromProduct), so one here would hand over a second copy.
+-- One per structure with a product, its Id being the structure's. No Callback -- GrillStandShopManager already grants off PlayerPurchased.
 for _, structure in Structures.Data do
 	if not structure.RobuxProductId or structure.RobuxProductId == 0 then
 		continue
@@ -181,9 +157,7 @@ for _, structure in Structures.Data do
 	})
 end
 
--- The starter pack, if a dev product has been made for it yet. PurchaseOnce is what stops a second
--- buy server-side and what the shop card reads to pull itself the moment it's taken; the offer also
--- times out, which the card handles off the player's StarterPackStart stamp.
+-- The starter pack. PurchaseOnce stops a second buy and pulls the card; the offer also times out.
 if StarterPack.RobuxProductId ~= 0 then
 	table.insert(Products.Data, {
 		Id = StarterPack.Id,
@@ -197,18 +171,14 @@ if StarterPack.RobuxProductId ~= 0 then
 				return
 			end
 
-			-- Lazy require to avoid pulling ShopManager's dependency graph at module load -- and it
-			-- requires this file, so a top-level require would be a cycle outright.
+			-- Lazy require: ShopManager requires this file, so a top-level one would be a cycle outright
 			local ShopManager = require(ServerScriptService.Server.Managers.ShopManager)
 			ShopManager:GrantStarterPack(player)
 		end,
 	})
 end
 
--- Bux packs, one product per pack a dev product was made for (see BuxPacks). Value carries the Bux
--- the pack hands over, which is what ShopManager:PromptCurrencyPurchase sorts on to find the cheapest
--- pack that covers what a player is short -- these are the first Currency-typed products in the game,
--- so that upsell only starts doing anything now.
+-- One per Bux pack. Value carries the Bux granted, which the currency upsell sorts on.
 for _, pack in BuxPacks.Data do
 	if pack.RobuxProductId == 0 then
 		continue
@@ -227,17 +197,14 @@ for _, pack in BuxPacks.Data do
 				return
 			end
 
-			-- Lazy require to avoid pulling ShopManager's dependency graph at module load -- and it
-			-- requires this file, so a top-level require would be a cycle outright.
+			-- Lazy require: ShopManager requires this file, so a top-level one would be a cycle outright
 			local ShopManager = require(ServerScriptService.Server.Managers.ShopManager)
 			ShopManager:GrantBuxPack(player, pack.Id)
 		end,
 	})
 end
 
--- Instantly finishes the cook the player opened the prompt from, settled perfect. Which grill that was
--- is remembered by GrillerManager rather than carried on the product, the same as the cook-speed bands:
--- the receipt arrives with nothing on it but the buyer.
+-- Finishes the cook the prompt was opened from, settled perfect. Which grill is remembered by GrillerManager -- the receipt names only the buyer.
 table.insert(Products.Data, {
 	Id = "SkipCook",
 	Name = "Skip Cooking",
@@ -250,7 +217,7 @@ table.insert(Products.Data, {
 			return
 		end
 
-		-- Lazy require to avoid pulling GrillerManager's dependency graph at module load.
+		-- Lazy require, to avoid pulling GrillerManager's dependency graph at module load
 		local GrillerManager = require(ServerScriptService.Server.Managers.GrillerManager)
 		GrillerManager:GrantSkipCookFromProduct(player)
 	end,
@@ -268,7 +235,7 @@ table.insert(Products.Data, {
 			return
 		end
 
-		-- Lazy require to avoid pulling StickShopManager's dependency graph at module load.
+		-- Lazy require, to avoid pulling StickShopManager's dependency graph at module load
 		local StickShopManager = require(ServerScriptService.Server.Managers.StickShopManager)
 		StickShopManager:RestockShop(player)
 	end,
@@ -286,7 +253,7 @@ table.insert(Products.Data, {
 			return
 		end
 
-		-- Lazy require to avoid pulling GrillStandShopManager's dependency graph at module load.
+		-- Lazy require, to avoid pulling GrillStandShopManager's dependency graph at module load
 		local GrillStandShopManager = require(ServerScriptService.Server.Managers.GrillStandShopManager)
 		GrillStandShopManager:RestockShop(player)
 	end,

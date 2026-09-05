@@ -13,29 +13,12 @@ local HOVER_AXIS = Vector3.new(0, 1, 0) -- Axis to bob along (Y by default)
 local SPIN_DIRECTION = Vector3.new(0, 1, 0) -- Axis to spin around (Y by default)
 local SPIN_SPEED = 1 -- Spin rate (radians per second)
 
---[[
-	PartFloat — bobs and/or spins a BasePart, Model or Attachment in place.
-
-	Every floater is driven by a single shared RenderStepped loop rather than
-	one connection per instance, so cost scales with how much there is to move,
-	not how many tagged objects exist.
-
-	Attributes (all optional):
-		CanHover      (boolean)  default true
-		HoverAmplitude(number)   default 0.01
-		HoverSpeed    (number)   default 3
-		HoverAxis     (Vector3)  default (0, 1, 0)
-
-		CanSpin       (boolean)  default true
-		SpinDirection (Vector3)  default (0, 1, 0)
-		SpinSpeed     (number)   default 1
-]]
+-- Bobs and spins a BasePart, Model or Attachment off one shared loop, tuned by CanHover/HoverAmplitude/HoverSpeed/HoverAxis and CanSpin/SpinDirection/SpinSpeed.
 local PartFloat = Component.new({
 	Tag = script.Name,
 })
 
--- Shared loop state: a set of active floaters and the single connection
--- that updates all of them each frame.
+-- Shared loop state: the active floaters and the one connection updating them all
 local active: { [any]: true } = {}
 local connection: RBXScriptConnection? = nil
 
@@ -68,17 +51,13 @@ local function stepAll(deltaTime: number)
 end
 
 function PartFloat:Start()
-	-- Works on any PVInstance (a Model or a BasePart) via GetPivot/PivotTo,
-	-- so it animates whole models around their pivot just as well as single parts.
-	-- An Attachment has no pivot, so it's driven through its CFrame instead --
-	-- that's parent-local, so the bob rides along with whatever part it hangs off.
+	-- PVInstances go through GetPivot/PivotTo; an Attachment has no pivot, so its parent-local CFrame is driven instead
 	local part: PVInstance | Attachment = self.Instance
 
 	self.instance = part
 	self.isAttachment = part:IsA("Attachment")
 
-	-- Anchor to the pivot at start time so the bob oscillates around a
-	-- fixed point instead of drifting, and the spin accumulates on top.
+	-- Anchored at start, so the bob oscillates around a fixed point and the spin accumulates on top
 	self.basePivot = if self.isAttachment then part.CFrame else part:GetPivot()
 	self.elapsed = 0
 	self.spinCFrame = CFrame.identity

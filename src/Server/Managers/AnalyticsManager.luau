@@ -23,25 +23,15 @@ local TutorialManager
 local TutorialCrateManager
 local PlaytimeManager
 
---[[
-	The one place AnalyticsService is spoken to. Every gameplay manager owns a Signal for what happens in
-	its domain and knows nothing about analytics; this subscribes to all of them in OnStart and turns
-	each into a Roblox analytics event. Nothing here can block or error gameplay: every call is wrapped
-	in task.spawn + pcall.
-
-	Custom events carry a numeric value plus up to three custom fields, which are the only breakdown
-	dimensions the dashboard offers -- so what goes in each field is chosen for what's worth slicing by.
-]]
+-- The one place AnalyticsService is spoken to: subscribes to every manager's signals and turns each into an event. Every call is spawned and pcall'd, so it can't block or error gameplay.
 local AnalyticsManager = {
-	-- [player] = lever pulls this session. Read and cleared when the session ends, so it must not be
-	-- dropped on PlayerRemoving: that fires before the pre-cleanup hook the summary goes out on.
+	-- [player] = lever pulls this session. Not dropped on PlayerRemoving, which fires before the summary
 	_sessionRolls = {},
 }
 
 local CustomFields = Enum.AnalyticsCustomFieldKeys
 
--- Maps a currency source/sink label to the analytics transaction type it represents. Anything not
--- listed falls back to Gameplay.
+-- Maps a currency source or sink label to its analytics transaction type; anything unlisted is Gameplay.
 local SOURCE_TRANSACTION_TYPES = {
 	BaseUnlock = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	PlotUnlock = Enum.AnalyticsEconomyTransactionType.Shop.Name,
@@ -51,8 +41,7 @@ local SOURCE_TRANSACTION_TYPES = {
 	BuxPack = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 }
 
--- Wraps a custom event behind task.spawn/pcall so analytics never blocks or errors gameplay. Absent
--- fields are simply omitted.
+-- Fires a custom event behind spawn and pcall, so analytics never blocks or errors gameplay.
 local function logCustom(
 	player: Player,
 	eventName: string,
@@ -78,7 +67,7 @@ local function getIngredientTier(ingredientId: string): string?
 	return ingredient and ingredient.Tier.Id
 end
 
--- Buckets a session length in seconds, since raw seconds are too granular to break a chart down by.
+-- Buckets a session length, raw seconds being too granular to break a chart down by.
 local function getSessionLengthBucket(sessionLength: number): string
 	local minutes = sessionLength / 60
 
@@ -190,20 +179,15 @@ function AnalyticsManager:OnStart()
 	IngredientRollingManager.OnIngredientRolled:Connect(function(player, standId, ingredientId)
 		logCustom(player, "Ingredient Rolled", 1, ingredientId, getIngredientTier(ingredientId), standId)
 	end)
-	-- A teased stand fires the roll event above as well, since it really is holding the thing -- so this is
-	-- what tells the two apart. Without it a Lamb an early player was shown and couldn't buy is
-	-- indistinguishable from one they won, and the roll distribution reads as far too generous at the top.
+	-- A teaser fires the roll event too, so this is what tells the two apart -- otherwise the top of the roll distribution reads far too generous
 	IngredientRollingManager.OnIngredientTeased:Connect(function(player, standId, ingredientId)
 		logCustom(player, "Ingredient Teased", 1, ingredientId, getIngredientTier(ingredientId), standId)
 	end)
-	-- Tallied off the per-pull signal rather than the per-stand one above, which would count a single
-	-- pull once for every stand the player has unlocked. Reported as one event per session below.
+	-- Off the per-pull signal, or a pull would count once per unlocked stand. One event per session
 	IngredientRollingManager.OnRollPerformed:Connect(function(player)
 		self._sessionRolls[player] = (self._sessionRolls[player] or 0) + 1
 	end)
-	-- Only three custom fields exist, and how it was paid for is worth slicing by now that a broke player
-	-- is offered the ingredient for Robux instead of a rejection -- so it shares the last field with
-	-- discovery rather than either dimension being dropped: "Currency", "Currency New", "Robux", "Robux New".
+	-- Only three fields exist, so payment shares the last with discovery: "Currency", "Currency New", "Robux", "Robux New"
 	IngredientRollingManager.OnIngredientPurchased:Connect(function(player, ingredientId, price, discovered, method)
 		logCustom(
 			player,
@@ -262,12 +246,7 @@ function AnalyticsManager:OnStart()
 		logCustom(player, "Badge Awarded", 1, badgeKey)
 	end)
 
-	-- Onboarding funnel, one named funnel per tutorial variant rather than the single onboarding one, so a
-	-- reworked onboarding reports separately from the one it's replacing instead of averaging into it. No
-	-- session id: the tutorial runs once per player, so there's no repeat run to tell apart.
-	--
-	-- The 2 is that versioning: the cooking beats merged when the griller's knob went, so a step index in
-	-- this funnel names a different beat than the same index did in the one before it.
+	-- One funnel per variant, so a rework reports separately. The 2 is versioning -- the cooking beats merged when the knob went
 	TutorialManager.OnFunnelStep:Connect(function(player, variant, stepIndex, stepName)
 		task.spawn(function()
 			pcall(function()
@@ -276,17 +255,14 @@ function AnalyticsManager:OnStart()
 		end)
 	end)
 
-	-- The tutorial's reward crate sits behind a countdown that keeps running offline, so the split is
-	-- between players the wait held onto and players who had to come back for it.
+	-- The crate's countdown runs offline, so this splits players the wait held from those who came back
 	TutorialCrateManager.OnClaimed:Connect(function(player, spawnedThisSession)
 		logCustom(player, "Tutorial Crate Claimed", 1, if spawnedThisSession then "SameSession" else "Rejoined")
 	end)
 
-	-- Session summaries. OnSessionEnded rides the pre-cleanup hook, so it covers leaving, shutdown and
-	-- session handover alike, and still holds a player the service will accept.
+	-- OnSessionEnded rides the pre-cleanup hook, so it covers every ending and still holds a valid player
 	PlaytimeManager.OnSessionEnded:Connect(function(player, sessionLength)
-		-- Sessions that never rolled are logged too: dropping them would bias the average upward and
-		-- hide how many players never reach the lever at all.
+		-- Sessions that never rolled are logged too, or the average biases up and hides who never reached the lever
 		local rolls = self._sessionRolls[player] or 0
 		self._sessionRolls[player] = nil
 

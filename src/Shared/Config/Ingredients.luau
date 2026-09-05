@@ -1,35 +1,4 @@
---[[
-    Every ingredient, and the tiers that price them.
-
-    An entry authors three balance knobs: its Tier (setting the band -- cook time, sale multiplier, label
-    colour, fallback price), its Price (where in that band it sits), and its Chance, written as the player
-    reads it: 1 in this many rolls.
-
-    Price is both what an ingredient costs off a stand and what its sale value is figured from, so the two
-    always move together -- repricing changes how much is riding on a roll, never whether it's a good
-    deal. That's ValueMultiplier, which is per tier.
-
-    THE RULE: the chances must add up to 100%, i.e. 1/Chance summed over every ingredient must come to 1.
-    At 1.05 there's 5% more promised than a roll can hand out and every ingredient is really 5% rarer than
-    its number, so adding one at "1 in 20" means bumping others up to pay for it. Labels render the *real*
-    odds (authored Chance scaled by that sum) and a load-time warn says which way to nudge -- Roblox
-    requires accurate odds on random items sold for Robux, so this isn't optional.
-
-    Ballpark for a new entry -- Chance: Common 9-51, Uncommon 55-137, Rare 170-450, Epic 700-1.2K,
-    Legendary ~2K, Mythic ~10K. Price: Common 75-260, Uncommon 1K-7K, Rare 10.5K-30K, Epic 50K-85K,
-    Legendary 100K; past that, omit Price and take the tier's. Mythic ships empty on purpose -- headroom
-    for the luxurious stuff (wagyu, lobster, truffle) that costs nothing to leave sitting there.
-
-    The jump from Common to Uncommon is deliberate and it is not small: a common is pocket change and
-    everything above it is something to save for. What that buys is a rolling stand that can land on a
-    thing the player cannot pay for yet, which is the want the whole ladder runs on -- so the gap is the
-    feature rather than a band that needs closing.
-
-    Adding one is never a local edit. Every 1/Chance has to keep summing to 1, so a new entry's share has
-    to come out of the others -- in practice that means re-solving the whole column rather than picking a
-    number for the newcomer. The tier bands above are what's left once that's done; they'll move again the
-    next time the roster grows.
-]]
+-- Every ingredient, and the tiers that price them. Chances must sum to 100% -- see docs/balance.md before editing.
 
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -45,28 +14,21 @@ local Colors = require(Shared.Colors)
 --
 export type Tier = {
 	Id: string, -- also the key into Shared.Colors this tier takes its label colour from
-	Price: number, -- the tier's anchor price: what an entry costs off a rolling stand if it names no Price
-	-- of its own, and roughly what the tier's entries average out to once they've fanned around it
+	Price: number, -- the anchor an entry costs off a stand when it names no Price of its own
 	CookTime: number, -- seconds one of them takes to cook on a griller (see GetTotalCookTime)
 	ValueMultiplier: number, -- what it sells for per dollar it cost, on top of SALE_VALUE_MULTIPLIER
 	TextColor: Color3, -- not authored below, back-filled from Shared.Colors
 	StrokeColor: Color3, -- the label's stroke, likewise back-filled
 	Index: number, -- position on the ladder, back-filled; the commonest tier is 1
-	PityThreshold: number?, -- go this many ingredient rolls without this tier *or better* and the next roll
-	-- is forced to it. Nil marks a tier untracked, which is what Common and Uncommon do. Rolls rather than
-	-- lever pulls -- one pull on six stands is six shots at the tier. Lower means pity delivers more of the
-	-- tier, and its real rate runs further ahead of the odds on its label (see below)
-	PityWeights: { { any } }?, -- back-filled: { id, Weight } for this tier's own entries, which is what a
-	-- forced roll draws from. The counter resets on anything this good or better, but the payout is the
-	-- tier itself -- pity hands over what it promised and leaves the rest to luck
+	PityThreshold: number?, -- rolls without this tier or better before one is forced; nil leaves it untracked
+	PityWeights: { { any } }?, -- back-filled { id, Weight } for this tier's own entries, what a forced roll draws from
 }
 
 export type Ingredient = {
 	Id: string, -- also the name of the model under Assets.Ingredients.Raw / .Cooked
 	Name: string,
 	Tier: Tier, -- authored as a tier id (a string) below, back-filled to the tier itself
-	Chance: number, -- the odds on its label, 1 in this many rolls. Authored as the number you want; corrected
-	-- at load to the real odds, which are exactly that number whenever the config adds up to 100%
+	Chance: number, -- the odds on its label, 1 in this many rolls; corrected at load to the real odds
 	Color: Color3, -- label colour, to tell ingredients apart in the stick UI
 	Icon: string, -- rbxassetid for this ingredient's UI icon
 	Price: number, -- authored per entry below; falls back to its tier's price when it isn't
@@ -79,24 +41,16 @@ export type Ingredient = {
 --
 local Ingredients = {}
 
--- The global economy dial, on top of every tier's ValueMultiplier. Raise it to make selling more
--- lucrative across the board; retune ValueMultiplier to change how steeply rarity pays.
+-- The global economy dial, on top of every tier's ValueMultiplier
 Ingredients.SALE_VALUE_MULTIPLIER = 1.45
 
--- What each slot past the slowest adds, as a fraction of its own CookTime. The skewer cooks in one piece,
--- so the slowest ingredient sets the length and the rest only add heat to shift -- which is what makes
--- capacity worth paying for: a full stick isn't a full stick's worth of waiting.
---
--- Short of 1 so filling a stick pays, and clear of 0 so it still costs something -- value has no falloff
--- at all (GetTotalValue), so at 0 an extra slot would be free money.
+-- What each slot past the slowest adds, as a fraction of its own CookTime. Short of 1 so filling a stick pays
 Ingredients.ADDITIONAL_SLOT_FACTOR = 0.75
 
--- How far off 100% the chances may sum before the load-time warn fires. Set to where drift would start to
--- show rather than at zero -- a 1% miss turns "1 in 20" into "1 in 20.2", which still prints 20.
+-- How far off 100% the chances may sum before the load-time warn fires
 Ingredients.CHANCE_SUM_TOLERANCE = 0.02
 
--- The Robux products an ingredient can be bought outright with, cheapest first. Keyed by *band* rather
--- than by the thing they buy: thirty-three ingredients and more coming, against ten products.
+-- The Robux products an ingredient can be bought outright with, cheapest first. Keyed by band, not by entry
 Ingredients.RobuxProductIds = {
 	3709025916,
 	3709025936,
@@ -110,13 +64,7 @@ Ingredients.RobuxProductIds = {
 	3709026113,
 }
 
--- ProductPriceBands[n] is the most Bux band n covers. An ingredient sells in the first band its Price fits
--- under, and anything dearer takes the top band -- so this list is one shorter than RobuxProductIds.
---
--- Thresholds rather than a band named per entry, so a new ingredient places itself from its Price alone --
--- the last repricing moved every entry above Common by ten times or more and this list never needed
--- touching, which is the whole point of it. Only T10 is empty now; the labels below go stale on any
--- repricing and are worth re-deriving rather than trusting.
+-- ProductPriceBands[n] is the most Bux band n covers, so an entry places itself from its Price alone
 Ingredients.ProductPriceBands = {
 	100, -- T1: Corn - Jalapeno
 	200, -- T2: Carrot - Chicken
@@ -133,48 +81,7 @@ Ingredients.ProductPriceBands = {
 table.freeze(Ingredients.RobuxProductIds)
 table.freeze(Ingredients.ProductPriceBands)
 
--- Commonest first. ValueMultiplier climbs with rarity, so chasing rares pays a better return per dollar
--- rather than just a bigger number. Price is the anchor a tier's entries are priced *around* -- move it to
--- shift a whole tier, reprice the entries to change how far apart they sit.
---
--- CookTime and ValueMultiplier climb together: the good stuff is the slow stuff, so a rare buys a longer
--- wait for a better return rather than a strictly better ingredient. Common doesn't move -- near enough
--- nine rolls in ten land there, so it stays the quick baseline everything else is measured against.
---
--- ValueMultiplier is the *smaller* half of what rarity pays, and it has to stay that way. Price already
--- separates the tiers by more than a thousand times end to end, so this only decides how much better the
--- return is per dollar spent -- 3.1x on a common against 5.3x on a legendary. It used to run to 4.2 at the
--- top, which was set when the price ladder was flat enough to need the help; against today's prices that
--- was multiplying an enormous gap by a large number and the tail of the roster ran away with the economy.
--- Steepening this is almost never the fix: repricing a tier moves what it pays, this moves whether it's a
--- good deal, and only the second one is what this knob is for.
---
--- CookTime is an anchor the same way Price is, not a flat rate every entry pays: each one names its own,
--- fanned around this number by what the food actually is -- dense things that have to cook through at the
--- top of the band, small wet things at the bottom. What it still is, is the fallback, so an entry added
--- without one lands on its tier's rate rather than nothing. Keep the bands from overlapping when retuning:
--- them touching but not crossing is what keeps the slow thing and the valuable thing the same thing.
---
--- PityThreshold is the pity dial, and a tier having one is what puts a counter on it. It says the thing
--- out loud: go this many ingredient *rolls* without one of this tier or better, and the next roll is one.
--- Rolls rather than lever pulls, so a six-stand base reaches it in a sixth of the pulls and the guarantee
--- means the same to everybody. Common and Uncommon name none -- at 1 in 1.2 and 1 in 7 there's no drought
--- to protect anyone from.
---
--- These are set tight on purpose: short enough that the counter, not luck, is what mostly delivers the rare
--- tiers. Lamb averages 2,200 rolls on its own odds and a guarantee at 650 means about three in four of them
--- arrive on the counter -- so a Legendary is something a player grinds *to* rather than gets lucky into,
--- which is the feel this ladder is tuned for. Rare at 65 against its 46-roll average is the mildest rung;
--- Epic and Legendary lean on pity progressively harder.
---
--- Two consequences that follow from that and aren't bugs. The tiers land far commoner than their Chance
--- labels read -- Lamb about four times as often -- which is covered where Chance is left alone further
--- down. And the *thresholds*, not the odds, are what set the real pace, which is why the load-time check
--- below compares them to each other rather than to the odds behind them.
---
--- These don't re-solve themselves. Rebalance the chance column and the guarantees keep their old numbers
--- while the odds behind them move -- which matters less here than it would on a loose ladder, since the
--- odds were never doing much of the work.
+-- Commonest first. Price and CookTime are anchors an entry fans around; see docs/balance.md for the ladder
 Ingredients.Tiers = {
 	{
 		Id = "Common",
@@ -214,21 +121,18 @@ Ingredients.Tiers = {
 		Price = 400_000,
 		CookTime = 110,
 		ValueMultiplier = 1,
-		-- A placeholder until Mythic has entries, since there's no average gap to set it against yet. It's
-		-- inert either way: a tier with nothing in it gets no counter.
+		-- A placeholder until Mythic has entries -- inert either way, since an empty tier gets no counter
 		PityThreshold = 1_500,
 	},
 }
 
--- Keyed on tier Id into Shared.Colors -- the same palette the sticks use, so a Rare ingredient and a Rare
--- stick read the same colour.
+-- The same palette the sticks use, so a Rare ingredient and a Rare stick read the same colour
 local tiersById = {}
 
 for index, tier in Ingredients.Tiers do
 	tier.TextColor = Colors[tier.Id].TextColor
 	tier.StrokeColor = Colors[tier.Id].StrokeColor
-	-- Kept on the tier so a rarity comparison is a number against a number rather than a table.find of
-	-- the ladder, which is what the pity reset does on every roll of every pull.
+	-- On the tier so a rarity comparison is a number against a number, which the pity reset does every roll
 	tier.Index = index
 	tiersById[tier.Id] = tier
 end
@@ -236,25 +140,11 @@ end
 table.freeze(Ingredients.Tiers)
 table.freeze(tiersById)
 
--- Where the ladder starts being worth making a fuss over: a landing here or above gets the cool sting, and
--- it's the floor a teaser draws from. A position rather than a list of ids, so a tier added above Rare is
--- celebrated automatically instead of quietly falling back to the plain sting.
+-- Where the ladder starts being worth a fuss. A position, so a tier added above Rare is celebrated too
 Ingredients.COOL_TIER_INDEX = tiersById.Rare.Index
 
--- Grouped by tier, commonest first. Config order is the Index grid's layout order and nothing else. The
--- chances add up to 99.9998%, so every label reads exactly the number written on it.
---
--- Price rises with rarity down a tier as well as across them, so the Index reads as one ladder rather than
--- flat blocks. Repeating prices (the two peppers, onion and garlic) are wanted -- round numbers a tier
--- apart read better than thirty-three forced-unique ones. Lamb names none, being alone in Legendary.
---
--- A tier's price band is wide, and the step between tiers wider still -- the dearest common is 3x the
--- cheapest, and the cheapest uncommon is 4x the dearest common. That gap is what makes rolling up a tier
--- land as an event rather than a slightly better number. What the bands can't do is touch: the load-time
--- check below wants every tier strictly dearer and strictly rarer than the one under it, so the room to
--- fan an entry out is whatever sits between its tier and the next.
+-- Grouped by tier, commonest first; config order is the Index grid's layout order and nothing else
 Ingredients.Data = {
-	--
 	{
 		Id = "Corn",
 		Name = "Corn",
@@ -406,7 +296,6 @@ Ingredients.Data = {
 		Icon = "rbxassetid://88534976012906",
 	},
 
-	--
 	{
 		Id = "Pineapple",
 		Name = "Pineapple",
@@ -508,7 +397,6 @@ Ingredients.Data = {
 		Icon = "rbxassetid://101470358908580",
 	},
 
-	--
 	{
 		Id = "Mango",
 		Name = "Mango",
@@ -560,7 +448,6 @@ Ingredients.Data = {
 		Icon = "rbxassetid://83047236472578",
 	},
 
-	--
 	{
 		Id = "Duck",
 		Name = "Duck",
@@ -569,8 +456,7 @@ Ingredients.Data = {
 		Price = 50_000,
 		CookTime = 66,
 		Color = Color3.fromRGB(150, 88, 66),
-		-- TODO: real icon. This id is a placeholder and renders nothing -- and a blank icon on an
-		-- undiscovered Index cell looks exactly like the locked state, so it won't announce itself.
+		-- TODO: real icon -- a blank one on an undiscovered Index cell looks like the locked state, so it hides
 		Icon = "rbxassetid://0",
 	},
 	{
@@ -584,7 +470,6 @@ Ingredients.Data = {
 		Icon = "rbxassetid://115449184910204",
 	},
 
-	--
 	{
 		Id = "Lamb",
 		Name = "Lamb",
@@ -596,10 +481,7 @@ Ingredients.Data = {
 	},
 }
 
--- Resolves each entry's tier and pulls its raw + cooked models out of Assets.Ingredients, matched on Id.
--- An entry missing either model, naming an unknown tier, or lacking a Chance is dropped rather than left
--- half-built. Runs before anything is weighted: a dropped entry must not count toward the sum, or every
--- label would be off by the share of something that can never roll.
+-- Resolves each entry's tier and models, dropping any that are incomplete before anything is weighted.
 local RawFolder = IngredientsFolder.Raw
 local CookedFolder = IngredientsFolder.Cooked
 
@@ -632,8 +514,7 @@ for index = #Ingredients.Data, 1, -1 do
 	ingredient.CookedModel = cookedModel
 end
 
--- Everything an entry didn't author comes off its tier, and its roll weight is just the reciprocal of
--- the odds it asked for. Summed, those reciprocals are how much of a roll the config has promised out.
+-- Everything unauthored comes off the tier; weight is the reciprocal of the odds it asked for.
 local totalWeight = 0
 
 for _, ingredient in Ingredients.Data do
@@ -646,9 +527,7 @@ for _, ingredient in Ingredients.Data do
 	totalWeight += ingredient.Weight
 end
 
--- The roller normalises, so an ingredient really rolls at its authored odds scaled by the sum. Chance is
--- corrected in place, so every label shows the real odds -- then warned about, since an ingredient added
--- at "1 in 20" without paying for it elsewhere is the mistake this catches.
+-- Chance is corrected in place to the real odds, then warned about if the config doesn't add up.
 for _, ingredient in Ingredients.Data do
 	ingredient.Chance *= totalWeight
 end
@@ -663,15 +542,7 @@ if math.abs(totalWeight - 1) > Ingredients.CHANCE_SUM_TOLERANCE then
 	)
 end
 
--- Pity. A tier naming a PityThreshold gets a counter in player data, and once that counter reaches it
--- IngredientRollingManager forces the next roll to that tier.
---
--- Walked rarest first, since a counter watches "this tier *or better*": it means rolls since anything this
--- good, so a Lamb clears the Rare counter as well as its own and pity can never force a Rare onto someone
--- who just pulled a Legendary. What's gathered here is each tier's own entries, which is what a payout
--- draws from -- paying out the whole band instead would hand Lamb out on Rare pity at about forty times its
--- own rate, Lamb being a fortieth of the Rare band by weight while the Rare counter fires roughly twenty
--- times as often as the Legendary one.
+-- Pity: gathers each tier's own entries for a forced roll, walked rarest first. See docs/balance.md.
 local pityTiers = {}
 
 for index = #Ingredients.Tiers, 1, -1 do
@@ -684,49 +555,22 @@ for index = #Ingredients.Tiers, 1, -1 do
 		end
 	end
 
-	-- A tier with no entries has nothing to force, so it stays untracked until it has some -- which is what
-	-- lets Mythic sit above with a threshold and an empty roster.
+	-- A tier with no entries has nothing to force, so it stays untracked until it has some
 	if not tier.PityThreshold or #ownWeights == 0 then
 		continue
 	end
 
-	-- Written onto the tier despite Ingredients.Tiers being frozen above, which is fine because that freeze
-	-- is shallow -- it holds the array, not the tiers in it. Freezing a tier itself would break this.
+	-- Fine despite the freeze above, which is shallow -- freezing a tier itself would break this
 	tier.PityWeights = table.freeze(ownWeights)
 	table.insert(pityTiers, tier)
 end
 
--- Chance is deliberately left alone here, and that is a decision rather than an oversight. Pity forces
--- rolls that wouldn't otherwise have landed, so a tracked tier turns up markedly more often than its label
--- reads. At today's thresholds that is not a rounding difference -- measured over three million rolls:
---
---     Rare band       label 1 in 46     really 1 in 33     1.38x
---     Epic band       label 1 in 368    really 1 in 196    1.88x
---     Legendary       label 1 in 2,200  really 1 in 566    3.89x
---
--- The labels are the authored odds and stay that way: pity is meant to be something the player feels rather
--- than reads, so nothing above is scaled to account for it. So don't "fix" a rate that comes in ahead of
--- its label -- the gap *is* the pity, and it widens as a PityThreshold tightens. Re-measure it if the
--- thresholds move; an earlier revision solved for these rates and folded them back into Chance, and git
--- history has that if a true-odds display ever wants the numbers.
---
--- Worth knowing rather than acting on: Roblox wants accurate odds on randoms sold for Robux, and
--- ingredients are (Ingredients.RobuxProductIds). Understating is the forgiving direction -- players get
--- more than promised -- but a 3.89x understatement on Lamb is a long way from the authored number.
+-- Chance is deliberately not scaled for pity, so real rates run ahead of the labels -- see docs/balance.md.
 
--- Rarest first, which is the order the roller scans them in: two counters coming due on the same roll
--- should pay out the better one.
+-- Rarest first, so two counters due on the same roll pay out the better one
 Ingredients.PITY_TIERS = table.freeze(pityTiers)
 
--- The thresholds are tight enough that a counter, not luck, is what mostly delivers these tiers -- so the
--- one thing that can still be mis-authored is their order. Whatever a tier's odds say, it can't arrive more
--- often than its counter allows, so a rarer tier given the shorter threshold really does turn up more often
--- than the commoner one above it and the whole ladder reads backwards.
---
--- Checked against the tier below rather than against each tier's own drought: at these thresholds the
--- drought barely gets a say, and warning about that would be warning about the design.
---
--- pityTiers is rarest first, so walking it backwards climbs the ladder.
+-- Warns if a rarer tier's threshold would have it arriving more often than the commoner one above it.
 local previousTier
 
 for index = #pityTiers, 1, -1 do
@@ -741,12 +585,7 @@ for index = #pityTiers, 1, -1 do
 	previousTier = tier
 end
 
--- The other two ways to mis-author the ladder, both of them a tier overlapping the one below it. A
--- Chance that has a tier's rarest member rolling as often as the next tier's commonest -- a Common
--- typed at 1 in 40 next to an Uncommon at 1 in 30 -- reads as a bug to anyone who sees a "rare" turn up
--- more than an uncommon. A Price does the same the moment entries set their own: a Common at $600 sat
--- next to an Uncommon at $400 makes the cheaper thing the rarer one. Both checked here rather than left
--- to be noticed in-game.
+-- Warns on a tier overlapping the one below it on Chance or Price, which both read as bugs in-game.
 local previousTierId, previousHighestChance, previousHighestPrice
 
 for _, tier in Ingredients.Tiers do
@@ -762,8 +601,7 @@ for _, tier in Ingredients.Tiers do
 		end
 	end
 
-	-- An empty tier has nothing to be out of order with, so it's skipped and the tier below it stays
-	-- the one the next populated tier is measured against
+	-- An empty tier is skipped, so the tier below stays what the next populated one is measured against
 	if lowestChance then
 		if previousHighestChance and lowestChance <= previousHighestChance then
 			warn(`Ingredient tier {tier.Id} rolls as often as {previousTierId}, check their Chances`)
@@ -780,9 +618,7 @@ end
 
 table.freeze(Ingredients.Data)
 
--- [id] = ingredient, built once at load. GetIngredientFromId is called per ingredient inside
--- GetTotalCookTime and GetTotalValue -- and GetTotalValue runs on every customer offer and every
--- held-skewer estimate -- so a scan there would cost the whole roster on each one.
+-- [id] = ingredient, built once: GetTotalValue runs per customer offer, so a scan would cost the roster
 local ingredientsById = {}
 
 for _, ingredient in Ingredients.Data do
@@ -803,8 +639,7 @@ function Ingredients.GetAllIngredients(): { Ingredient }
 	return Ingredients.Data
 end
 
--- The Robux price band something costing this many Bux is sold in. The bands are ceilings, cheapest
--- first, so the first one it fits under is its own and anything past the last takes the top band.
+-- The band something costing this many Bux sells in. Ceilings, cheapest first; past the last takes the top.
 function Ingredients.GetProductTier(price: number): number
 	for tier, ceiling in Ingredients.ProductPriceBands do
 		if price <= ceiling then
@@ -815,20 +650,17 @@ function Ingredients.GetProductTier(price: number): number
 	return #Ingredients.RobuxProductIds
 end
 
--- The Products.luau string id for one of the Robux price bands. Built in one place so the config that
--- generates the product and the code that prompts it can't drift apart.
+-- The Products.luau id for a Robux price band, built in one place so the config and the prompt can't drift.
 function Ingredients.GetProductStringId(tier: number): string
 	return `Ingredient_T{tier}`
 end
 
--- The string id of the product that buys an ingredient at this price outright. The band comes off what
--- it costs in Bux, so a new ingredient is priced by the ladder rather than needing an id of its own.
+-- The product that buys an ingredient at this price outright, banded so a new one needs no id of its own.
 function Ingredients.GetProductStringIdForPrice(price: number): string
 	return Ingredients.GetProductStringId(Ingredients.GetProductTier(price))
 end
 
--- The dearest ingredient a band sells, for paying out a receipt that found nothing on the stands to
--- spend itself on. Nil for a band nothing has grown into yet -- T7 and T9 both sit empty today.
+-- The dearest ingredient a band sells, for a receipt that found nothing to spend itself on. Nil if empty.
 function Ingredients.GetDearestIngredientInProductTier(tier: number): Ingredient?
 	local dearest = nil
 
@@ -843,14 +675,7 @@ function Ingredients.GetDearestIngredientInProductTier(tier: number): Ingredient
 	return dearest
 end
 
--- Total seconds to cook a skewer holding `ids`. The slowest ingredient on it counts its full CookTime --
--- it's the one that has to be cooked through, so it decides when the skewer is done -- and every other
--- slot adds ADDITIONAL_SLOT_FACTOR of its own. So a stick of five corn isn't five times as slow as one,
--- and neither is a stick of five different things. An id the config no longer has contributes nothing.
---
--- Discounting every slot including the slowest and then topping that one back up, rather than working
--- out which slot is the slowest first and running a second pass to add the others: same answer, one
--- pass, and nothing that breaks if two ingredients tie for longest.
+-- Total cook seconds for `ids`: the slowest pays full CookTime, every other slot ADDITIONAL_SLOT_FACTOR of its own.
 function Ingredients.GetTotalCookTime(ids: { string }): number
 	local total = 0
 	local longest = 0
@@ -868,10 +693,7 @@ function Ingredients.GetTotalCookTime(ids: { string }): number
 	return total + longest * (1 - Ingredients.ADDITIONAL_SLOT_FACTOR)
 end
 
--- What a skewer holding `ids` is worth to sell, before a customer's offer haggles around it. Every copy pays
--- full value (unlike cook time's falloff) because every copy cost full price to buy, and each one is scaled by
--- its tier -- so a skewer of rares returns more per dollar it cost than a skewer of commons, not just more
--- money. An id the config no longer has contributes nothing.
+-- Sell value for `ids` before haggling. Every copy pays full, scaled by its tier -- no falloff, unlike cook time.
 function Ingredients.GetTotalValue(ids: { string }): number
 	local total = 0
 

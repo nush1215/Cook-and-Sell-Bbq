@@ -18,8 +18,7 @@ local PitchLadder = require(script.Parent.Parent.Modules.PitchLadder)
 local TIME_THRESHOLD = 0.05
 local STOP_FADE_TIME = 1 -- seconds StopSound eases a sound out over before dropping it
 
--- Sounds that climb in pitch across a rapid streak instead of flatly repeating, so a run of purchases
--- or upgrades escalates. Each name ramps independently and drops back once the player pauses.
+-- Sounds that climb in pitch across a streak. Each ramps independently and drops back on a pause
 local PITCHED_SOUNDS = { Upgrade = true, Purchase = true }
 local pitchLadder = PitchLadder.new({ Increment = 0.08, Max = 1.5, MaxHits = 1 })
 
@@ -54,13 +53,7 @@ local function fadeOutAndDestroy(sound: Sound, duration: number)
 	end)
 end
 
--- Plays a sound at a location with optional custom properties
--- @param soundName The name of the sound to play
--- @param location The location to play the sound at (CFrame, Vector3, or Part)
--- @param customProperties Optional custom properties to apply to the sound
--- @param limit Whether to limit overlapping sounds
--- @param replicate Whether to replicate the sound to other clients
--- @returns Sound The sound instance that was played
+-- Plays a sound at `location` (CFrame, Vector3 or Part), returning the Sound instance.
 function SoundController:PlaySound(
 	soundName: string,
 	location: CFrame | Vector3 | Part?,
@@ -80,8 +73,7 @@ function SoundController:PlaySound(
 
 	local soundClone = sound:Clone()
 
-	-- Laddered sounds ramp on each consecutive play. Set before customProperties so a caller passing an
-	-- explicit PlaybackSpeed still wins.
+	-- Set before customProperties, so a caller passing an explicit PlaybackSpeed still wins
 	if PITCHED_SOUNDS[soundName] then
 		soundClone.PlaybackSpeed = pitchLadder:Next(soundName)
 	end
@@ -142,26 +134,20 @@ function SoundController:PlaySound(
 	return soundClone
 end
 
--- Plays a sound on loop, easing it up from silence, and hands back a stopper that eases it back down and
--- drops it -- so a loop can start and stop without cracking in or cutting dead.
--- @param soundName The name of the sound to play
--- @param location The location to play the sound at (CFrame, Vector3, or Part)
--- @param fadeIn Seconds the volume ramps up over
--- @param fadeOut Seconds the volume ramps back down over once stopped
--- @returns A function that stops the loop, or nil if the sound wasn't found
+-- Plays a looped sound eased up from silence, returning a stopper that eases it back down.
 function SoundController:PlayLoopedSound(
 	soundName: string,
 	location: (CFrame | Vector3 | Part)?,
 	fadeIn: number,
 	fadeOut: number
 ): (() -> ())?
-	-- Started silent, so the first frame can't crack in at full volume before the ramp takes over.
+	-- Started silent, so the first frame can't crack in before the ramp takes over
 	local sound = self:PlaySound(soundName, location, { Looped = true, Volume = 0 })
 	if not sound then
 		return nil
 	end
 
-	-- The level the ramp climbs to is the original's, since the clone's own has been zeroed above.
+	-- The ramp climbs to the original's level, the clone's own having been zeroed above
 	local template: Sound = SoundService:FindFirstChild(soundName, true)
 	TweenService:Create(sound, TweenInfo.new(fadeIn), { Volume = template.Volume }):Play()
 
@@ -170,9 +156,7 @@ function SoundController:PlayLoopedSound(
 	end
 end
 
--- Stops a sound with optional fade out
--- @param soundName The name of the sound to stop
--- @param location Optional location to search for the sound (defaults to ReplicatedStorage)
+-- Stops a sound, with an optional fade out.
 function SoundController:StopSound(soundName: string, location: Instance?)
 	local soundLocation = location or ReplicatedStorage
 	local sound: Sound? = soundLocation:FindFirstChild(soundName)
@@ -188,9 +172,7 @@ function SoundController:StopSound(soundName: string, location: Instance?)
 	end
 end
 
--- Sets the core BGM volume with optional tween duration
--- @param volume The target volume (0-1)
--- @param setDuration Optional duration for the volume tween (default: 0)
+-- Sets the core BGM volume, optionally tweened.
 function SoundController:SetBGMCoreVolume(volume: number, setDuration: number?)
 	local coreBGM = SoundService:FindFirstChild("CoreBGM", true)
 	if not coreBGM then
@@ -203,9 +185,7 @@ function SoundController:SetBGMCoreVolume(volume: number, setDuration: number?)
 	}):Play()
 end
 
--- Plays a random sound from a folder
--- @param folderName The name of the folder containing sounds
--- @param params Optional parameters to pass to PlaySound
+-- Plays a random sound from a folder, passing `params` through to PlaySound.
 function SoundController:PlayRandomSoundInFolder(folderName: string, params: { any }?)
 	local soundFolder = SoundService:FindFirstChild(folderName, true)
 	if not soundFolder then
@@ -244,8 +224,7 @@ function SoundController:_startBackgroundMusicCycle()
 	end
 end
 
--- Mutes or unmutes the background music
--- @param toggle Whether to mute (true) or unmute (false)
+-- Mutes or unmutes the background music.
 function SoundController:MuteBGM(toggle: boolean)
 	local backgroundMusic = SoundService:FindFirstChild("BackgroundMusic", true)
 	if not backgroundMusic then

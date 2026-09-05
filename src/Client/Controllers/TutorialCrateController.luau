@@ -40,19 +40,7 @@ local TIMER_UI_NAME = "TutorialCrateUI"
 -- RockModule's own ignore tag: anything carrying it is left out of its ground raycasts.
 local ROCK_IGNORE_TAG = "RockModuleIgnore"
 
---[[
-    The crate that crashes into a player's base for finishing the tutorial.
-
-    Three jobs, and they're deliberately driven off different things. The crash comes over a remote,
-    because only the finishing player should see the fall. The countdown comes off the crate's own
-    tag and attributes, because that has to work on a rejoin with no remote to race against. The open
-    comes over a remote again, broadcast to everyone, because opening is local and otherwise nobody
-    but the owner would see the reveal.
-
-    Everything the countdown owns -- the billboard, the loop driving it, and the prompt that replaces
-    it -- lives in one Trove, and that Trove's identity doubles as the loop's guard. Replacing the
-    timer stops the old thread rather than leaving two of them fighting over one label.
-]]
+-- The crate that crashes in for finishing the tutorial. The crash and open come over remotes; the countdown comes off the crate's own attributes, so it survives a rejoin. Its Trove's identity doubles as the loop's guard.
 
 --
 local TutorialCrateController = {
@@ -68,10 +56,7 @@ local function formatTime(seconds: number): string
 	return string.format("%02d:%02d", seconds // 60, seconds % 60)
 end
 
--- Tags every fully invisible part on the base the crate landed on, so RockModule's ground rays fall
--- through them to the floor underneath. It copies whatever it hits onto each rock -- so a ray that
--- stops on an invisible part (a locked unlock's ghost, a trigger volume) spawns invisible debris.
--- Idempotent, and re-run per landing so anything that streamed in since is covered.
+-- Tags invisible parts so RockModule's ground rays fall through to the floor, or the debris copies their invisibility. Idempotent, and re-run per landing.
 local function tagInvisibleBaseParts(baseModel: Model)
 	for _, descendant in baseModel:GetDescendants() do
 		if descendant:IsA("BasePart") and descendant.Transparency >= 1 then
@@ -88,10 +73,7 @@ function TutorialCrateController:_clearTimer()
 	end
 end
 
--- The countdown has run out: swap the billboard over to its alert, put the Open prompt up, and say
--- so. The prompt is built client-side on the owner's machine alone, so nobody else ever sees one.
--- @param model: The crate to attach the prompt to
--- @param billboard: The countdown billboard, switched here to the ready-to-collect alert
+-- Swaps the billboard to its alert and puts the Open prompt up. Built on the owner's machine alone, so nobody else sees one.
 function TutorialCrateController:_onReady(model: Model, billboard: BillboardGui)
 	local trove = self._timerTrove
 	if not trove or not model.PrimaryPart then
@@ -115,8 +97,7 @@ function TutorialCrateController:_onReady(model: Model, billboard: BillboardGui)
 	prompt.RequiresLineOfSight = false
 	prompt.Parent = attachment
 
-	-- Cleared here for the instant feedback; the reveal itself arrives back over OpenEvent once the
-	-- server has agreed the crate is theirs to open.
+	-- Cleared for the instant feedback; the reveal arrives back over OpenEvent once the server agrees
 	trove:Add(prompt.Triggered:Connect(function()
 		self:_clearTimer()
 		self.OpenEvent:FireServer()
@@ -132,9 +113,7 @@ function TutorialCrateController:_onReady(model: Model, billboard: BillboardGui)
 	})
 end
 
--- Hangs the countdown billboard over the crate and drives it locally off the stamp the crate is
--- carrying, so it needs nothing from the server once it's up.
--- @param model: The tutorial crate this countdown belongs to
+-- Hangs the countdown over the crate and drives it off the crate's own stamp, needing nothing from the server.
 function TutorialCrateController:_showTimer(model: Model)
 	self:_clearTimer()
 
@@ -177,8 +156,7 @@ function TutorialCrateController:_showTimer(model: Model)
 		self:_clearTimer()
 	end))
 
-	-- Counted against the synced server clock rather than a local tick, so it can't drift and needs
-	-- no traffic. The trove identity is the loop's guard: replace the timer and this thread ends.
+	-- Counted on the synced clock, so it can't drift. The trove identity is the loop's guard
 	trove:Add(task.spawn(function()
 		while self._timerTrove == trove do
 			local remaining = openAt - workspace:GetServerTimeNow()
@@ -194,12 +172,7 @@ function TutorialCrateController:_showTimer(model: Model)
 	end))
 end
 
--- Plays the crash on the finishing player's client and softly tracks it with the camera. The crate
--- is already at rest on the server -- everyone else just sees it landed -- so this yanks it up to a
--- diagonal entry point and drops it back onto the exact spot it's already sitting on.
--- @param uniqueId: The crate's id, resolved to the model once it has replicated
--- @param duration: How long the fall takes
--- @param landingCFrame: Where it comes to rest
+-- Plays the crash for the finishing player, yanking the already-landed crate up and dropping it back onto its own spot.
 function TutorialCrateController:PlayCrash(uniqueId: string, duration: number, landingCFrame: CFrame)
 	local model = MeteorFall.WaitForCrate(uniqueId)
 	if not model then
@@ -209,8 +182,7 @@ function TutorialCrateController:PlayCrash(uniqueId: string, duration: number, l
 	-- Nothing should be sat over the crash
 	UIController:CloseOpenFrame()
 
-	-- The tag listener skips crash spawns so the billboard doesn't ride the crate down; clear any
-	-- that did go up, in case the attribute hadn't replicated when the crate first appeared.
+	-- Clears any billboard that did go up, in case the attribute hadn't replicated when the crate appeared
 	self:_clearTimer()
 
 	-- The crash only ever fires for the crate's own owner, so the base it landed on is ours
@@ -225,8 +197,7 @@ function TutorialCrateController:PlayCrash(uniqueId: string, duration: number, l
 		LandingCFrame = landingCFrame,
 
 		OnFrame = function(_: number, position: Vector3)
-			-- Only a pull, never a lock: the camera is nudged a fraction toward the crate each frame
-			-- so the player still has their own look control the whole way down.
+			-- A pull, never a lock, so the player keeps their own look control the whole way down
 			Camera.CFrame = Camera.CFrame:Lerp(
 				CFrame.lookAt(Camera.CFrame.Position, position),
 				CratesConfig.METEOR_FOCUS_ALPHA
@@ -270,16 +241,14 @@ function TutorialCrateController:PlayCrash(uniqueId: string, duration: number, l
 		end,
 	})
 
-	-- Hands the camera back whatever happened -- a crate destroyed mid-fall never reaches OnLanded,
-	-- and leaving someone stuck in first person would be a lot worse than a missed cinematic.
+	-- Handed back whatever happened -- a crate destroyed mid-fall never reaches OnLanded
 	task.delay(duration + CratesConfig.METEOR_CAMERA_RELEASE_SLACK, function()
 		cancel()
 		LocalPlayer.CameraMode = Enum.CameraMode.Classic
 	end)
 end
 
--- Picks up a tutorial crate appearing in the world and starts its countdown, leaving the one that's
--- about to crash to PlayCrash -- which starts it on landing, so the billboard doesn't fall with it.
+-- Picks up a tutorial crate appearing in the world and starts its countdown, leaving the crashing one to PlayCrash.
 function TutorialCrateController:_onCrateAdded(model: Instance)
 	if not model:IsA("Model") then
 		return
@@ -310,14 +279,12 @@ function TutorialCrateController:OnStart()
 		self:PlayCrash(uniqueId, duration, landingCFrame)
 	end)
 
-	-- Broadcast to everyone once the owner opens theirs, so the whole base sees the reveal. The crate
-	-- carries Owner by now, so only their client claims and the rewards fly to them.
+	-- Broadcast so the whole base sees the reveal; the crate carries Owner, so only their client claims
 	self.OpenEvent:OnClientEvent(function(model: Model)
 		CrateController:OpenCrate(model)
 	end)
 
-	-- Off the world rather than off a remote: catch our crate appearing, and any that was already
-	-- here when this started, which is the rejoin case.
+	-- Off the world, not a remote, so a crate already here when this started is caught too
 	for _, model in CollectionService:GetTagged(CRATE_TAG) do
 		self:_onCrateAdded(model)
 	end

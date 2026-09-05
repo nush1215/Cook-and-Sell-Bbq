@@ -70,18 +70,9 @@ export type ItemNotificationData = {
 	Icon: string,
 }
 
---[[
-	Builds the text a normal notification's title should show. Colours the words Config.Keywords names,
-	substitutes `{value}` with `value` formatted (and coloured) per the notification's `Count` settings,
-	and appends the "[N]" stack suffix once the same notification has fired more than once.
-	@param data The notification data
-	@param value The counting value to render, if the notification has a `Count`
-	@param count How many times this notification has fired
-	@return The title text
-]]
+-- Builds a notification title: colours Config.Keywords' words, formats `{value}` per the Count settings, and appends the "[N]" stack suffix.
 local function renderNotificationText(data: NotificationData, value: number, count: number): string
-	-- Highlight before substituting, so the scanner never walks into the value's own font tag. `{value}`
-	-- itself is left alone -- there's nothing in a brace for it to match.
+	-- Highlighted before substituting, so the scanner never walks into the value's own font tag
 	local text = Keywords.Highlight(data.Text)
 
 	if data.Count then
@@ -102,12 +93,7 @@ local function renderNotificationText(data: NotificationData, value: number, cou
 	return text
 end
 
---[[
-	Rolls a counting notification's value up from 0 to its target, re-rendering the title on every
-	step. Replayed from the start whenever the notification is retriggered.
-	@param notificationData The tracked notification
-	@param data The notification data it was created from
-]]
+-- Rolls a counting notification's value up from 0, re-rendering the title each step. Replayed from the start on a retrigger.
 local function playCountAnimation(notificationData, data: NotificationData)
 	local title = notificationData.Instance.Title
 	title.Text = renderNotificationText(data, 0, notificationData.Count)
@@ -146,9 +132,7 @@ local function playSuccessEffect(notificationData)
 	TweenService:Create(title, SUCCESS_FADE_TWEEN_INFO, { TextColor3 = notificationData.DefaultTitleColor }):Play()
 end
 
--- Entrance/feedback handlers for normal notifications, keyed by the `Effect` field.
--- `Spawn` runs when a notification first appears; `Retrigger` (optional) runs when an
--- identical notification fires again. A missing `Effect` uses `Default`.
+-- Entrance and retrigger handlers by `Effect`; a missing one uses `Default`.
 local NORMAL_NOTIFICATION_EFFECTS = {
 	-- Pop the notification in, scaling up to its target size.
 	Default = {
@@ -198,13 +182,11 @@ local NotificationController = {
 
 -- Shows a notification on the screen of the player
 function NotificationController:NotifyNormal(data: NotificationData)
-	--
 	local ui = self.UI
 	local notificationContainer = ui.NotificationContainer
 	local notificationDuration = data.Duration or DEFAULT_DURATION
 
-	-- Counting notifications are keyed on the text they end up showing, so two sales of different
-	-- amounts stay separate notifications while two of the same amount still stack with "[N]".
+	-- Keyed on the text shown, so different amounts stay separate while identical ones stack with "[N]"
 	local countValue = if data.Count then data.Count.Value else 0
 	local notification = renderNotificationText(data, countValue, 1)
 
@@ -236,10 +218,7 @@ function NotificationController:NotifyNormal(data: NotificationData)
 			notificationData.Instance.Title.Text = renderNotificationText(data, 0, notificationData.Count)
 		end
 
-		-- Limited: notifications routinely arrive together -- both shops restock on the same second, grill
-		-- slots finish together -- and the network layer batches a frame's worth into one dispatch, so
-		-- without this the same chime plays N times stacked on itself. Only ever collapses an identical
-		-- sound inside PlaySound's 0.05s window, which is never something anyone wanted to hear twice.
+		-- Limited, since a frame's worth is batched into one dispatch and the chime would stack on itself
 		SoundController:PlaySound(data.Sound or "Notify", nil, nil, true)
 
 		local retrigger = getNormalEffect(data.Effect).Retrigger
@@ -353,7 +332,6 @@ end
 
 -- Shows an item unlock notification on the screen of the player
 function NotificationController:NotifyItem(data: ItemNotificationData)
-	--
 	local ui = self.UI
 	local templates = ui.Templates
 	local itemUnlockDuration = data.Duration or DEFAULT_DURATION
@@ -365,7 +343,6 @@ function NotificationController:NotifyItem(data: ItemNotificationData)
 	local itemUnlockTemplate = templates.ItemUnlockTemplate
 	local itemUnlockFrame = itemUnlockTemplate:Clone()
 
-	--
 	table.insert(self._itemUnlockFrames, itemUnlockFrame)
 	self:_syncItemUnlockParents()
 	self:_playItemUnlockSpawnEffect(itemUnlockFrame, data)
@@ -394,7 +371,6 @@ end
 
 -- Keeps item unlock frames packed into visible container rows.
 function NotificationController:_syncItemUnlockParents()
-	--
 	local ui = self.UI
 	local notificationContainer = ui.NotificationContainer
 	local itemUnlockContainerTemplate = ui.Templates.ItemUnlockContainer
@@ -462,7 +438,6 @@ end
 
 -- Removes one item unlock frame and reflows the remaining frames.
 function NotificationController:_despawnItemUnlockFrame(itemUnlockFrame: GuiObject)
-	--
 	local itemUnlockFrameIndex = table.find(self._itemUnlockFrames, itemUnlockFrame)
 	if not itemUnlockFrameIndex then
 		return
@@ -477,10 +452,8 @@ function NotificationController:_despawnItemUnlockFrame(itemUnlockFrame: GuiObje
 end
 
 function NotificationController:OnInit()
-	--
 	SoundController = require(script.Parent.SoundController)
 
-	--
 	self.UI = PlayerGui:WaitForChild("NotificationUI")
 end
 

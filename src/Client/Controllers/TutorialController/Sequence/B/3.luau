@@ -1,7 +1,4 @@
--- Step 3: Hold the stick. In A this beat follows the purchase that put the stick in the player's hands,
--- so it's a formality. Here the stick was handed over at the start of the run and left in the bag, and
--- the player has spent the last two beats holding build tools -- so this is the first they hear of it,
--- and the one beat in the run asking for something they don't know they own.
+-- Step 3: hold the stick. Unlike A, it was handed over at the start and left in the bag, so this is the first the player hears of it.
 local Players = game:GetService("Players")
 
 -- Modules
@@ -10,13 +7,11 @@ local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.E
 --
 local LocalPlayer = Players.LocalPlayer
 
--- What StickManager tags the tool it builds off the player's owned count.
+-- What StickManager tags the tool it builds off the player's owned count
 local STICK_TOOL_TAG = "StickTool"
 
 return function(self)
-	-- The bag only, and re-resolved each frame rather than held: equipping moves the tool out of the
-	-- Backpack, so this going nil is what puts the light out, and the reconcile rebuilds it as a new
-	-- instance on every spawn.
+	-- The bag only, re-resolved each frame: equipping moves it out, and every spawn rebuilds it anew
 	local function backpackStick(): Tool?
 		local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
 		if not backpack then
@@ -32,8 +27,7 @@ return function(self)
 		return nil
 	end
 
-	-- A's version of this beat has no cues at all, which it can afford because the stick arrives in the
-	-- player's hands already. Nothing here would otherwise point at the slot it actually landed in.
+	-- A can afford no cues, the stick arriving in hand; here nothing else would point at its slot
 	local spotlight = self:SpotlightHotbarSlot(backpackStick)
 
 	self:AwaitGoal(nil, {

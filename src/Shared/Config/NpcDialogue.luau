@@ -1,28 +1,4 @@
---[[
-    Lines NPCs say via chat bubbles, grouped by category. Not sell-specific -- any NPC interaction can add
-    a category here and pull a random line from it (see Client/Modules/BubbleChat.SayRandom).
-
-    A category can have per-variant siblings named `{Category}{Variant}`, and GetLines picks one when a
-    caller passes a variant. The sell-stall customer passes whatever's worth reacting to about the skewer
-    in its hand (StickModel.GetDialogueVariant), so it doesn't say the same line over a charred lump and
-    a properly grilled one.
-
-    The plain category is the fallback and doubles as the Perfect case -- a skewer pulled off in the
-    window is the one the player was aiming for, so it's the normal one and needs no variant of its own.
-    The other four states each carry their own, and they're written to be told apart by ear: Raw is
-    alarmed, Cooked is a shrug, Overcooked is a wince, Charred is a write-off.
-
-    Golden is the odd one out: it's a mutation rather than a cook state, and it outranks whichever state
-    the skewer landed on, because a golden BBQ is the remarkable thing about it either way. It's written
-    starstruck -- this is the rarest thing the customer will ever be handed.
-
-    Two things bound how these are written. Bubble duration is flat -- BubbleChat hands back the
-    configured BubbleDuration no matter how long the string is -- so a line much past 40 characters gets
-    cut off mid-read. And bubbles aren't rich text, so no angle brackets: they'd render literally.
-
-    Tone: the ordinary customer talks like a player, the rich one doesn't. Keeping the rich customer
-    stiff and formal is what makes it read as a different person rather than the same NPC with a hat on.
-]]
+-- Lines NPCs say via chat bubbles, by category, with `{Category}{Variant}` siblings a caller can ask for. Keep lines under ~40 characters (bubble duration is flat) and free of angle brackets (bubbles aren't rich text).
 
 --
 local NpcDialogue = {
@@ -580,11 +556,7 @@ local NpcDialogue = {
 		"Stunning, but I'll pass",
 	},
 
-	-- Said instead of nothing when the customer is about to open low because the player has standing sale
-	-- refusals against them. The toast that fires alongside it carries the explanation; these are the
-	-- customer's own reason for lowballing, so the penalty has a face rather than being a number that
-	-- quietly moved. No cook-state variants yet -- GetLines falls back on this for every state, and adding
-	-- an NPCArrivedRefusedCharred later needs no code change.
+	-- Said when standing refusals have it opening low, so the penalty has a face. No cook-state variants yet
 	NPCArrivedRefused = {
 		"Heard you turn people down",
 		"You said no to my friend, so...",
@@ -604,8 +576,7 @@ local NpcDialogue = {
 		"Yeah, I've heard the stories",
 	},
 
-	-- The line on the customer's offer frame. Not a chat bubble -- {amount} is swapped for the coloured
-	-- offer by SellNpcController before it hits the Title.
+	-- The offer frame's line, not a bubble -- {amount} is swapped for the coloured offer by the controller
 	NPCOffer = {
 		"How about {amount}?",
 		"Would you take {amount}?",
@@ -787,8 +758,7 @@ local NpcDialogue = {
 		"I'd pay {amount} twice over",
 	},
 
-	-- Haggling: the player turned the offer down and the customer is sweetening it. The new amount shows
-	-- on the offer frame, so these stay as filler.
+	-- Haggling. The new amount shows on the offer frame, so these stay as filler
 	NPCCounterOffer = {
 		"Hmmmm...",
 		"Come on, I really want this one...",
@@ -1296,8 +1266,7 @@ local NpcDialogue = {
 		"Deal, and thank you sincerely",
 	},
 
-	-- Tucking into the skewer it just bought. The longest beat of the visit, so it's where a bad cook
-	-- gets the most to say about itself.
+	-- Eating -- the longest beat, so it's where a bad cook gets the most to say about itself
 	NPCEating = {
 		"Mmm, delicious!",
 		"Worth every coin",
@@ -1655,11 +1624,9 @@ local NpcDialogue = {
 		"That was worth every coin, bye",
 	},
 
-	-- The rich customer, who buys the whole stand at once. None of its beats carry cook-state variants:
-	-- it walks off with a mixed haul, so there's no one state for a line to react to.
+	-- The rich customer. No cook-state variants -- it walks off with a mixed haul, so there's no one state
 
-	-- Walking up to the stand. It never says no, so this is an entrance rather than a verdict -- it
-	-- stands in for the normal customer's Deciding and Interested beats both.
+	-- An entrance rather than a verdict, standing in for the Deciding and Interested beats both
 	RichNPCArrived = {
 		"I'll take the lot",
 		"Don't bother wrapping them",
@@ -1693,7 +1660,7 @@ local NpcDialogue = {
 		"I'll relieve you of the lot",
 	},
 
-	-- The rich customer's version of NPCArrivedRefused -- same beat, said the way it says everything else.
+	-- The rich version of NPCArrivedRefused, said the way it says everything else
 	RichNPCArrivedRefused = {
 		"Your reputation precedes you",
 		"I've heard how you negotiate",
@@ -1709,10 +1676,7 @@ local NpcDialogue = {
 		"I've been warned, so I've adjusted",
 	},
 
-	-- The line on the rich customer's offer frame. Not a chat bubble -- {amount} is the price of the whole
-	-- haul and {count} how many skewers are in it, both swapped in by SellNpcController before it hits the
-	-- Title. Every customer is sent a count, so an ordinary one's lines could carry {count} too -- there's
-	-- just nothing worth saying about the number one.
+	-- The rich offer frame's line: {amount} and {count} are swapped in by the controller
 	RichNPCOffer = {
 		"{amount} for all {count}",
 		"All {count} of them, {amount}",
@@ -1910,9 +1874,7 @@ local NpcDialogue = {
 	},
 }
 
--- The lines for a category, preferring a `{category}{variant}` sibling when one exists. Falling back on
--- the plain category is what lets a beat carry variants for only the states worth reacting to, and lets
--- a caller pass a variant without first knowing whether that beat has one.
+-- A category's lines, preferring a `{category}{variant}` sibling, so a caller needn't know which beats have variants.
 function NpcDialogue.GetLines(category: string, variant: string?): { string }?
 	return (variant and NpcDialogue[category .. variant]) or NpcDialogue[category]
 end

@@ -5,9 +5,7 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Managers = ServerScriptService.Server.Managers
 local BuildManager = require(Managers.BuildManager)
 
--- Handed over as owned rather than placed: where a structure goes is the player's call, and there's no
--- cell to put one on from a chat bar. It lands in the backpack as a build tool the same way a shop
--- purchase does, since GrantStructure is what the shop calls too.
+-- Handed over as owned, not placed -- where it goes is the player's call, and GrantStructure is the shop's path too
 return function(context, structureId: string, amount: number?, player: Player?)
 	local target = player or context.Executor
 	local count = amount or 1

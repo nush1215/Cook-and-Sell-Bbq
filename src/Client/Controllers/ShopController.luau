@@ -39,32 +39,26 @@ local BUX_SCROLL_TWEEN = TweenInfo.new(0.5, Enum.EasingStyle.Sine)
 
 --
 local ShopController = {
-	--
 	RequestProductPurchase = Network.Event("RequestProductPurchase"),
 	RequestGamepassPurchase = Network.Event("RequestGamepassPurchase"),
 
-	--
 	Prices = {},
 
-	-- Every frame that buys something. Each is named for what it buys and holds a Purchase button, which
-	-- is all the price pass needs.
+	-- Every frame that buys something, named for what it buys and holding a Purchase button
 	_purchaseFrames = {},
 
-	-- Whether the open purchase prompt is a gift. Roblox shows one at a time, so a flag covers it; read
-	-- and cleared by _setupBuxPurchaseCelebration.
+	-- Whether the open prompt is a gift. Roblox shows one at a time, so a flag covers it
 	_promptedGift = false,
 }
 
 -- Requests a product purchase from an id
 function ShopController:PromptProductPurchaseFromId(id: string, toGift: Player?): (boolean, { any })
-	--
 	local productInfo = Products.GetProductFromId(id)
 	if not productInfo then
 		warn(`Product data for id {id} not found.`)
 		return
 	end
 
-	--
 	self._promptedGift = toGift ~= nil
 	self.RequestProductPurchase:FireServer({ id, toGift })
 	return true, productInfo
@@ -72,14 +66,12 @@ end
 
 -- Requests a gamepass purchase from an id
 function ShopController:PromptGamepassPurchaseFromId(id: string, toGift: Player?): (boolean, { any })
-	--
 	local gamepassInfo = Gamepasses.GetGamepassFromId(id)
 	if not gamepassInfo then
 		warn(`Gamepass data for id {id} not found.`)
 		return
 	end
 
-	--
 	self.RequestGamepassPurchase:FireServer({ id, toGift })
 	return true, gamepassInfo
 end
@@ -89,32 +81,27 @@ function ShopController:GetProductFromId(id: string): Gamepasses.Gamepass | Prod
 	return Products.GetProductFromId(id) or Gamepasses.GetGamepassFromId(id)
 end
 
--- The already-looked-up Robux price, or nil. Never yields, unlike GetPrice, so it's what a button refresh
--- should read -- warm the cache by calling GetPrice from a spawned thread first.
+-- The cached Robux price, or nil. Never yields, so it's what a button refresh should read.
 function ShopController:GetCachedPrice(id: string): number?
 	return self.Prices[id]
 end
 
 -- Gets the price of a product or gamepass. Yields on the first lookup for an id, then reads the cache.
 function ShopController:GetPrice(id: string)
-	--
 	local data = Products.GetProductFromId(id) or Gamepasses.GetGamepassFromId(id)
 	if not data then
 		return "-"
 	end
 	local isGamepass = if Products.GetProductFromId(id) then false else true
 
-	--
 	if data.CurrencyPrice then
 		return data.CurrencyPrice
 	end
 
-	--
 	if self.Prices[data.Id] then
 		return self.Prices[data.Id]
 	end
 
-	--
 	local success, productInfo = pcall(function()
 		return MarketplaceService:GetProductInfo(
 			isGamepass and data.PassId or data.ProductId,
@@ -132,15 +119,7 @@ function ShopController:GetPrice(id: string)
 	return price
 end
 
---[[
-	What one sellable thing looks like on a shop card. Crates and the starter pack draw from the same two
-	rosters, which spell the same facts differently, so the branch lives here rather than per card.
-
-	Two colours, matching the stick shop: Color is the thing itself (a copper stick's orange) and backs
-	the icon's rays, while TextColor/StrokeColor are its rarity and are what the odds take.
-	@param item Anything carrying an Id and the Type saying which roster it's from
-	@return Its display fields, or nil if the config no longer has it
-]]
+-- What one sellable thing looks like on a card, branching over the crate and starter-pack rosters. Color is the thing itself; TextColor/StrokeColor are its rarity.
 local function resolveRewardDisplay(item: { Id: string, Type: Crates.RewardType })
 	if item.Type == "Ingredient" then
 		local ingredient = Ingredients.GetIngredientFromId(item.Id)
@@ -173,10 +152,7 @@ local function resolveRewardDisplay(item: { Id: string, Type: Crates.RewardType 
 	}
 end
 
--- Fills one crate's card: the contents preview and the bundle buttons. Preview slots are authored one per
--- reward and numbered in config order, so the rarest entries land on the slots that get extra treatment.
--- @param crate The crate this card sells
--- @param card The card frame, found by the crate's own Id
+-- Fills one crate's card. Preview slots are numbered in config order, so the rarest land on the special ones.
 function ShopController:_setupCrateCard(crate: Crates.Crate, card: Frame)
 	local slotIndex = 0
 
@@ -184,8 +160,7 @@ function ShopController:_setupCrateCard(crate: Crates.Crate, card: Frame)
 		for _, reward in group.Rewards do
 			slotIndex += 1
 
-			-- Too few authored slots just shows the first few, rather than erroring partway through and
-			-- leaving the rest of the shop unbuilt.
+			-- Too few slots shows the first few, rather than erroring and leaving the rest of the shop unbuilt
 			local slot = card.Container:FindFirstChild(tostring(slotIndex))
 			local display = slot and resolveRewardDisplay(reward)
 			if not display then
@@ -197,8 +172,7 @@ function ShopController:_setupCrateCard(crate: Crates.Crate, card: Frame)
 			slot.Value.Text = `${GuiUtil.ConvertNumberWithSuffix(display.Price)}`
 			slot.Rays.ImageColor3 = display.Color
 
-			-- The odds carry the rarity colour, as the Index colours its Rarity label -- a crate slot has
-			-- no rarity word, so the number has to say how good this is.
+			-- The odds carry the rarity colour -- a crate slot has no rarity word, so the number must say how good it is
 			slot.Chance.Text = `{reward.Chance}%`
 			slot.Chance.TextColor3 = display.TextColor
 
@@ -212,10 +186,7 @@ function ShopController:_setupCrateCard(crate: Crates.Crate, card: Frame)
 	self:_bindCrateBundles(crate, card.Buttons)
 end
 
--- Binds one crate's bundle frames: buy for yourself, or gift. Each frame is named for the product it buys
--- (see Crates.GetProductStringId), so adding a bundle is a matter of authoring one more frame.
--- @param crate The crate whose bundles these buy, named only so a mis-named frame can say whose it is
--- @param container The card's Buttons frame
+-- Binds a crate's bundle frames, each named for the product it buys, so adding one is authoring a frame.
 function ShopController:_bindCrateBundles(crate: Crates.Crate, container: Instance)
 	for _, bundle in container:GetChildren() do
 		if not bundle:IsA("GuiObject") then
@@ -241,18 +212,7 @@ function ShopController:_bindCrateBundles(crate: Crates.Crate, container: Instan
 	end
 end
 
---[[
-	Binds a Gift button: pick somebody, then buy the product for them.
-
-	Gifting rides the same product with a recipient attached rather than a separate ...Gift dev product --
-	ShopManager remembers who was picked and hands the recipient to the callback, so one id covers both.
-
-	The shop is *hidden* rather than closed for the pick: the picker opens as an independent frame, and
-	closing this one would drop it out of UIController's bookkeeping with nothing to come back to. Exactly
-	one of the picker's callbacks runs, so both put the shop back.
-	@param button The Gift button
-	@param productId The product to buy for whoever gets picked
-]]
+-- Binds a Gift button: pick somebody, then buy the product for them. Gifting rides the same product id with a recipient attached, and the shop is hidden rather than closed for the pick.
 function ShopController:_bindGiftButton(button: GuiButton, productId: string)
 	local holder = self.UI.Holder
 
@@ -268,10 +228,7 @@ function ShopController:_bindGiftButton(button: GuiButton, productId: string)
 	end, true)
 end
 
--- Binds the Gamepass category's cards, each named for what it sells, so wiring one is a matter of
--- authoring it under the right name. Both configs are searched despite the category's name: a permanent
--- perk reads as a pass whether it's sold as one or not, and the Golden Grill is a dev product on this shelf.
--- @param container The Gamepass category frame
+-- Binds the Gamepass cards by name. Both configs are searched -- a perk reads as a pass however it's sold.
 function ShopController:_setupGamepasses(container: Instance)
 	for _, card in container:GetChildren() do
 		if not card:IsA("GuiObject") then
@@ -302,10 +259,7 @@ function ShopController:_setupGamepasses(container: Instance)
 	end
 end
 
--- Fills the Bux packs' cards and binds their buttons. Each card is named for its pack, so the amount
--- printed and the amount the server hands over come off one config entry and can't drift apart. Found
--- recursively, since the category splits the cards across a Top and a Bottom row for layout.
--- @param container The Bux category frame
+-- Fills the Bux cards by pack name, so the printed and granted amounts can't drift. Found recursively.
 function ShopController:_setupBuxPacks(container: Instance)
 	for _, pack in BuxPacks.GetAllBuxPacks() do
 		local card = container:FindFirstChild(pack.Id, true)
@@ -330,9 +284,7 @@ function ShopController:_setupBuxPacks(container: Instance)
 	end
 end
 
--- Fills the starter pack's card and binds its two buttons. Not behind the paid-random-items policy, since
--- everything in the pack is a fixed named item. Whether the card shows at all is _runStarterPackOffer's.
--- @param card The StarterPack card frame
+-- Fills the starter pack's card. Not behind the random-items policy -- everything in it is a fixed item.
 function ShopController:_setupStarterPackCard(card: Frame)
 	for index, entry in StarterPackConfig.Contents do
 		local slot = card.Container:FindFirstChild(tostring(index))
@@ -344,12 +296,11 @@ function ShopController:_setupStarterPackCard(card: Frame)
 		slot.Icon.Image = display.Icon
 		slot.Rays.ImageColor3 = display.Color
 
-		-- Only the name is coloured, not the "x3", so the thing being counted carries the colour -- the
-		-- same one the rays behind the icon take, so both halves of the slot read as one item.
+		-- Only the name is coloured, matching the rays behind the icon, so both halves read as one item
 		slot.Title.RichText = true
 		slot.Title.Text = `x{entry.Amount} {GuiUtil.Colorize(display.Name, display.Color)}`
 
-		-- The odds button is for entries that roll for their contents. Nothing in this pack does.
+		-- The odds button is for entries that roll for their contents. Nothing in this pack does
 		slot.Odds.Visible = false
 	end
 
@@ -360,10 +311,7 @@ function ShopController:_setupStarterPackCard(card: Frame)
 	self:_bindGiftButton(card.Gift, StarterPackConfig.Id)
 end
 
--- Binds the starter pack's HUD button and paints its price, handing the frame back so the offer's
--- countdown can drive it alongside the card. It buys outright rather than opening the shop -- the card is
--- still reachable from the Shop button for the contents and the Gift.
--- @return The button's frame, or nil if HudUI has no StarterPack button
+-- Binds the starter pack's HUD button and returns its frame for the countdown. It buys outright.
 function ShopController:_setupStarterPackHudButton(): GuiObject?
 	local hudButton = HudController:BindHudButton("StarterPack", function()
 		self:PromptProductPurchaseFromId(StarterPackConfig.Id)
@@ -374,13 +322,12 @@ function ShopController:_setupStarterPackHudButton(): GuiObject?
 		return nil
 	end
 
-	-- BindHudButton hands back the wrapper, not the GuiButton, and the labels hang off the wrapper -- so
-	-- this is what both the price and the countdown are written to.
+	-- BindHudButton returns the wrapper, which is where the labels hang, so both are written to it
 	local hudFrame = hudButton.Button
 	hudFrame.Visible = false
 	hudFrame.Price.Text = `{GuiUtil.ROBUX_ICON}-`
 
-	-- Spawned because GetPrice yields on its first lookup, reading "-" until it lands like the buy buttons.
+	-- Spawned because GetPrice yields on its first lookup, reading "-" until it lands
 	task.spawn(function()
 		self:GetPrice(StarterPackConfig.Id)
 		hudFrame.Price.Text = `{GuiUtil.ROBUX_ICON}{self:GetCachedPrice(StarterPackConfig.Id) or "-"}`
@@ -389,21 +336,13 @@ function ShopController:_setupStarterPackHudButton(): GuiObject?
 	return hudFrame
 end
 
--- Runs the starter pack's countdown, pulling the card and the HUD button once it runs out.
--- StarterPackStart is an absolute expiry stamped on first join, so this reads a deadline rather than
--- counting one down, and it survives a rejoin. Both are driven from here, so their clocks can't disagree.
---
--- Buying deliberately does NOT pull the card: PurchaseOnce is validated against the recipient when
--- gifting, so an owner can still gift it and needs the Gift button. The HUD button only ever buys for
--- the presser, so that one does come down.
--- @param card The StarterPack card frame
--- @param hudFrame The StarterPack HUD button's frame, if HudUI has one
+-- Runs the starter pack's countdown off an absolute expiry. Buying pulls the HUD button but not the card, which can still gift.
 function ShopController:_runStarterPackOffer(card: Frame, hudFrame: GuiObject?)
-	-- Held rather than re-read each tick, so the button goes the moment the purchase lands.
+	-- Held rather than re-read each tick, so the button goes the moment the purchase lands
 	local owned = false
 
 	if hudFrame then
-		-- Spawned because both wait on the replica, and the countdown shouldn't be held up behind them.
+		-- Spawned because both wait on the replica, and the countdown shouldn't be held up behind them
 		task.spawn(function()
 			owned = table.find(PlayerDataController:GetKey("PurchasedOnceProducts"), StarterPackConfig.Id) ~= nil
 
@@ -424,9 +363,7 @@ function ShopController:_runStarterPackOffer(card: Frame, hudFrame: GuiObject?)
 	while true do
 		local expiresAt = PlayerDataController:GetKey("StarterPackStart")
 
-		-- Data hasn't replicated, or the server hasn't stamped the expiry yet -- it writes that
-		-- asynchronously and the key sits at 0 meanwhile. A 0 read as a deadline is an offer that expired
-		-- in 1970, so it's waited out rather than taken at face value. Both stay hidden until then.
+		-- An unstamped 0 read as a deadline is an offer that expired in 1970, so it's waited out
 		if not expiresAt or expiresAt <= 0 then
 			task.wait(1)
 			continue
@@ -457,8 +394,7 @@ function ShopController:_runStarterPackOffer(card: Frame, hudFrame: GuiObject?)
 	end
 end
 
--- Paints every crate bundle's buy button with its Robux price, or "-" while the lookup is in flight. A
--- button with no Title is skipped silently -- _bindCrateBundles already warned once, and this runs often.
+-- Paints every bundle button with its price. A button with no Title is skipped -- already warned once.
 function ShopController:_refreshPurchasePrices()
 	for _, frame in self._purchaseFrames do
 		local title = frame.Purchase:FindFirstChild("Title")
@@ -470,8 +406,7 @@ function ShopController:_refreshPurchasePrices()
 	end
 end
 
--- Warms the price cache for every bundle, then paints the buttons. Spawned rather than run while the cards
--- are built, since GetPrice yields on its first MarketplaceService call per id.
+-- Warms the price cache for every bundle, then paints the buttons. Spawned, since GetPrice yields.
 function ShopController:_cachePrices()
 	for _, frame in self._purchaseFrames do
 		self:GetPrice(frame.Name)
@@ -480,9 +415,7 @@ function ShopController:_cachePrices()
 	self:_refreshPurchasePrices()
 end
 
--- Fades the full-screen dim in and out with the panel. Hooked to UIController's signals rather than the
--- open/close call sites, since another frame opening also closes this one -- and that path would leave
--- the dim up over whatever replaced the shop.
+-- Fades the dim with the panel, hooked to UIController's signals since another frame opening also closes this.
 function ShopController:_setupDim()
 	local holder = self.UI.Holder
 	local dim = self.UI:FindFirstChild("Dim")
@@ -507,17 +440,14 @@ function ShopController:_setupDim()
 	end)
 end
 
--- Confetti and a sound once a Bux purchase goes through: otherwise the only tell is the amount ticking up
--- in the corner, which is easy to miss with a purchase prompt still on screen.
+-- Confetti and a sound on a Bux purchase, the amount ticking up being easy to miss.
 function ShopController:_setupBuxPurchaseCelebration()
 	MarketplaceService.PromptProductPurchaseFinished:Connect(function(_, productId: number, wasPurchased: boolean)
-		-- Cleared before the early-outs: a cancelled gift leaving the flag set would mute the next
-		-- celebration.
+		-- Cleared before the early-outs, or a cancelled gift would mute the next celebration
 		local wasGift = self._promptedGift
 		self._promptedGift = false
 
-		-- Self-purchases only. Gifting rides the same product id (see _bindGiftButton), so without this
-		-- the buyer would get confetti for Bux that went to somebody else.
+		-- Self-purchases only -- gifting rides the same product id, so the buyer would get confetti for someone else
 		if not wasPurchased or wasGift then
 			return
 		end
@@ -553,7 +483,7 @@ function ShopController:_setupUI()
 	self:_setupDim()
 	self:_setupBuxPurchaseCelebration()
 
-	-- Nothing else opens this panel, so a missing button isn't a dead press -- it's an unreachable shop.
+	-- Nothing else opens this panel, so a missing button isn't a dead press but an unreachable shop
 	local shopButton = HudController:BindHudButton("Shop", function()
 		UIController:OpenFrame(holder)
 	end)
@@ -562,8 +492,7 @@ function ShopController:_setupUI()
 		warn("HudUI has no Shop button, so the shop panel can't be opened")
 	end
 
-	-- Recursive because the exit sits under the holder on some panels and under a header on others.
-	-- Warned rather than indexed, so a missing one can't take the rest of the shop's setup down.
+	-- Recursive, since the exit sits in different places per panel. Warned rather than indexed
 	local exit = holder:FindFirstChild("Exit", true)
 	if exit then
 		UIController:BindButtonClick(exit, function()
@@ -573,8 +502,7 @@ function ShopController:_setupUI()
 		warn("Shop has no Exit button, so it can only be closed by opening another frame")
 	end
 
-	-- Matched on the crate's Id, so a crate becomes purchasable by authoring a card named after it. One
-	-- with no card is skipped silently -- not every crate is meant to be sold.
+	-- Matched on the crate's Id, so authoring a card sells it. One with no card is skipped silently
 	local scrollingFrame = holder.Container.ScrollingFrame
 
 	for _, crate in Crates.GetAllCrates() do
@@ -583,9 +511,7 @@ function ShopController:_setupUI()
 			continue
 		end
 
-		-- Crates are paid random items, which some accounts can't be sold. Hidden until the policy fetch
-		-- allows it, rather than shown and pulled -- that would leave a window to press buy. Armed before
-		-- the card is filled, so a card that throws partway through doesn't stay hidden all session.
+		-- Hidden until the policy allows it, rather than shown and pulled, which would leave a window to buy
 		card.Visible = false
 
 		task.spawn(function()
@@ -595,10 +521,7 @@ function ShopController:_setupUI()
 		self:_setupCrateCard(crate, card)
 	end
 
-	-- One product rather than a set of bundles, so the card *is* the buy frame and goes into
-	-- _purchaseFrames directly. Both it and the HUD button stay hidden until _runStarterPackOffer finds
-	-- the offer still standing, and both sit inside the product check -- with nothing to charge, a HUD
-	-- button that can't sell anything is worse than none.
+	-- One product, so the card is the buy frame. Both it and the HUD button sit inside the product check
 	local starterPackCard = scrollingFrame:FindFirstChild(StarterPackConfig.Id)
 
 	if starterPackCard then
@@ -627,14 +550,11 @@ function ShopController:_setupUI()
 	if buxCategory then
 		self:_setupBuxPacks(buxCategory)
 
-		-- A shortcut into the Bux packs rather than a second way to open the shop, so it scrolls there as
-		-- the panel comes up. The offset is measured on the press, not at setup: cards above the Bux row
-		-- come and go, so a figure taken earlier would scroll to the wrong place. CanvasPosition is added
-		-- back because the AbsolutePositions only give the gap from the top of the *visible* window.
+		-- Measured on the press, since cards above the Bux row come and go. CanvasPosition is added back
 		local moreButton = HudController:BindHudButton("More", function()
 			UIController:OpenFrame(holder)
 
-			-- OpenFrame toggles, so a press with the shop already up closes it. Nothing to scroll then.
+			-- OpenFrame toggles, so a press with the shop already up closes it. Nothing to scroll then
 			if not holder.Visible then
 				return
 			end

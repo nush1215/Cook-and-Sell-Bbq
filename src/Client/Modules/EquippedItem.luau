@@ -11,23 +11,12 @@ local SAUCE_TOOL_TAG = "SauceTool"
 local CRATE_TOOL_TAG = "CrateTool"
 local STRUCTURE_TOOL_TAG = "StructureTool"
 
---[[
-    What the local player is currently holding.
-
-    An equipped tool is parented to the character, so "held" is just a scan of the character's
-    children for a tool with the right tag -- the same read the server does before it acts on a
-    place/put request (see StickStandManager.getEquippedStickPlacement). A character holds at most
-    one equipped tool, so the first hit is the answer.
-
-    Callers use this to decide what a prompt should say and which interactables should light up, and
-    re-run it whenever a tool is added to or removed from the character.
-]]
+-- What the local player is holding: a scan of the character for a tagged tool, the same read the server does. A character holds at most one, so the first hit is the answer.
 
 --
 local EquippedItem = {}
 
--- The equipped tool carrying `tag` -- or, with no tag, whatever tool is equipped at all. nil if
--- nothing matches.
+-- The equipped tool carrying `tag`, or any equipped tool with no tag. Nil if nothing matches.
 local function findEquippedTool(tag: string?): Tool?
 	local character = LocalPlayer.Character
 	if not character then
@@ -66,22 +55,18 @@ function EquippedItem.GetSauceId(): string?
 	return tool and tool:GetAttribute("SauceId")
 end
 
--- The filled-skewer tool the local player is holding, or nil. Returns the tool rather than an id so
--- callers can read its Cooked attribute -- raw and cooked skewers go to different places.
+-- The held filled-skewer tool, or nil. The tool rather than an id, so callers can read Cooked.
 function EquippedItem.GetSkewer(): Tool?
 	return findEquippedTool(FILLED_TOOL_TAG)
 end
 
--- The id of the structure the local player has a build tool out for, or nil. Holding one is what puts
--- them in build mode -- BuildController hooks the tool's Equipped -- so this doubles as "are they
--- placing something right now".
+-- The structure a build tool is out for, or nil -- which doubles as "are they placing right now".
 function EquippedItem.GetStructureId(): string?
 	local tool = findEquippedTool(STRUCTURE_TOOL_TAG)
 	return tool and tool:GetAttribute("StructureId")
 end
 
--- The crate tool the local player is holding, or nil. Returns the tool rather than an id because
--- opening one reads its Count as well, to cap how many the open panel offers.
+-- The held crate tool, or nil. The tool rather than an id, since opening reads its Count too.
 function EquippedItem.GetCrate(): Tool?
 	return findEquippedTool(CRATE_TOOL_TAG)
 end

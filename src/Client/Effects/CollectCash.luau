@@ -40,8 +40,7 @@ local CLEANUP_PADDING = 0.5
 -- Per-player pitch ladder so each collector ramps independently.
 local pitch = PitchLadder.new({ Max = 1.7, MaxHits = 1 })
 
--- Bursts a single cash part outward then curves it toward the target player along a quadratic bezier.
--- Pops one currency label on arrival when popupValue is given, so each projectile lands one "+X".
+-- Bursts one cash part outward then curves it into the target, popping a "+X" on arrival.
 local function launchProjectile(template: BasePart, startPosition: Vector3, targetPlayer: Player, popupValue: number?)
 	local clone = template:Clone()
 	clone.Anchored = true
@@ -105,10 +104,9 @@ local function launchProjectile(template: BasePart, startPosition: Vector3, targ
 	end)
 end
 
--- Bursts cash particles off a character's whole body, welded so the burst rides along as they walk off.
+-- Bursts cash off a character's whole body, welded so it rides along as they walk off.
 local function burstCashOffBody(character: Model, rootPart: BasePart)
-	-- Bound the rig's own body parts rather than using GetBoundingBox, which would include the
-	-- skewer tool the customer is holding and blow the burst way out past the character.
+	-- The rig's own parts, not GetBoundingBox, which would include the held skewer and blow the burst out
 	local min, max
 	for _, part in character:GetChildren() do
 		if not part:IsA("BasePart") then
@@ -120,8 +118,7 @@ local function burstCashOffBody(character: Model, rootPart: BasePart)
 		max = max and max:Max(part.Position + halfSize) or part.Position + halfSize
 	end
 
-	-- The emitters live on a part matching the character's volume, so the cash bursts off the whole
-	-- body instead of a single point.
+	-- On a part matching the character's volume, so the cash bursts off the whole body
 	local emitterPart = Instance.new("Part")
 	emitterPart.Size = max - min
 	emitterPart.CFrame = CFrame.new((min + max) / 2)
@@ -133,7 +130,7 @@ local function burstCashOffBody(character: Model, rootPart: BasePart)
 	emitterPart.Massless = true
 	emitterPart.Parent = workspace.Effects
 
-	-- Part0 is ours, so the weld goes with the part on cleanup instead of orphaning on a pooled rig
+	-- Part0 is ours, so the weld goes with the part rather than orphaning on a pooled rig
 	GlobalUtil.Weld(emitterPart, rootPart)
 
 	local effect = EffectUtil.ParentEffectFolder(Particles.Cash, emitterPart)
@@ -150,10 +147,7 @@ local function burstCashOffBody(character: Model, rootPart: BasePart)
 	end)
 end
 
--- Plays the collect cash effect from a CFrame, part, or model origin.
--- @param origin: The position or instance to emit cash from
--- @param value: Total currency collected, split evenly across projectiles so each lands one "+X" label
--- @param targetPlayer: The player the cash flies toward (defaults to the local player for owner-predicted effects)
+-- Plays the collect-cash effect from a CFrame, part or model, splitting `value` across projectiles.
 return function(origin: CFrame | BasePart | Model, value: number?, targetPlayer: Player?)
 	local target = targetPlayer or LocalPlayer
 
@@ -167,8 +161,7 @@ return function(origin: CFrame | BasePart | Model, value: number?, targetPlayer:
 		if rootPart and rootPart:IsA("BasePart") then
 			originCFrame = rootPart.CFrame
 
-			-- Cash also bursts off the whole rig, so the sale reads on the character and not just as
-			-- projectiles leaving a point.
+			-- Cash also bursts off the whole rig, so the sale reads on the character, not just as projectiles
 			burstCashOffBody(origin, rootPart)
 		else
 			-- NPC rigs get pooled away, so the character can already be gone by the time this reaches us
@@ -176,7 +169,7 @@ return function(origin: CFrame | BasePart | Model, value: number?, targetPlayer:
 		end
 	end
 
-	-- A raw CFrame has no instance to flash, so only pulse when we were handed a part or model.
+	-- A raw CFrame has no instance to flash, so only pulse when handed a part or model
 	if typeof(origin) ~= "CFrame" then
 		EffectController:RunEffect("HighlightPulse", { origin, Color3.fromRGB(85, 255, 0), 1, 0.3 })
 	end
@@ -188,8 +181,7 @@ return function(origin: CFrame | BasePart | Model, value: number?, targetPlayer:
 	local projectile = Particles.CashProjectile
 	local startPosition = originCFrame.Position
 
-	-- Split the collected value across projectiles; skip labels when each share rounds below 1. The
-	-- popups are screen UI, so only the player being paid gets them.
+	-- Split across projectiles, skipping labels below 1. Screen UI, so only the player being paid sees them
 	local popupValue = if target == LocalPlayer and value then math.floor(value / projectileAmount) else nil
 	if popupValue and popupValue < 1 then
 		popupValue = nil

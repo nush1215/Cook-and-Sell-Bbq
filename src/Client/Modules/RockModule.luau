@@ -27,8 +27,7 @@ local Players = game:GetService("Players")
 local CollectionService = game:GetService("CollectionService")
 local Debris = game:GetService("Debris")
 
--- Any instance with this tag is ignored by the ground/material raycasts so
--- rocks never spawn on top of it (or sample its colour).
+-- Tagged instances are ignored by the ground rays, so rocks never spawn on or sample them
 local IGNORE_TAG = "RockModuleIgnore"
 
 -- Collision group for debris that shouldn't body-block anyone. Registered in CollisionManager.
@@ -49,9 +48,7 @@ local function ensureDebrisFolder()
 	end
 end
 
--- Build the RaycastParams shared by an effect call: excludes the debris folder,
--- all player characters, and anything tagged IGNORE_TAG. Assumes
--- ensureDebrisFolder() has already run.
+-- The RaycastParams for one effect call: excludes the debris folder, characters and ignored instances.
 local function buildRaycastParams(): RaycastParams
 	local params = RaycastParams.new()
 	params.FilterType = Enum.RaycastFilterType.Exclude
@@ -75,8 +72,7 @@ local function buildRaycastParams(): RaycastParams
 	return params
 end
 
--- Spawns a single ring of rocks pushing up out of the ground beneath `Center`,
--- which then slowly sink and shrink away.
+-- Spawns one ring of rocks pushing up out of the ground beneath `Center`, then sinking away.
 function RockModule.Crater(Center: CFrame, Radius: number, MinRocks: number, MaxRocks: number, PlayerCollision: boolean)
 	Radius = Radius or 7
 	MinRocks = MinRocks or 7
@@ -105,14 +101,12 @@ function RockModule.Crater(Center: CFrame, Radius: number, MinRocks: number, Max
 		Rock.Name = "GroundSlam"
 		Rock.Size = Vector3.new(math.random(3, 5), math.random(2, 3), math.random(2, 4))
 
-		-- Position the rock on the ring (radius `distance`) around the impact,
-		-- start it sunk 5 studs into the ground, then face it inward.
+		-- Placed on the ring, started sunk 5 studs into the ground, and faced inward
 		Rock.CFrame = groundCFrame * CFrame.Angles(0, math.rad(angle), 0) * CFrame.new(0, 0, -distance)
 			+ Vector3.new(0, -5, 0)
 		Rock.CFrame = CFrame.lookAt(Rock.Position, ray.Position)
 
-		-- Sample the ground directly under each rock so it matches that surface;
-		-- fall back to the central hit if there's nothing below it.
+		-- Sampled under each rock so it matches that surface, falling back to the central hit
 		local groundRay = workspace:Raycast(
 			Rock.CFrame.Position + Vector3.new(0, 7, 0),
 			Vector3.new(0, 2.5, 0) * -1000,
@@ -138,7 +132,7 @@ function RockModule.Crater(Center: CFrame, Radius: number, MinRocks: number, Max
 			{ Position = Rock.Position + Vector3.new(0, 4.5, 0) }
 		):Play()
 
-		-- After a random delay, sink back down and shrink away.
+		-- After a random delay, sink back down and shrink away
 		task.spawn(function()
 			task.wait(math.random(650, 950) / 100)
 			TweenService:Create(
@@ -152,8 +146,7 @@ function RockModule.Crater(Center: CFrame, Radius: number, MinRocks: number, Max
 	end
 end
 
--- Blasts a burst of physics-driven rock shards outward and upward from `Center`,
--- which fade out shortly after landing.
+-- Blasts physics-driven shards outward from `Center`, fading out shortly after they land.
 function RockModule.Explosion(
 	Center: CFrame,
 	TotalRocks: number,
@@ -202,9 +195,7 @@ function RockModule.Explosion(
 		Rock.Parent = DebrisFolder
 		Debris:AddItem(Rock, 4.5)
 
-		-- Fling the shard out in a random horizontal direction with a fixed
-		-- upward kick. BodyVelocity is deprecated by Roblox but kept here for
-		-- the existing behaviour; a brief lifetime lets gravity take over.
+		-- Flung with a fixed upward kick; BodyVelocity is deprecated but kept, and a brief lifetime hands over to gravity
 		local velocitySpread = 32
 		local upwardForce = 22
 		local bodyVelocity = Instance.new("BodyVelocity")
@@ -230,8 +221,7 @@ function RockModule.Explosion(
 	end
 end
 
--- Spawns several concentric rings of rocks, each ring wider and with more rocks
--- than the last, for a larger crater.
+-- Spawns concentric rings of rocks, each wider and denser than the last, for a larger crater.
 function RockModule.CraterRows(
 	Center: CFrame,
 	Radius: number,
@@ -258,8 +248,7 @@ function RockModule.CraterRows(
 	end
 end
 
--- Removes all spawned debris. When `Fade` is true the parts shrink/fade out
--- first; otherwise they are destroyed immediately.
+-- Removes all spawned debris, shrinking and fading it out first when `Fade` is true.
 function RockModule.ClearDebris(Fade: boolean)
 	ensureDebrisFolder()
 

@@ -7,46 +7,29 @@ local Packages = ReplicatedStorage.Packages
 local Trove = require(Packages.Trove)
 local Signal = require(Packages.Signal)
 
---[[
-    Class for a draggable horizontal slider.
-
-    Hold and drag the Arrow's Button to move the handle across the Slider track.
-    The handle produces a normalized alpha from 0 (left) to 1 (right), snapped to
-    an optional increment. That alpha maps onto a [startValue, endValue] range.
-
-    Slider (track)
-        Arrow (handle) -> driven via Position.X.Scale = alpha
-            Button (captures drag input)
-        Bar (fill) -> driven via Size.X.Scale = alpha
-]]
+-- A draggable horizontal slider: dragging Arrow.Button drives a 0-1 alpha (optionally snapped) onto a value range.
 
 --
 local Slider = {}
 Slider.__index = Slider
 
 function Slider.new(slider: Frame, startValue: number, endValue: number, increment: number?)
-	--
 	local cleaner = Trove.new()
 
-	--
 	local self = setmetatable({
-		--
 		Changed = cleaner:Construct(Signal),
 		DragEnded = cleaner:Construct(Signal),
 
-		--
 		_slider = slider,
 		_arrow = slider.Arrow,
 		_button = slider.Arrow.Button,
 		_bar = slider.Bar,
 
-		--
 		_startValue = startValue,
 		_endValue = endValue,
 		_increment = increment or 0,
 		_alpha = 1,
 
-		--
 		_cleaner = cleaner,
 		_dragCleaner = cleaner:Construct(Trove),
 	}, Slider)
@@ -56,10 +39,8 @@ function Slider.new(slider: Frame, startValue: number, endValue: number, increme
 end
 
 function Slider:_init()
-	--
 	self:_render()
 
-	--
 	local button: TextButton = self._button
 
 	self._cleaner:Add(button.MouseButton1Down:Connect(function()

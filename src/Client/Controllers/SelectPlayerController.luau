@@ -1,14 +1,4 @@
---[[
-    The "who are you buying this for?" list, shared by anything that gifts.
-
-    Opens as an independent frame, so it stacks on top of whatever asked for it rather than replacing
-    it -- the shop hides itself for the pick and shows itself again either way. The caller hands over
-    two callbacks and the picker guarantees exactly one of them runs: onSelected when a player is
-    chosen, onClosed when the list is dismissed instead.
-
-    The list is kept live rather than rebuilt on open: a player who joins mid-pick appears, and one
-    who leaves has their row pulled, so a gift can't be aimed at somebody who is already gone.
-]]
+-- The shared "who are you buying this for?" picker. Opens independently, guarantees exactly one of onSelected/onClosed runs, and keeps its list live so a gift can't be aimed at someone already gone.
 
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -35,11 +25,7 @@ local SelectPlayerController = {
 	_closedCallback = nil,
 }
 
--- Opens the picker and calls `onSelected` with whoever is chosen. Dismissing the list instead --
--- the exit button, or another frame replacing this one -- drops the request and calls `onClosed`,
--- so a caller that hid itself for the pick always has something to bring it back.
--- @param onSelected Runs with the chosen player
--- @param onClosed Runs instead if the picker is dismissed without a choice
+-- Opens the picker, calling `onSelected` with the choice or `onClosed` if it's dismissed -- exactly one runs.
 function SelectPlayerController:StartSelectPlayer(onSelected: (player: Player) -> (), onClosed: () -> ())
 	self._selectionCallback = onSelected
 	self._closedCallback = onClosed
@@ -47,13 +33,11 @@ function SelectPlayerController:StartSelectPlayer(onSelected: (player: Player) -
 	UIController:OpenFrame(self.UI.Holder, true)
 end
 
--- Closes the picker and drops any pending request, running the caller's onClosed. Safe to call on an
--- already-closed picker, which is what lets every way of dismissing it come through here.
+-- Closes the picker and runs the caller's onClosed. Safe on an already-closed one, so every dismissal comes through here.
 function SelectPlayerController:StopSelectPlayer()
 	local closedCallback = self._closedCallback
 
-	-- Both cleared before the frame closes, because closing re-enters this through OnFrameClosed --
-	-- and by then there has to be nothing left to run, or the callback would fire twice.
+	-- Cleared before the close, which re-enters this through OnFrameClosed and would fire the callback twice
 	self._selectionCallback = nil
 	self._closedCallback = nil
 
@@ -66,13 +50,11 @@ function SelectPlayerController:StopSelectPlayer()
 	end
 end
 
--- Takes the pending callback before closing, since closing is what clears it, then runs it with the
--- player whose row was pressed.
+-- Takes the callback before closing, which clears it, then runs it with the player whose row was pressed.
 function SelectPlayerController:_selectPlayer(player: Player)
 	local selectionCallback = self._selectionCallback
 
-	-- The dismissal callback is dropped rather than run: this was a choice, not a cancel, so exactly
-	-- one of the caller's two callbacks fires and onSelected is what puts them back on screen.
+	-- Dropped rather than run: this was a choice, so onSelected is what puts the caller back on screen
 	self._closedCallback = nil
 	self:StopSelectPlayer()
 
@@ -88,9 +70,7 @@ function SelectPlayerController:_initUI()
 
 	template.Visible = false
 
-	-- The thumbnail is a web call, so it's fetched off the build and dropped if the row it was for has
-	-- since been recycled -- otherwise a player who left mid-fetch would stamp their face on whoever
-	-- took their place in the list.
+	-- A web call, so it's dropped if the row was recycled -- otherwise a leaver stamps their face on a stranger
 	local function setPlayerIcon(playerFrame: Frame, userId: number)
 		task.spawn(function()
 			local success, image = pcall(
@@ -149,8 +129,7 @@ function SelectPlayerController:_initUI()
 		end, true, false, { ShowFrame = playerFrame, ButtonDownScale = 0.98, ButtonHoverscale = 1.02 }).Disconnect)
 	end
 
-	-- Reconciles the list against who's actually in the server: rows for players still here are
-	-- re-ordered in place rather than rebuilt, so a join doesn't flicker the whole list.
+	-- Reconciled rather than rebuilt, so a join doesn't flicker the whole list
 	local function syncPlayers()
 		local activeUserIds = {}
 		local staleUserIds = {}
@@ -173,7 +152,7 @@ function SelectPlayerController:_initUI()
 			end
 		end
 
-		-- Collected first, then removed: dropping entries out of the table being walked isn't safe.
+		-- Collected first, then removed: dropping entries out of the table being walked isn't safe
 		for userId in self._playerFrames do
 			if not activeUserIds[userId] then
 				table.insert(staleUserIds, userId)
@@ -195,9 +174,7 @@ function SelectPlayerController:_initUI()
 		removePlayerFrame(player.UserId)
 	end))
 
-	-- Any close at all ends the request, including one this controller didn't ask for -- another frame
-	-- opening over the picker. Routed through StopSelectPlayer rather than just clearing the selection,
-	-- so a caller that hid itself for the pick is brought back however the picker went away.
+	-- Any close ends the request, routed through StopSelectPlayer so a hidden caller is always brought back
 	self._uiCleaner:Add(UIController.OnFrameClosed:Connect(function(frame)
 		if frame == self.UI.Holder then
 			self:StopSelectPlayer()

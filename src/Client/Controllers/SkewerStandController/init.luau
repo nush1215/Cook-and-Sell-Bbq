@@ -19,15 +19,7 @@ local LocalPlayer = Players.LocalPlayer
 -- How long a streamed-in base gets to finish replicating the pieces _setupBase indexes.
 local CHILD_TIMEOUT = 10
 
---[[
-    Renders the cooked skewers placed on every base's sell-stall SkewerStand and drives the owner's
-    prompts.
-
-    One SkewerStand instance per base, so visitors see placed skewers too -- the server writes the
-    placed skewers to a PlacedSkewers attribute on the stand part and the class renders them. Prompts
-    are the class's own concern and only appear on the local player's own base: a place prompt on the
-    stand (enabled only while holding a cooked skewer) and a "take it back" prompt on each placed skewer.
-]]
+-- One SkewerStand per base, rendering placed skewers off the stand's PlacedSkewers attribute so visitors see them too. Prompts appear on the local player's own base only.
 
 --
 local SkewerStandController = {
@@ -39,9 +31,7 @@ local SkewerStandController = {
 	_takeLocked = false, -- while true, no stand offers a placed skewer back (see SetTakeLocked)
 }
 
--- Wires up a base's sell-stall stand once the pieces have replicated, unless one already tracks it.
--- Models stream in non-atomically, so the waits live here and SkewerStand.new keeps trusting its
--- children.
+-- Wires up a base's sell stand once its pieces have replicated; the waits live here, so SkewerStand.new can trust its children.
 function SkewerStandController:_setupBase(baseModel: Model)
 	if self._stands[baseModel] then
 		return
@@ -55,8 +45,7 @@ function SkewerStandController:_setupBase(baseModel: Model)
 		return
 	end
 
-	-- Waiting above yields, so the base can have streamed back out (or been built by a racing thread)
-	-- in the meantime.
+	-- Waiting above yields, so the base can have streamed out or been built by a racing thread
 	if not baseModel.Parent or self._stands[baseModel] then
 		return
 	end
@@ -87,22 +76,14 @@ function SkewerStandController:RequestRemove(index: number)
 	self.RemoveSkewerEvent:FireServer(index)
 end
 
--- Re-checks every stand's prompts (ownership + the place prompt's enabled state). Cheap, and the place
--- prompt depends on what the local player is holding, so it's called whenever their base or equipped
--- tool changes.
+-- Re-checks every stand's prompts. Cheap, and the place prompt depends on what's held.
 function SkewerStandController:_refreshPrompts()
 	for _, stand in self._stands do
 		stand:RefreshPrompt()
 	end
 end
 
--- Holds every stand's take back off, so a skewer put out for sale stays out. Gates the eligibility the
--- class already computes rather than reaching in and disabling the prompts: there's one per placed
--- skewer, each built and torn down with the model it rides on, so anything holding captured instances
--- would be holding the wrong ones a moment later.
---
--- Set by the tutorial from the skewer going out to the sale going through: the beat after it is a wait,
--- and taking back the thing they're waiting on has nothing to offer them but a dead end.
+-- Holds every stand's take off, gating eligibility rather than the prompts -- there's one per skewer, built and torn down with its model.
 function SkewerStandController:SetTakeLocked(locked: boolean)
 	if self._takeLocked == locked then
 		return
@@ -112,12 +93,12 @@ function SkewerStandController:SetTakeLocked(locked: boolean)
 	self:_refreshPrompts()
 end
 
--- Whether taking placed skewers back is currently held off. Read by SkewerStand as it builds its prompts.
+-- Whether taking placed skewers back is held off. Read by SkewerStand as it builds its prompts.
 function SkewerStandController:IsTakeLocked(): boolean
 	return self._takeLocked
 end
 
--- Watches the local character's tools so the place prompt enables/disables as they equip a skewer.
+-- Watches the local character's tools so the place prompt tracks what they equip.
 function SkewerStandController:_watchCharacter(character: Model)
 	self._characterCleaner:Clean()
 
@@ -138,9 +119,7 @@ end
 function SkewerStandController:OnStart()
 	self._characterCleaner = self._cleaner:Construct(Trove)
 
-	-- Bases stream out and back in as brand-new instances, and at boot the folder's contents can still
-	-- be in flight -- so watch the folder rather than sweeping it once. Off this thread because the
-	-- loader runs every OnStart on one, and both the folder wait and _setupBase's child waits yield.
+	-- Watched rather than swept once, and off this thread since the loader runs every OnStart on one
 	task.spawn(function()
 		local baseFolder = workspace:WaitForChild("Base")
 
@@ -151,7 +130,7 @@ function SkewerStandController:OnStart()
 			self:_removeBase(baseModel)
 		end)
 
-		-- _setupBase waits on the base's children, so keep the sweep off this thread too.
+		-- _setupBase waits on the base's children, so keep the sweep off this thread too
 		for _, baseModel in baseFolder:GetChildren() do
 			task.spawn(function()
 				self:_setupBase(baseModel)
@@ -159,13 +138,12 @@ function SkewerStandController:OnStart()
 		end
 	end)
 
-	-- BaseId lands after the stands are already built, and it changes when the local player is assigned
-	-- or loses a base -- re-check every stand's prompts.
+	-- BaseId lands after the stands are built and moves on assignment, so re-check every stand's prompts
 	LocalPlayer:GetAttributeChangedSignal("BaseId"):Connect(function()
 		self:_refreshPrompts()
 	end)
 
-	-- Equipping/unequipping a skewer changes whether the place prompt should show.
+	-- Equipping or unequipping a skewer changes whether the place prompt should show
 	if LocalPlayer.Character then
 		self:_watchCharacter(LocalPlayer.Character)
 	end

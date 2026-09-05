@@ -6,9 +6,7 @@ local Shared = ReplicatedStorage.Shared
 local Ingredients = require(Shared.Config.Ingredients)
 
 return function(registry)
-	-- Data is an array of entries rather than a map, so the id comes off the value. It's already been
-	-- pruned of anything missing its models by the time this runs, so the enum only offers ingredients
-	-- that can actually be rolled.
+	-- An array, so the id comes off the value. Already pruned of missing models, so the enum only offers rollable ones
 	local ingredientIds = {}
 	for _, ingredient in Ingredients.Data do
 		table.insert(ingredientIds, ingredient.Id)

@@ -26,10 +26,7 @@ local function validatePlayer(player: Player?): boolean
 	return player ~= nil and player:IsDescendantOf(Players)
 end
 
--- Adds the seconds elapsed since the last flush into TotalPlaytime and resets the
--- session start, so the periodic flush and the final leave flush never double-count.
--- Mutates playerData directly because at leave/shutdown the player may already be
--- gone, which would make SetPlayerDataKey reject the write.
+-- Adds the seconds since the last flush into TotalPlaytime and resets the start, so nothing double-counts. Mutates `playerData` directly, the player possibly being gone.
 function PlaytimeManager:_flush(player: Player, playerData: { any })
 	local start = self._sessionStart[player]
 	if not start then
@@ -46,8 +43,7 @@ function PlaytimeManager:_flush(player: Player, playerData: { any })
 	playerData.TotalPlaytime = (playerData.TotalPlaytime or 0) + elapsed
 end
 
--- Flushes a present player's accumulated playtime through the replica so the live
--- value stays fresh during play.
+-- Flushes a present player's playtime through the replica, so the live value stays fresh.
 function PlaytimeManager:_flushLive(player: Player)
 	PlayerDataManager:GetPlayerData(player)
 		:andThen(function(playerData)

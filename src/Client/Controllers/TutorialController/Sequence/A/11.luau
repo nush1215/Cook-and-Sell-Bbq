@@ -1,20 +1,16 @@
--- Step 11: Load the stick with the ingredient. The stand's prompt turns into "Add <Ingredient>" while
--- one is held, so equipping it and pressing the prompt reads as the one action it is.
+-- Step 11: load the stick with the ingredient, which the stand's prompt offers while one is held.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 local Ingredients = require(ReplicatedStorage.Shared.Config.Ingredients)
 
--- What the tutorial's roll is pinned to, so this beat can name the thing to equip rather than asking for
--- "your Ingredient" while exactly one sits in the player's inventory. The server owns the pin --
--- TutorialManager's TUTORIAL_INGREDIENT_ID -- and this is the client's copy of it, the same way step 7
--- keeps the id of the stick it points at.
+-- The client's copy of the server's pinned ingredient, so the beat can name what to equip
 local TUTORIAL_INGREDIENT_ID = "Garlic"
 
 local NEAR_DISTANCE = 12
 
 return function(self)
-	-- Named in the ingredient's own label colour, which is what tells ingredients apart in the stick UI.
+	-- Named in the ingredient's own label colour, which is what tells them apart in the stick UI
 	local pinnedIngredient = Ingredients.GetIngredientFromId(TUTORIAL_INGREDIENT_ID)
 	local ingredientName = self:Emphasize(pinnedIngredient.Name, pinnedIngredient.Color)
 
@@ -36,8 +32,7 @@ return function(self)
 			end,
 		},
 	}, {
-		-- Named live, and falling back to the plain word: the ingredient leaves their hands the instant
-		-- it goes on the stick, a beat before the goal thread wakes to end the step.
+		-- Named live with a plain fallback -- it leaves their hands a beat before the goal thread wakes
 		Description = function()
 			local ingredient = Ingredients.GetIngredientFromId(EquippedItem.GetIngredientId())
 			local name = if ingredient
@@ -47,7 +42,7 @@ return function(self)
 			return `Put the {name} on your stick`
 		end,
 		Wait = function()
-			-- A comma-separated list of what's on the stick, so anything at all in it is one added.
+			-- A comma-separated list of what's on the stick, so anything at all in it is one added
 			while (slot:GetAttribute("PlacedIngredients") or "") == "" do
 				slot:GetAttributeChangedSignal("PlacedIngredients"):Wait()
 			end

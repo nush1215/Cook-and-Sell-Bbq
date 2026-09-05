@@ -1,5 +1,4 @@
--- Step 11: Put the BBQ out on the sell stall, which is what brings a customer. Ends by holding the take
--- off, which step 12 releases once the sale has gone through -- see there.
+-- Step 11: put the BBQ out on the sell stall, which brings a customer. Ends holding the take off, which step 12 releases.
 local HttpService = game:GetService("HttpService")
 
 local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
@@ -31,9 +30,7 @@ return function(self)
 	}, {
 		Description = `Place your {self:Emphasize("BBQ")} on the stand`,
 		Wait = function()
-			-- The stand's contents ride on one attribute as a JSON list. Counted against what was already
-			-- there rather than against empty: a customer mid-visit when the player last left puts the
-			-- skewer it was holding back on the stand, so the stand isn't always bare when this opens.
+			-- Counted against what was already there -- a customer mid-visit last session puts its skewer back
 			local function placedCount(): number
 				local encoded = stand:GetAttribute("PlacedSkewers")
 				return if encoded then #HttpService:JSONDecode(encoded) else 0
@@ -44,12 +41,7 @@ return function(self)
 				stand:GetAttributeChangedSignal("PlacedSkewers"):Wait()
 			end
 
-			-- Taken here rather than after AwaitGoal returns, which is a frame later: the skewer's own take
-			-- prompt is built with the model it rides on, so it's live on the frame the place lands.
-			--
-			-- What follows is a wait for a customer, and the only thing in reach during it is a prompt
-			-- offering to take back the very skewer being waited on -- which would leave the beat waiting
-			-- for a sale on an empty stand, with nothing to say so.
+			-- Taken here, not a frame later: the skewer's take prompt is built with the model, and the wait that follows has nothing else in reach
 			SkewerStandController:SetTakeLocked(true)
 		end,
 	})

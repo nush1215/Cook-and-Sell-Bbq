@@ -1,12 +1,6 @@
---[[
-	OnInitCallback: This function runs when the BadgeService is initialized.
-	It is best to attach listeners in this function. (SHOULD ONLY BE CALLED ONCE!!!)
---]]
+-- OnInitCallback: runs once as BadgeService initializes. Attach listeners here.
 
---[[
-	toAwardCallback: This function should be called when the condition for awarding
-	the badge is met on your listener. It will give the badge to the player.
---]]
+-- toAwardCallback: call from your listener once the badge's condition is met, to award it.
 
 -- Services
 local Players = game:GetService("Players")
@@ -31,9 +25,7 @@ export type Badge = {
 	OnInitCallback: (toAwardCallback: ToAwardCallback) -> (),
 }
 
--- Runs `check` against every player: as they join, and once for anyone already in (a server
--- hot-reload). Badges are wired up before any player is, so a listener alone would only ever see the
--- sales made from here on -- this is the other half, the one that catches up on what's already saved.
+-- Runs `check` on join and once for anyone already in, so a badge catches up on what's already saved.
 local function checkEveryPlayer(check: (player: Player) -> ())
 	Players.PlayerAdded:Connect(check)
 
@@ -42,10 +34,7 @@ local function checkEveryPlayer(check: (player: Player) -> ())
 	end
 end
 
--- Builds the listener for a milestone off the lifetime SkewersSold counter. Watched through
--- OnDataChanged rather than SellNpcManager.OnSaleCompleted so the count is read post-increment and any
--- future path that sells a skewer counts too. Also checked once when a player's data is up, so a player
--- who passed the mark before the badge existed still gets it without having to sell again.
+-- A SkewersSold milestone listener, through OnDataChanged so it reads post-increment and covers future sale paths.
 local function onSkewersSold(badgeKey: string, threshold: number)
 	return function(toAwardCallback: ToAwardCallback)
 		PlayerDataManager.OnDataChanged:Connect(function(player: Player, key: string, newValue: any)
@@ -64,14 +53,7 @@ local function onSkewersSold(badgeKey: string, threshold: number)
 	end
 end
 
--- Builds the listener for the badge given for selling a skewer in one cook state. Nothing counts sales
--- per state the way SkewersSold counts them overall, so this reads the states off the sale itself. A
--- rich customer clearing the stand can carry several states at once and each one counts, so the haul is
--- walked rather than sampled.
---
--- The join check is best-effort by nature: RecentSales is the only lasting record of what a player has
--- sold and it only reaches StatsManager.RECENT_SALES skewers back, so a state last sold before that
--- window is picked up by selling it again rather than on the way in.
+-- A per-cook-state sale listener, walking the haul since a rich customer carries several states. The join check is best-effort -- RecentSales only reaches so far back.
 local function onCookStateSold(badgeKey: string, cookStateId: string)
 	return function(toAwardCallback: ToAwardCallback)
 		SellNpcManager.OnSaleCompleted:Connect(function(player: Player, _, skewerRecords)
@@ -123,7 +105,7 @@ Badges.Data = {
 		BadgeId = 1031580123049311,
 		OnInitCallback = onSkewersSold("Sold100Bbq", 100),
 	},
-	-- One per cook state, in the order they come up along the grill, so the set reads as the ladder it is.
+	-- One per cook state, in grill order, so the set reads as the ladder it is
 	{
 		Name = "Sell Raw BBQ",
 		Key = "SellRawBbq",

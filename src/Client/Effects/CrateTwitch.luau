@@ -23,9 +23,7 @@ local PULSE_DURATION = 0.12
 local PULSE_TRANSPARENCY = 0.4
 local CLEANUP_DELAY = 2
 
--- One beat of a crate rattling: a puff, a flash barely longer than the beat itself, and the rattle.
--- The sound lives here rather than at the call site so a twitch is one thing to fire, and it's limited
--- because a batch of crates rattling together should read as one crate, not ten.
+-- One rattle beat: a puff, a brief flash and the sound. Limited, so a batch reads as one crate not ten.
 return function(crate: Model)
 	local effect = EffectUtil.ParentEffectFolder(TwitchParticles, crate.PrimaryPart)
 

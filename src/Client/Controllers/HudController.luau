@@ -44,19 +44,14 @@ local HIDE_HUD_FOR_UI = {
 	},
 }
 
--- Frames inside BottomLeft that come down on their own while a UI is open, leaving the rest of the
--- frame up. The shop keeps Currency on screen deliberately: its More button is what opened the panel,
--- and the Bux total is what a player browsing Bux packs is watching.
+-- Frames that come down on their own while a UI is open. The shop keeps Currency, which is what a Bux browser is watching
 local HIDE_IN_BOTTOM_LEFT = {
 	ShopUI = {
 		"FriendBoost",
 	},
 }
 
--- Where a HUD frame sits onscreen and where it slides to when something hides it. A frame doesn't have
--- to be listed here -- _getHudFramePosition infers both from where it was authored, which is the better
--- answer for anything whose layout isn't pinned by this table. Right is deliberately left off for that
--- reason: a Show written here would drag it off whatever position it was built at.
+-- Where a HUD frame sits and slides to. Unlisted frames infer both from where they were authored, which is why Right is left off
 local HUD_FRAMES_POSITIONS = {
 	Top = {
 		Show = UDim2.fromScale(0.5, 0.08),
@@ -85,7 +80,7 @@ local HudController = {
 	_uiHidden = false,
 }
 
--- Forces every HUD frame onscreen and allows future HUD restores.
+-- Forces every HUD frame onscreen and allows future restores.
 function HudController:ShowHud()
 	self._uiHidden = false
 
@@ -96,7 +91,7 @@ function HudController:ShowHud()
 			continue
 		end
 
-		-- Keep frames hidden if an open UI still claims them.
+		-- Keep frames hidden if an open UI still claims them
 		local owners = self._hudFrameHideOwners[hudFrame]
 		if owners and next(owners) then
 			continue
@@ -106,9 +101,7 @@ function HudController:ShowHud()
 	end
 end
 
--- Forces every HUD frame offscreen and blocks normal HUD restores. Frames named
--- in keepFrames are forced onscreen instead and stay put until ShowHud is called.
--- @param keepFrames: optional list of HUD frame names to leave visible
+-- Forces every HUD frame offscreen and blocks normal restores; `keepFrames` stay up until ShowHud.
 function HudController:HideHud(keepFrames: { string }?)
 	self._uiHidden = true
 
@@ -130,12 +123,7 @@ function HudController:HideHud(keepFrames: { string }?)
 	end
 end
 
--- Registers `owner` as a persistent hide claim on every HUD frame except those named
--- in keepFrames. Unlike HideHud these frames stay hidden through later ShowHud calls
--- (ShowHud skips owner-claimed frames), so a transient HUD restore elsewhere -- e.g.
--- the tame minigame ending -- can't reveal them. Cleared with ReleaseHud(owner).
--- @param owner: any unique key identifying the caller's claim
--- @param keepFrames: optional list of HUD frame names to leave visible
+-- Registers a persistent hide claim that survives later ShowHud calls, cleared with ReleaseHud.
 function HudController:KeepHudHidden(owner: any, keepFrames: { string }?)
 	local keep = {}
 	if keepFrames then
@@ -160,9 +148,7 @@ function HudController:KeepHudHidden(owner: any, keepFrames: { string }?)
 	end
 end
 
--- Drops `owner`'s persistent hide claim from every HUD frame, restoring any frame no
--- longer claimed by another owner. Reverses KeepHudHidden.
--- @param owner: the same key passed to KeepHudHidden
+-- Drops `owner`'s claim, restoring any frame no longer claimed by another. Reverses KeepHudHidden.
 function HudController:ReleaseHud(owner: any)
 	for hudFrame, owners in self._hudFrameHideOwners do
 		if not owners[owner] then
@@ -179,12 +165,7 @@ function HudController:ReleaseHud(owner: any)
 	end
 end
 
--- Adds or drops `owner`'s hide claim on a single HUD frame -- the per-frame counterpart to the two above,
--- for a caller that wants one frame back for a moment without giving up its claim on the rest. Releasing
--- only brings the frame up if nobody else is still holding it down.
--- @param owner: the same key passed to KeepHudHidden
--- @param frameName: the HUD frame to claim or release
--- @param hidden: true to hold it down, false to let it back up
+-- Claims or releases one HUD frame, for a caller wanting it back without giving up its claim on the rest.
 function HudController:SetHudFrameHiddenFor(owner: any, frameName: string, hidden: boolean)
 	local hudFrame = self.UI:FindFirstChild(frameName)
 	if not hudFrame then
@@ -217,7 +198,7 @@ function HudController:SetHudFrameHiddenFor(owner: any, frameName: string, hidde
 	self:_setHudFrameHidden(hudFrame, false, true)
 end
 
--- Gets the configured position for a HUD frame, or infers a matching offscreen hide position.
+-- The configured position for a HUD frame, or an inferred offscreen hide position.
 function HudController:_getHudFramePosition(hudFrame: GuiObject, state: "Show" | "Hide"): UDim2
 	local positions = HUD_FRAMES_POSITIONS[hudFrame.Name]
 	if positions and positions[state] then
@@ -248,12 +229,7 @@ function HudController:_setHudFrameHidden(hudFrame: GuiObject, hidden: boolean, 
 	})
 end
 
--- Returns a HUD button's frame and the clickable button inside it, or nil (with a warning) if the HUD
--- has no such button. Named buttons sit at varying depths under HudUI and some are the GuiButton
--- themselves while others wrap one, so this is the one place that knows how to find either -- anything
--- that wants to point at a button, or listen to one already bound, reads it from here.
--- @param buttonName: string - The name of the button's frame in HudUI
--- @return: the frame to position against, and the GuiButton that takes the click
+-- A HUD button's frame and the GuiButton inside it, or nil with a warning. The one place that knows how to find either.
 function HudController:GetHudButton(buttonName: string): (GuiObject?, GuiButton?)
 	local buttonFrame = self.UI:FindFirstChild(buttonName, true)
 	if not buttonFrame then
@@ -261,10 +237,7 @@ function HudController:GetHudButton(buttonName: string): (GuiObject?, GuiButton?
 		return nil, nil
 	end
 
-	-- A wrapper frame is looked up rather than indexed so a half-authored button -- the frame built but
-	-- the GuiButton inside it not -- warns like a missing one instead of erroring. It's the caller that
-	-- pays for that: binding a HUD button is the first thing a controller's UI setup does, so a throw
-	-- here takes down everything that controller was about to build, not just its button.
+	-- Looked up rather than indexed: binding is the first thing a UI setup does, so a throw takes it all down
 	local button = if buttonFrame:IsA("GuiButton") then buttonFrame else buttonFrame:FindFirstChild("Button")
 	if not button then
 		warn(`Button {buttonName} in HudUI has no GuiButton inside it to take the click`)
@@ -274,10 +247,7 @@ function HudController:GetHudButton(buttonName: string): (GuiObject?, GuiButton?
 	return buttonFrame, button
 end
 
--- Binds a button to the hud and returns a table with the button, start alert and stop alert functions
--- @param buttonName: string - The name of the button to bind
--- @param callback: () -> () - The callback to call when the button is clicked
--- @return: { Disconnect: () -> (), Button: GuiObject, StartAlert: () -> (), StopAlert: () -> () }
+-- Binds a HUD button, returning { Disconnect, Button, StartAlert, StopAlert }.
 function HudController:BindHudButton(
 	buttonName: string,
 	callback: () -> (),
@@ -293,7 +263,6 @@ function HudController:BindHudButton(
 		return
 	end
 
-	--
 	local connection = UIController:BindButtonClick(
 		button,
 		function()
@@ -311,7 +280,6 @@ function HudController:BindHudButton(
 		}
 	)
 
-	--
 	local alertFrame = buttonFrame:FindFirstChild("Alert")
 	return {
 		Disconnect = connection.Disconnect,
@@ -339,7 +307,7 @@ function HudController:BindHudButton(
 	}
 end
 
--- Listens for frame changes and hides the hud if the frame is in the HIDE_UI_FOR_FRAMES table
+-- Listens for frame changes and hides the HUD for frames in HIDE_UI_FOR_FRAMES
 function HudController:_listenForFrameChanges()
 	UIController.OnFrameOpened:Connect(function(frame)
 		local screenGui = frame:FindFirstAncestorOfClass("ScreenGui")
@@ -424,7 +392,7 @@ function HudController:_listenForFrameChanges()
 
 				self._hudFrameHideOwners[hudFrame] = nil
 
-				-- Delay restore so UI frame swaps can claim the same HUD before it animates back.
+				-- Delay the restore so a UI frame swap can claim the same HUD before it animates back
 				task.defer(function()
 					local currentOwners = self._hudFrameHideOwners[hudFrame]
 					if currentOwners and next(currentOwners) then
@@ -489,9 +457,7 @@ function HudController:OnInit()
 		HUD_FRAMES_POSITIONS.Top.Show = UDim2.fromScale(0.5, 0.22)
 	end
 
-	-- A frame only moves to its HUD_FRAMES_POSITIONS Show spot on the first hide/restore cycle, so any
-	-- frame whose entry differs from where it was authored sits wrong until something opens -- and on
-	-- touch, where Show is overridden above, that is every join. Snap them into place up front.
+	-- Snapped up front: a frame otherwise sits wrong until something opens, which on touch is every join
 	for _, hudFrame in self.UI:GetChildren() do
 		if not hudFrame:IsA("GuiObject") then
 			continue

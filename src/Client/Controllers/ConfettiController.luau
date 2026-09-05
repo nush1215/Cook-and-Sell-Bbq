@@ -47,11 +47,7 @@ type ConfettiConfig = {
 }
 
 --
--- UIConfetti:Update(dt) is frame-rate independent (it scales its motion by dt), so we run exactly
--- one update per frame. This is judder-free at any fps and plays at the same wall-clock speed
--- whether the client is at 30, 60 or 144 -- low fps takes bigger steps, high refresh smaller ones.
--- Clamp dt so a single long frame (a hitch or a tabbed-out window) can't fling particles a huge
--- distance in one jump; the effect just advances a bounded amount that frame instead.
+-- One update per frame, Update being frame-rate independent, with dt clamped so a hitch can't fling particles
 local MAX_DT = 1 / 15
 
 local ConfettiController = {
@@ -59,9 +55,7 @@ local ConfettiController = {
 	_connection = nil,
 }
 
--- Drives every active particle from one RenderStepped loop, swap-removing and
--- destroying each as it leaves the screen. The loop only runs while particles
--- exist and disconnects itself once the list empties.
+-- Drives every particle from one loop, which runs only while particles exist and disconnects itself.
 function ConfettiController:_ensureRunning()
 	if self._connection then
 		return
@@ -144,8 +138,7 @@ function ConfettiController:FireSidesConfetti(config: ConfettiConfig?)
 	self:_ensureRunning()
 end
 
--- Rains confetti down from the top edge for the given duration, spawning small
--- batches over time so it reads as continuous rainfall rather than one wall.
+-- Rains confetti from the top edge, in small batches over time so it reads as rainfall not a wall.
 function ConfettiController:FireConfettiRain(config: ConfettiConfig?)
 	config = config or {}
 

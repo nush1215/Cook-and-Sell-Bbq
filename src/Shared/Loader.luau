@@ -1,7 +1,5 @@
 --!strict
--- Shared bootstrap used by both the Client and Server Runtime scripts.
--- Loads a folder of lifecycle modules (Controllers / Managers) in priority order, runs their
--- OnInit then OnStart, then requires a folder of tag-based Components.
+-- Shared bootstrap: loads lifecycle modules in priority order, runs OnInit then OnStart, then requires the Components.
 
 type InitType = "Init" | "Start"
 

@@ -109,10 +109,7 @@ local function applyGamepass(player: Player, gamepassData: Gamepasses.Gamepass, 
 	end
 end
 
--- Resolves who should receive a gift gamepass. Falls back to the buyer if the
--- intended recipient cannot receive it (no data, already gifted, or already owns).
--- Returns the target player along with their data, and whether a gift was
--- actually delivered to a different player.
+-- Resolves a gift gamepass's recipient, falling back to the buyer. Returns them, their data, and whether it was gifted.
 local function resolveGiftGamepassTarget(
 	buyer: Player,
 	intendedRecipient: Player?,
@@ -141,8 +138,7 @@ local function resolveGiftGamepassTarget(
 	return buyer, buyerData, false
 end
 
--- Adds the gamepass to the target's GiftedGamepasses list (if not already there)
--- and applies the gamepass tag/callbacks. Returns true if a new gift entry was inserted.
+-- Adds the gamepass to the target's gifted list and applies its tag and callbacks. True if newly inserted.
 local function grantGiftedGamepass(target: Player, targetData: any, gamepassData: Gamepasses.Gamepass): boolean
 	local alreadyGifted = table.find(targetData.GiftedGamepasses, gamepassData.Id) ~= nil
 
@@ -198,10 +194,7 @@ local function notifyProductSelfPurchase(buyer: Player, productData: Products.Pr
 	})
 end
 
--- Attempts to prompt a product purchase for the player
--- @param player The player attempting the purchase
--- @param id The product ID
--- @param toGift Optional player to gift the product to
+-- Prompts a product purchase, optionally gifted to `toGift`.
 function ShopManager:AttemptProductPurchase(player: Player, id: string, toGift: Player?)
 	if not validatePlayer(player) then
 		warn(`Cannot attempt product purchase for invalid player: {player}`)
@@ -220,9 +213,7 @@ function ShopManager:AttemptProductPurchase(player: Player, id: string, toGift: 
 		return
 	end
 
-	-- When gifting, validate against the recipient's data so a buyer who already
-	-- owns a PurchaseOnce product can still gift it, and so we don't charge them
-	-- when the recipient already owns it.
+	-- Validated against the recipient's data, so an owner can still gift and isn't charged if they already own it
 	local ownerToCheck = if isGift then toGift :: Player else player
 
 	PlayerDataManager:GetPlayerData(ownerToCheck)
@@ -250,10 +241,7 @@ function ShopManager:AttemptProductPurchase(player: Player, id: string, toGift: 
 		end)
 end
 
--- Attempts to prompt a gamepass purchase for the player
--- @param player The player attempting the purchase
--- @param id The gamepass ID
--- @param toGift Optional player to gift the gamepass to
+-- Prompts a gamepass purchase, optionally gifted to `toGift`.
 function ShopManager:AttemptGamepassPurchase(player: Player, id: string, toGift: Player?)
 	if not validatePlayer(player) then
 		warn(`Cannot attempt gamepass purchase for invalid player: {player}`)
@@ -319,11 +307,7 @@ function ShopManager:AttemptGamepassPurchase(player: Player, id: string, toGift:
 	end)
 end
 
--- Hands over everything in the starter pack and says what was in it in one line, the way opening a
--- crate does -- the receipt's own "Successfully Purchased" toast names the pack but not its contents.
--- Called from the pack product's callback, so it runs against whoever the purchase resolved to, which
--- is the recipient when it was a gift.
--- @param player The player to give the pack to
+-- Hands over the starter pack and names its contents, which the receipt's own toast doesn't. Runs against whoever the purchase resolved to.
 function ShopManager:GrantStarterPack(player: Player)
 	local names = {}
 
@@ -347,21 +331,13 @@ function ShopManager:GrantStarterPack(player: Player)
 	})
 end
 
--- Hands over a Bux pack's Bux and counts them up in a toast, since the receipt's own "Successfully
--- Purchased" line names the pack but never says how much it was worth. Called from the pack product's
--- callback, so it runs against whoever the purchase resolved to, which is the recipient when gifted.
---
--- Boosts are deliberately skipped: the card advertises a fixed number and that's what has to land, or
--- an x2 Bux owner would quietly get double what they paid for.
--- @param player The player to give the Bux to
--- @param packId The pack that was bought
+-- Hands over a Bux pack and toasts the amount. Boosts are skipped -- the card advertises a fixed number.
 function ShopManager:GrantBuxPack(player: Player, packId: string)
 	local pack = BuxPacks.GetBuxPackFromId(packId)
 
 	CurrencyManager:IncrementCurrency(player, pack.Amount, "BuxPack", true)
 
-	-- {value} is NotificationManager's own placeholder for the Count below, so it has to reach the
-	-- client as-is rather than being interpolated here -- which is why this isn't an interpolated string.
+	-- {value} is NotificationManager's placeholder, so it must reach the client uninterpolated
 	NotificationManager:NotifyNormal(player, {
 		Text = "You received {value} Bux",
 		Duration = 5,
@@ -375,9 +351,7 @@ function ShopManager:GrantBuxPack(player: Player, packId: string)
 	})
 end
 
--- Prompts a currency purchase to the player for the amount needed
--- @param player The player to prompt
--- @param currencyNeeded The amount of currency needed
+-- Prompts a currency purchase for the shortfall.
 function ShopManager:PromptCurrencyPurchase(player: Player, currencyNeeded: number)
 	if not validatePlayer(player) then
 		warn(`Cannot prompt currency purchase for invalid player: {player}`)
@@ -411,10 +385,7 @@ function ShopManager:PromptCurrencyPurchase(player: Player, currencyNeeded: numb
 	end
 end
 
--- Handles gamepass purchase completion
--- @param player The player who purchased
--- @param gamepassId The gamepass ID from Roblox
--- @param isPurchased Whether the purchase was successful
+-- Handles a gamepass purchase completing.
 function ShopManager:_onPurchaseGamepass(player: Player, gamepassId: number, isPurchased: boolean)
 	if not isPurchased then
 		return
@@ -433,7 +404,7 @@ function ShopManager:_onPurchaseGamepass(player: Player, gamepassId: number, isP
 	applyGamepass(player, gamepassData, true)
 	self.PlayerPurchased:Fire(player, gamepassData.Id)
 
-	-- A gamepass prompt carries no receipt, so the price is looked up rather than read off one.
+	-- A gamepass prompt carries no receipt, so the price is looked up rather than read off one
 	task.spawn(function()
 		local success, info = pcall(function()
 			return MarketplaceService:GetProductInfo(gamepassData.PassId, Enum.InfoType.GamePass)
@@ -447,7 +418,7 @@ function ShopManager:_onPurchaseGamepass(player: Player, gamepassId: number, isP
 	})
 end
 
--- Handles a receipt for a gamepass that was purchased via its gift product.
+-- Handles a receipt for a gamepass purchased via its gift product.
 function ShopManager:_processGiftGamepassPurchase(
 	receiptInfo: any,
 	buyer: Player,
@@ -494,8 +465,7 @@ function ShopManager:_processGiftGamepassPurchase(
 	return Enum.ProductPurchaseDecision.PurchaseGranted
 end
 
--- Handles a receipt for a regular (non-gamepass) product purchase, including
--- product gifting where the recipient receives the product instead of the buyer.
+-- Handles a regular product receipt, including gifting, where the recipient receives it instead of the buyer.
 function ShopManager:_processProductPurchase(
 	receiptInfo: any,
 	buyer: Player,
@@ -550,10 +520,7 @@ function ShopManager:_processProductPurchase(
 	return Enum.ProductPurchaseDecision.PurchaseGranted
 end
 
--- Processes a product receipt from Roblox by dispatching to the appropriate handler
--- based on whether the ProductId belongs to a regular product or a gift-gamepass product.
--- @param receiptInfo The receipt information from Roblox
--- @returns ProductPurchaseDecision
+-- Dispatches a Roblox receipt to the regular-product or gift-gamepass handler by its ProductId.
 function ShopManager:_processReceipt(receiptInfo: any): Enum.ProductPurchaseDecision
 	local player = Players:GetPlayerByUserId(receiptInfo.PlayerId)
 	if not player or not validatePlayer(player) then
@@ -574,8 +541,7 @@ function ShopManager:_processReceipt(receiptInfo: any): Enum.ProductPurchaseDeci
 	return Enum.ProductPurchaseDecision.NotProcessedYet
 end
 
--- Verifies and initializes gamepasses for a player
--- @param player The player to verify gamepasses for
+-- Verifies and initializes a player's gamepasses.
 function ShopManager:_verifyGamepasses(player: Player)
 	if not validatePlayer(player) then
 		return
@@ -621,8 +587,7 @@ function ShopManager:_verifyGamepasses(player: Player)
 		end)
 end
 
--- Verifies and applies purchase-once products for a player
--- @param player The player to verify products for
+-- Verifies and applies a player's purchase-once products.
 function ShopManager:_verifyPurchaseOnes(player: Player)
 	if not validatePlayer(player) then
 		return
@@ -643,8 +608,7 @@ function ShopManager:_verifyPurchaseOnes(player: Player)
 		end)
 end
 
--- Initializes the ShopManager
--- Sets up dependencies, event connections, and verifies existing players
+-- Initializes the manager, its connections, and existing players' entitlements.
 function ShopManager:OnInit()
 	PlayerDataManager = require(script.Parent.PlayerDataManager)
 	NotificationManager = require(script.Parent.NotificationManager)
@@ -652,9 +616,7 @@ function ShopManager:OnInit()
 	IngredientManager = require(script.Parent.IngredientManager)
 	StickManager = require(script.Parent.StickManager)
 
-	-- Stamps when this player's starter pack offer runs out, once, on their first join. An absolute
-	-- time rather than a countdown, so it keeps running while they're offline and rejoining can't
-	-- reset it -- and it's what the shop card's countdown reads.
+	-- Stamped once on first join, absolute so it runs offline and a rejoin can't reset it
 	local function setupStarterPackStart(player: Player)
 		PlayerDataManager:GetPlayerDataKey(player, "StarterPackStart"):andThen(function(starterPackStart: number)
 			if starterPackStart > 0 then
@@ -704,8 +666,7 @@ function ShopManager:OnInit()
 
 			clearGiftTracking(promptPlayer)
 
-			-- The Roblox id is resolved back to our own so the cancel lines up with the prompt that opened it.
-			-- A gift-gamepass prompt is a product prompt too, so it's checked second.
+			-- Resolved back to our own id so the cancel lines up; a gift-gamepass prompt is a product prompt too
 			local productData = Products.GetProductFromProductId(productId)
 			local gamepassData = if productData then nil else Gamepasses.GetGamepassFromGiftProductId(productId)
 			local itemId = if productData then productData.Id elseif gamepassData then gamepassData.Id else nil

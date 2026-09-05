@@ -24,18 +24,7 @@ local LocalPlayer = Players.LocalPlayer
 -- How long a streamed-in base gets to finish replicating the plot folder _setupBase indexes.
 local CHILD_TIMEOUT = 10
 
---[[
-    Drives the unlock signs on every base's plots.
-
-    One Plot instance per plot, across every base, because the signs have to come down on bases the
-    local player doesn't own as well as go up on the one they do -- the server plants them for
-    everyone (it has one world to replicate) and hiding them is the client's half.
-
-    Which plots are buyable is entirely the server's call: it parents a sign in only while the plot is
-    reachable, so nothing here decides what's on offer. What the class reads from data is the price,
-    which comes off how many plots the player has bought rather than which plot the sign stands on --
-    so one purchase repaints every remaining sign, and that's what the Plots listener below is for.
-]]
+-- Drives every base's plot signs -- one Plot per plot, since signs must come down on bases the player doesn't own. What's buyable is the server's call; the price is read from data, so one purchase repaints them all.
 
 --
 local PlotController = {
@@ -46,12 +35,9 @@ local PlotController = {
 	_cleaner = Trove.new(),
 }
 
--- Asks the server to buy this plot with currency. Which plot is the player's choice; what it costs
--- isn't, so nothing about the price goes over with it.
+-- Asks the server to buy this plot with currency; the price isn't the client's to send.
 function PlotController:RequestPurchase(plotId: string)
-	-- The server rejects this too; saying so here keeps the press from costing a round trip. The sign
-	-- stays up and priced through the run -- only the currency half is held, so the Robux button beside
-	-- it still works.
+	-- The server rejects it too; only the currency half is held, so the Robux button beside it still works
 	if not PlayerDataController:GetKey("TutorialCompleted") then
 		NotificationController:NotifyNormal({
 			Text = "Finish the tutorial first!",
@@ -65,16 +51,12 @@ function PlotController:RequestPurchase(plotId: string)
 	self.PurchasePlotEvent:FireServer(plotId)
 end
 
--- Asks the server to raise the Robux prompt for this plot. Opened server-side rather than through
--- ShopController so the plot it was raised from is remembered there: the product is priced by how
--- many plots the player owns, and its receipt says nothing about which one they picked.
+-- Raises the Robux prompt server-side, which is where the chosen plot is remembered -- the receipt can't say.
 function PlotController:RequestPlotProduct(plotId: string)
 	self.RequestPlotProductEvent:FireServer(plotId)
 end
 
--- Burns the overgrowth back on a plot that was just bought (fired by the PlotCleared effect). Only
--- the server knows a purchase happened, which is why this comes in as an effect rather than off the
--- plot's own replicated state -- see Plot:PlayClearBurn.
+-- Burns a bought plot's overgrowth back, as an effect since only the server knows a purchase happened.
 function PlotController:PlayClearBurn(plotModel: Model)
 	local plot = self._plots[plotModel]
 	if not plot then
@@ -84,16 +66,14 @@ function PlotController:PlayClearBurn(plotModel: Model)
 	plot:PlayClearBurn()
 end
 
--- Repaints every plot's sign. Cheap, and it depends on both which base is the local player's and how
--- many plots they've bought, so it runs whenever either changes.
+-- Repaints every plot's sign. Cheap, and it depends on the local base and how many plots are owned.
 function PlotController:RefreshSigns()
 	for _, plot in self._plots do
 		plot:RefreshSign()
 	end
 end
 
--- Tracks a base's plots once its folder has replicated. Models stream in non-atomically, so the wait
--- lives here -- it's the signs on the plots that move, and each Plot follows its own.
+-- Tracks a base's plots once its folder has replicated; the wait lives here, and each Plot follows its own sign.
 function PlotController:_setupBase(baseModel: Model)
 	local folder = baseModel:WaitForChild(Plots.FOLDER_NAME, CHILD_TIMEOUT)
 	if not folder then
@@ -101,18 +81,18 @@ function PlotController:_setupBase(baseModel: Model)
 		return
 	end
 
-	-- Waiting above yields, so the base can have streamed back out in the meantime.
+	-- Waiting above yields, so the base can have streamed back out in the meantime
 	if not baseModel.Parent then
 		return
 	end
 
 	for _, plotModel in folder:GetChildren() do
-		-- Anything in the folder the grid doesn't know about isn't ours to drive.
+		-- Anything in the folder the grid doesn't know about isn't ours to drive
 		if not Plots.IsPlot(plotModel.Name) then
 			continue
 		end
 
-		-- A racing thread can have built this plot while the folder wait yielded.
+		-- A racing thread can have built this plot while the folder wait yielded
 		if self._plots[plotModel] then
 			continue
 		end
@@ -134,9 +114,7 @@ function PlotController:_removeBase(baseModel: Model)
 end
 
 function PlotController:OnStart()
-	-- Bases stream out and back in as brand-new instances, and at boot the folder's contents can still
-	-- be in flight -- so watch the folder rather than sweeping it once. Off this thread because the
-	-- loader runs every OnStart on one, and both the folder wait and _setupBase's child wait yield.
+	-- Watched rather than swept once, and off this thread since the loader runs every OnStart on one
 	task.spawn(function()
 		local baseFolder = workspace:WaitForChild("Base")
 
@@ -147,7 +125,7 @@ function PlotController:OnStart()
 			self:_removeBase(baseModel)
 		end)
 
-		-- _setupBase waits on the base's plot folder, so keep the sweep off this thread too.
+		-- _setupBase waits on the base's plot folder, so keep the sweep off this thread too
 		for _, baseModel in baseFolder:GetChildren() do
 			task.spawn(function()
 				self:_setupBase(baseModel)
@@ -155,16 +133,12 @@ function PlotController:OnStart()
 		end
 	end)
 
-	-- BaseId lands after the plots are already built, and changes when the local player is assigned or
-	-- loses a base -- re-check which signs should be up and which should come down.
+	-- BaseId lands after the plots are built and moves on assignment, so re-check which signs are up
 	LocalPlayer:GetAttributeChangedSignal("BaseId"):Connect(function()
 		self:RefreshSigns()
 	end)
 
-	-- Buying one plot changes what every other sign on the base says, since they're all priced off the
-	-- same count -- so the whole set repaints rather than just the one that was bought.
-	--
-	-- Listening yields on the replica, so keep it off the start thread.
+	-- One purchase repaints the whole set, all being priced off the same count. Listening yields, so keep it off the start thread
 	task.spawn(function()
 		self._cleaner:Add(PlayerDataController:ListenForChange("Plots", function()
 			self:RefreshSigns()

@@ -1,10 +1,4 @@
--- Step 2: The same beat again for the stick stand, which is the other half of a working stall -- the
--- stand is where a BBQ gets built and the griller is where it gets cooked, and every beat from step 10
--- on wants both of them standing.
---
--- Second rather than folded into step 1 so the player puts one thing down, sees it land, and only then
--- is asked for the next. Two tools out at once on a first build is a choice, and this beat isn't ready
--- to be one.
+-- Step 2: the same beat for the stick stand, the other half of a working stall. Separate from step 1 so they put one thing down and see it land before being asked for the next.
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 -- Shared
@@ -27,10 +21,9 @@ return function(self)
 		return if isEquipped() then nil else self:GetStructureTool(CATEGORY)
 	end)
 
-	-- Hotbar only until the tool is out, and the world left alone until then -- see step 1.
+	-- Hotbar only until the tool is out, and the world left alone until then -- see step 1
 	self:AwaitGoal(nil, {
-		-- Named rather than called "the other one": placing the last of a kind takes its tool out of the
-		-- backpack, so by now the griller's slot is gone and there's nothing to say "other" to.
+		-- Named rather than "the other one" -- placing the last griller took its slot, so there's nothing to say other to
 		Description = `Equip your {self:Emphasize("Stick Stand")}`,
 		Wait = function()
 			while not isEquipped() do

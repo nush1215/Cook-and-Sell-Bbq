@@ -1,29 +1,21 @@
 -- Camera
 local Camera = workspace.CurrentCamera
 
--- Cache the viewport size once and refresh it on change so the per-particle
--- update loop never has to touch the camera every frame.
+-- Cached and refreshed on change, so the per-particle loop never touches the camera
 local viewportX, viewportY = Camera.ViewportSize.X, Camera.ViewportSize.Y
 Camera:GetPropertyChangedSignal("ViewportSize"):Connect(function()
 	viewportX, viewportY = Camera.ViewportSize.X, Camera.ViewportSize.Y
 end)
 
--- Size is expressed as a viewport scale (fraction of the screen) instead of a fixed
--- pixel offset so confetti shrinks proportionally on small screens instead of looking massive.
--- DEFAULT_SIZE is the fraction of viewport height (0.028 ~= 30px on a 1080-tall screen).
+-- A viewport-height fraction rather than pixels, so confetti scales with the screen (0.028 ~= 30px at 1080)
 local DEFAULT_SIZE = 0.028
 
--- Forces/gravity are authored in pixels for a screen this tall. The motion is rescaled to the
--- live viewport so a velocity covers the same fraction of the screen on every resolution -- on a
--- small screen, fixed-pixel velocities would otherwise rocket particles off-screen in a few frames.
+-- Authored in pixels for this height and rescaled live, or a small screen would rocket particles off it
 local REFERENCE_VIEWPORT_Y = 1080
 
--- Reference simulation rate. :Update(dt) scales its motion by dt/STEP so the effect is frame-rate
--- independent: at 60 fps a frame is exactly one step (identical to the original tuning), lower fps
--- takes proportionally bigger steps to keep wall-clock speed, and high-refresh displays take smaller
--- ones without fast-forwarding. One update per frame (no fixed-step batching) keeps it judder-free.
+-- The reference rate; Update scales motion by dt/STEP for frame-rate independence, one update per frame
 local STEP = 1 / 60
--- Per-step velocity drag, stored as the reciprocal so it can be raised to a fractional step count.
+-- Per-step drag, stored as the reciprocal so it can be raised to a fractional step count
 local DRAG_X = 1 / 1.01
 local DRAG_Y = 1 / 1.05
 local DEFAULT_COLORS = {
@@ -37,7 +29,7 @@ local DEFAULT_COLORS = {
 	Color3.fromRGB(255, 215, 0),
 }
 
--- Reuse ImageLabels from a pool so heavy bursts/rain never thrash Instance.new/Destroy.
+-- Reuse ImageLabels from a pool so heavy bursts never thrash Instance.new/Destroy
 local POOL_SIZE = 100
 local labelPool = {}
 
@@ -96,8 +88,7 @@ function UIConfetti.new(options: ConfettiOptions)
 	local colors = options.Colors or DEFAULT_COLORS
 	local color = colors[math.random(#colors)]
 
-	-- Convert pixel-authored velocity/gravity to the live viewport so the trajectory covers the
-	-- same fraction of the screen at any resolution (the integrated position scales linearly too).
+	-- Rescaled to the live viewport, so a trajectory covers the same fraction of screen at any resolution
 	local motionScale = viewportY / REFERENCE_VIEWPORT_Y
 
 	-- Scalar state avoids allocating Vector2s every frame in :Update().
@@ -152,26 +143,19 @@ function UIConfetti:Update(dt: number)
 
 	label.Visible = true
 
-	-- How many reference (1/60 s) steps this frame represents. At 60 fps this is 1, so the math
-	-- below reduces to the original per-step formulas; off 60 fps it scales motion to keep the
-	-- effect frame-rate independent.
+	-- Reference steps this frame represents; at 60 fps this is 1 and the maths below is the original
 	local steps = dt / STEP
 
 	local gravityX, gravityY = self.GravityX, self.GravityY
 	local newPosX = self.PosX - self.PowerX * steps
 	local newPosY = self.PosY - self.PowerY * steps
-	-- Light horizontal drag only. A heavy divisor here makes PowerX asymptote to zero
-	-- (there's no horizontal gravity for side bursts), so particles decelerate to a halt
-	-- at a fixed offset from their edge and pile up mid-screen. Keep most of the momentum
-	-- so they arc across and fall spread out instead. Drag is raised to the step count so the
-	-- decay matches wall-clock time; gravity is an acceleration so it scales linearly.
+	-- Light drag only, or particles decelerate to a halt mid-screen. Raised to the step count, where gravity scales linearly
 	local newPowerX = self.PowerX * DRAG_X ^ steps - gravityX * steps
 	local newPowerY = self.PowerY * DRAG_Y ^ steps - gravityY * steps
 
 	label.Position = UDim2.new(self.EmitterX, newPosX, self.EmitterY, newPosY)
 
-	-- Compute the on-screen position from the scale emitter + pixel offset instead of reading
-	-- AbsolutePosition back every frame (assumes a full-screen parent, which the controller uses).
+	-- Computed from the emitter and offset rather than reading AbsolutePosition back each frame
 	local absX = self.EmitterX * viewportX + newPosX
 	local absY = self.EmitterY * viewportY + newPosY
 	self.OutOfBounds = (absX > viewportX and gravityX > 0)
@@ -187,7 +171,7 @@ function UIConfetti:Update(dt: number)
 		local size, side = self.Size, self.Side
 		local baseSize = self.BaseSize
 		local color = self.CurrentColor
-		-- Step the height scale over ~15 frames per flip, matching the original offset cadence.
+		-- Step the height scale over ~15 frames per flip, matching the original offset cadence
 		local step = baseSize / 15
 
 		if size <= 0 then

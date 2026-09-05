@@ -9,10 +9,7 @@ export type Effect = {
 	EmitParticles: () -> (),
 }
 
--- Clones an effect folder, parents its children to the target, and gathers the particle emitters inside.
--- @param effectFolder: The template folder/instance to clone
--- @param parent: Where the cloned children get parented
--- @returns A table with the emptied clone, the parented children, every particle emitter inside it, and a cleanup function
+-- Clones an effect folder onto `parent`, returning the clone, its children, its emitters and a cleanup.
 function EffectUtil.ParentEffectFolder(effectFolder: Instance, parent: Instance): Effect
 	local clone = effectFolder:Clone()
 	local children = clone:GetChildren()

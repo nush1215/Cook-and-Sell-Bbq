@@ -17,19 +17,13 @@ local HudController
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer.PlayerGui
 
--- A locked (undiscovered) cell is blacked out and masked behind "???"; a discovered cell shows the
--- real icon, name, odds and value.
+-- A locked cell is blacked out behind "???"; a discovered one shows its icon, name, odds and value
 local UNLOCKED_ICON_COLOR = Color3.new(1, 1, 1)
 local LOCKED_ICON_COLOR = Color3.new(0, 0, 0)
 local LOCKED_TEXT = "???"
 local LOCKED_RARITY_COLOR = Color3.new(1, 1, 1)
 
---[[
-	Drives the Index screen: a grid of every ingredient in the game. Ingredients the player has
-	obtained (present in their replicated IngredientIndex) show their icon, name, odds and value;
-	the rest sit blacked-out as "???" placeholders. Cells are cloned once from the ScrollingFrame's
-	Template in config order, then their locked/discovered look is refreshed as the index replicates in.
-]]
+-- Drives the Index screen: one cell per ingredient in config order, blacked out as "???" until it turns up in the player's replicated IngredientIndex.
 local IndexController = {
 	_cells = {}, -- [ingredientId] = the cloned Template frame for that ingredient
 }
@@ -63,8 +57,7 @@ function IndexController:_setDiscoveredCount(count: number)
 	self.UI.Holder.Discovered.Text = `Discovered Ingredients: {count}/{#Ingredients.GetAllIngredients()}`
 end
 
--- Clones one grid cell per ingredient from the detached Template, in config order, each starting in
--- the locked look so nothing undiscovered flashes before the index reads in.
+-- One cell per ingredient in config order, each starting locked so nothing flashes before the index reads in.
 function IndexController:_buildCells()
 	local scrollingFrame = self.UI.Holder.Container.ScrollingFrame
 	local template = scrollingFrame.Template

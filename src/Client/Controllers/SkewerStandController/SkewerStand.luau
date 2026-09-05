@@ -29,32 +29,27 @@ local PROMPT_DISTANCE = 13
 -- Up to this many skewers sit on the stand; they distribute along its long (local-X) axis.
 local MAX_SKEWERS = 6
 
--- Every placed skewer is shown at this scale so a full row fits the stand -- shared so a customer NPC
--- holds it at the same size.
+-- The scale a placed skewer is shown at, shared so a customer NPC holds it at the same size
 local SKEWER_SCALE = StickModel.DISPLAY_SCALE
 
--- Applied on top of the part's orientation when seating a skewer, so authoring the part controls
--- facing. Identity leaves them upright; swap for a CFrame.Angles(...) to lay them flat instead.
+-- Applied over the part's orientation, so authoring the part controls facing
 local ORIENTATION_OFFSET = CFrame.identity
 
--- The shift spring: underdamped so the placed skewers slide to their new slots (and a freshly placed
--- one drops in) with a little settle rather than snapping.
+-- Underdamped, so skewers slide to new slots and drop in with a settle rather than snapping
 local SHIFT_DAMPING = 0.6
 local SHIFT_FREQUENCY = 2.5
 
 -- Studs above its slot a newly placed skewer drops in from.
 local DROP_RISE = 3
 
--- Each placed skewer gets a small random rotation on top of ORIENTATION_OFFSET so the row doesn't look
--- machine-perfect. Yaw (around the stand's up) varies the most; a little tilt on the other axes adds to it.
+-- A small random rotation per skewer so the row doesn't look machine-perfect; yaw varies most
 local ROTATION_VARIATION_YAW = math.rad(20)
 local ROTATION_VARIATION_TILT = math.rad(6)
 
 -- Required lazily to break the cycle: SkewerStandController requires this class.
 local SkewerStandController
 
--- Whether two skewer records describe the same skewer, so a re-render can tell an untouched one (that
--- just slides to a new slot) from a genuinely different placement.
+-- Whether two records describe the same skewer, so a re-render can tell a slide from a placement.
 local function recordsEqual(a, b): boolean
 	if
 		a.StickId ~= b.StickId
@@ -77,7 +72,7 @@ local function recordsEqual(a, b): boolean
 	return true
 end
 
--- A small random rotation for a placed skewer, kept on its entry so it stays put as the row slides.
+-- A random rotation for a placed skewer, kept on its entry so it stays put as the row slides.
 local function randomSkewerRotation(): CFrame
 	return CFrame.Angles(
 		(math.random() * 2 - 1) * ROTATION_VARIATION_TILT,
@@ -86,53 +81,34 @@ local function randomSkewerRotation(): CFrame
 	)
 end
 
---[[
-    Class for a single base's sell-stall SkewerStand.
-
-    One instance per base, on every client, so placed skewers show up for visitors too. The server
-    writes the placed skewers to the stand part's PlacedSkewers attribute (a JSON list of cooked skewer
-    records); this rebuilds them as scaled-down, anchored models seated along the part's length, the row
-    centred on the part. Placing or removing one slides the rest to their new slots (spr self-drives, so
-    the static stand needs no per-frame glue); the first render and any bulk change snap.
-
-    Only the owner gets prompts: a place prompt on the stand, enabled only while they hold a cooked
-    skewer and the stand has room, plus a "take it back" prompt on each placed skewer that removes that
-    one by its current index.
-]]
+-- One sell stand: renders the placed skewers off its attribute, sliding the row as they come and go, and owns the owner's prompts.
 
 --
 local SkewerStand = {}
 SkewerStand.__index = SkewerStand
 
 function SkewerStand.new(part: BasePart, baseId: string, sellStall: Model)
-	--
 	local cleaner = Trove.new()
 
-	-- The place prompt sits on a PromptAttachment if the place file authored one, else on the part.
+	-- On a PromptAttachment if the place file authored one, else on the part
 	local promptAnchor = part:FindFirstChild("PromptAttachment") or part
 
 	local self = setmetatable({
-		--
 		_part = part,
 		_baseId = baseId,
 		_promptAnchor = promptAnchor,
 
-		-- The stall the stand sits in. The highlight goes on the whole stall rather than the stand
-		-- part, so a player carrying a cooked skewer can pick it out from across the base.
+		-- The whole stall, so someone carrying a cooked skewer can pick it out from across the base
 		_sellStall = sellStall,
 
-		-- One entry per placed skewer, aligned to the records so a re-render can diff them: each is
-		-- { record, model, prompt }. model is nil if the stick id is gone; prompt is the owner's
-		-- per-skewer "take it back" prompt (nil for visitors, and it rides on the model). _rendered gates
-		-- the first render to a snap; _count drives the place prompt.
+		-- One { record, model, prompt } per placed skewer, aligned to the records so a re-render can diff
 		_entries = {},
 		_count = 0,
 		_rendered = false,
 
-		-- The stand's place prompt (owner only; enabled only while holding a cooked skewer).
+		-- The stand's place prompt (owner only; enabled only while holding a cooked skewer)
 		_placePrompt = nil,
 
-		--
 		_cleaner = cleaner,
 		_placeCleaner = cleaner:Construct(Trove),
 	}, SkewerStand)
@@ -152,17 +128,14 @@ function SkewerStand:_owned(): boolean
 	return self._baseId == LocalPlayer:GetAttribute("BaseId")
 end
 
--- The world CFrame skewer `index` of `count` sits at: spread along the part's length by a constant
--- step (so the row re-centres as skewers come and go), sharing the part's orientation. `rotation` is the
--- skewer's own random offset (kept on its entry). `rise` lifts it along the part's up, for a drop-in spawn.
+-- Where skewer `index` of `count` sits: a constant step along the part, so the row re-centres. `rise` is the drop-in lift.
 function SkewerStand:_slotCFrame(index: number, count: number, rotation: CFrame, rise: number?): CFrame
 	local step = self._part.Size.X / MAX_SKEWERS
 	local x = (index - (count + 1) / 2) * step
 	return self._part.CFrame * CFrame.new(x, rise or 0, 0) * ORIENTATION_OFFSET * rotation
 end
 
--- Builds a placed skewer's model: the cooked skewer scaled down, anchored and non-collidable so it
--- just sits on the stand. Returns nil if the stick id is gone from the config.
+-- Builds a placed skewer's model, scaled down and inert. Nil if the stick id is gone from the config.
 function SkewerStand:_buildModel(record): Model?
 	local model = StickModel.BuildStickModel(record)
 	if not model then
@@ -180,12 +153,7 @@ function SkewerStand:_buildModel(record): Model?
 	return model
 end
 
--- Puts a "take it back" prompt on a placed skewer for the owner, or takes it down for a visitor. The
--- prompt rides on the model (so it moves and dies with it) and reports the skewer's current index
--- (which shifts as others come and go) at trigger time.
---
--- Gated here rather than at each of the three places that call this, so a stand can't end up with the
--- take shut on the skewers it re-rendered and open on the ones it didn't.
+-- Puts the owner's take prompt on a placed skewer, riding the model and reporting its current index. Gated here, not per caller.
 function SkewerStand:_refreshRemovePrompt(entry, owned: boolean)
 	SkewerStandController = SkewerStandController or require(script.Parent)
 	local canTake = owned and not SkewerStandController:IsTakeLocked()
@@ -212,9 +180,7 @@ function SkewerStand:_refreshRemovePrompt(entry, owned: boolean)
 	end
 end
 
--- Brings the rendered skewers in line with the stand's PlacedSkewers attribute. A single place slides
--- the row out and drops the new skewer in; a single remove (from any slot) slides the row back; the
--- first render and any bulk change snap into place. New models get the owner's remove prompt.
+-- Reconciles against PlacedSkewers: a single place or remove slides the row, anything else snaps.
 function SkewerStand:_render()
 	local encoded = self._part:GetAttribute("PlacedSkewers")
 	local records = if encoded then HttpService:JSONDecode(encoded) else {}
@@ -237,8 +203,7 @@ function SkewerStand:_render()
 		return true
 	end
 
-	-- The single index removed from `entries` to reach `records` (when n == oldCount - 1), or nil if it
-	-- isn't a clean one-skewer removal.
+	-- The single index removed to reach `records`, or nil if it isn't a clean one-skewer removal
 	local function removalIndex(): number?
 		for k = 1, oldCount do
 			local match = true
@@ -273,7 +238,7 @@ function SkewerStand:_render()
 	end
 
 	if mode == "bulk" then
-		-- Snap: drop everything and reseat from scratch, no animation.
+		-- Snap: drop everything and reseat from scratch, no animation
 		for _, entry in entries do
 			if entry.model then
 				Spr.stop(entry.model)
@@ -299,7 +264,7 @@ function SkewerStand:_render()
 	end
 
 	if mode == "remove" then
-		-- The removed skewer leaves (its prompt is a child of the model, so it goes too).
+		-- The removed skewer leaves; its prompt is a child of the model, so it goes too
 		local removed = entries[removeAt]
 		if removed.model then
 			Spr.stop(removed.model)
@@ -308,8 +273,7 @@ function SkewerStand:_render()
 		table.remove(entries, removeAt)
 	end
 
-	-- append / remove: the skewers that stay slide to their new slots as the row re-centres. Each keeps
-	-- its own stored rotation so it doesn't spin as it slides.
+	-- The skewers that stay slide as the row re-centres, each keeping its rotation so it doesn't spin
 	for i = 1, #entries do
 		local entry = entries[i]
 		entry.record = records[i]
@@ -319,7 +283,7 @@ function SkewerStand:_render()
 	end
 
 	if mode == "append" then
-		-- The new skewer drops into its slot from just above.
+		-- The new skewer drops into its slot from just above
 		local record = records[n]
 		local rotation = randomSkewerRotation()
 		local model = self:_buildModel(record)
@@ -328,8 +292,7 @@ function SkewerStand:_render()
 			model.Parent = self._part
 			Spr.target(model, SHIFT_DAMPING, SHIFT_FREQUENCY, { Pivot = self:_slotCFrame(n, n, rotation) })
 
-			-- Off the skewer itself rather than the stand, so a place at the end of a full row sounds
-			-- like it came from that end rather than the middle.
+			-- Off the skewer, so a place at the end of a full row sounds like it came from that end
 			SoundController:PlaySound("Place", model:GetPivot())
 		end
 		local entry = { record = record, model = model, prompt = nil, rotation = rotation }
@@ -340,8 +303,7 @@ function SkewerStand:_render()
 	self:_refreshPlaceEligibility()
 end
 
--- Re-evaluates ownership: the owner gets the place prompt (enabled only with an eligible skewer in
--- hand) and a "take it back" prompt on each placed skewer; a visitor gets neither.
+-- Re-evaluates ownership: the owner gets the place prompt and a take prompt per skewer, a visitor neither.
 function SkewerStand:RefreshPrompt()
 	local owned = self:_owned()
 
@@ -372,10 +334,7 @@ function SkewerStand:RefreshPrompt()
 	end
 end
 
--- Reflects "could the local player put a skewer here right now" onto both cues. Any skewer with room
--- qualifies, however it was cooked -- a raw one goes on the stand the same as any other, it just sells
--- for almost nothing -- so the prompt and the glow say the same thing. Ownership is checked here rather
--- than leaning on the prompt existing, so losing the base takes the highlight down with it.
+-- Puts the same answer on the prompt and the glow. Any skewer with room qualifies, however it cooked.
 function SkewerStand:_refreshPlaceEligibility()
 	local skewer = EquippedItem.GetSkewer()
 	local hasRoom = self:_owned() and skewer ~= nil and self._count < MAX_SKEWERS
@@ -393,8 +352,7 @@ function SkewerStand:_refreshPlaceEligibility()
 end
 
 function SkewerStand:Destroy()
-	-- The stall is the base's, not ours, so leaving the tag on would keep it breathing with nothing
-	-- driving it.
+	-- The stall is the base's, so leaving the tag on would keep it breathing with nothing driving it
 	self._sellStall:RemoveTag(Highlights.TAG)
 
 	for _, entry in self._entries do

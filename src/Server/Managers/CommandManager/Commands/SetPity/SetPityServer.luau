@@ -16,9 +16,7 @@ return function(context, tierId: string, count: number?, player: Player?)
 	local target = player or context.Executor
 	local tier = Ingredients.GetTierFromId(tierId)
 
-	-- No count means "fast-forward to the payout", which is the whole point of running this by hand: the
-	-- thresholds are derived from the chance column, so typing one from memory goes stale on a rebalance.
-	-- `or` rather than a nil check, so an explicit 0 still clears the counter.
+	-- No count means fast-forward to the payout; the thresholds move on a rebalance, so typing one goes stale
 	local rolls = count or tier.PityThreshold
 
 	IngredientRollingManager:SetPlayerPityCount(target, tierId, rolls)
@@ -41,12 +39,10 @@ return function(context, tierId: string, count: number?, player: Player?)
 		end
 	end
 
-	-- Roll rather than pull: the counter is spent by the first roll of the pull and resets, so a six-stand
-	-- base still rolls the other five normally.
+	-- Roll, not pull: the counter is spent by the pull's first roll, so a wide base rolls the rest normally
 	local armed = `{target.Name}'s next roll is a guaranteed {tierId}: {table.concat(names, ", ")}.`
 
-	-- The roll lands either way, so this is a heads-up rather than a refusal -- worth saying, because the
-	-- stand will hold something they can't buy and the next pull overwrites every stand.
+	-- A heads-up, not a refusal -- the stand will hold something unaffordable, and the next pull overwrites it
 	local canAfford, shortfall = CurrencyManager:CanAfford(target, cheapest.Price)
 	if not canAfford then
 		return `{armed} They can't afford one yet though -- ${GuiUtil.ConvertNumberWithCommas(shortfall)} short of {cheapest.Name}, so it'll sit unbought and their next pull will replace it.`

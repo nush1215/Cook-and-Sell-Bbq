@@ -74,8 +74,7 @@ local KeyCodeToTextMapping = {
 
 --
 local CustomProximityPromptController = {
-	-- The teardown for each prompt whose UI is currently up, so hiding can be driven by whichever of the
-	-- prompt's signals (or the service's) gets there first rather than by one parked thread.
+	-- The teardown per shown prompt, so whichever signal gets there first drives the hide
 	_shown = {}, -- [prompt] = finish
 }
 
@@ -124,8 +123,7 @@ function CustomProximityPromptController:_createPrompt(prompt, inputType, gui)
 	local imageTransparency = frame.ImageTransparency
 	frame.BackgroundTransparency = 1
 	frame.ImageTransparency = 1
-	-- TODO consolidate this with the other tweens for image labels, theres some duplication
-	-- TODO make these functions somehow consolidate the properties objects?
+	-- TODO: consolidate with the other image-label tweens, and share the property tables
 	table.insert(
 		tweensForButtonHoldBegin,
 		TweenService:Create(
@@ -257,7 +255,7 @@ function CustomProximityPromptController:_createPrompt(prompt, inputType, gui)
 	local expectedFrameChildren = { [inputFrame] = false, [actionText] = true, [objectText] = true }
 	for _, child in pairs(frame:GetChildren()) do
 		if expectedFrameChildren[child] == nil then
-			-- Unexpected child of the frame and direct children elements
+			-- Unexpected child of the frame, and its direct children
 			setupUnexpectedChildTweens(child)
 		elseif expectedFrameChildren[child] == true then
 			for _, grandChild in pairs(child:GetChildren()) do
@@ -495,11 +493,7 @@ function CustomProximityPromptController:_createPrompt(prompt, inputType, gui)
 	local triggeredConnection
 	local triggerEndedConnection
 
-	-- Wired whatever the prompt's HoldDuration is right now, and the ring is timed per hold rather than
-	-- built once up front: HoldDuration can change while the prompt is up (the grill's take asks to be
-	-- held only while the cook is raw), and a ring baked at show time would run at the wrong length --
-	-- or not at all -- for the rest of the show. Costs nothing on a press-to-fire prompt, since the
-	-- engine only raises these when there's a hold to run.
+	-- Timed per hold, since HoldDuration can change while the prompt is up. Costs nothing on a press-to-fire one
 	local holdTween
 
 	holdBeganConnection = prompt.PromptButtonHoldBegan:Connect(function()
@@ -516,8 +510,7 @@ function CustomProximityPromptController:_createPrompt(prompt, inputType, gui)
 	end)
 
 	holdEndedConnection = prompt.PromptButtonHoldEnded:Connect(function()
-		-- Cancelled and written straight back rather than tweened to 0: the ring has to be empty for the
-		-- next hold on the same frame the current one lets go.
+		-- Written straight back, not tweened: the ring must be empty on the frame the hold lets go
 		if holdTween then
 			holdTween:Cancel()
 			holdTween = nil
@@ -639,34 +632,27 @@ function CustomProximityPromptController:_createPrompt(prompt, inputType, gui)
 
 		task.wait(0.2)
 
-		-- Destroyed rather than unparented: the button and progress-bar connections above live on the UI's
-		-- own descendants, and Destroy is what actually drops them.
+		-- Destroyed, not unparented -- the connections live on the UI's own descendants
 		promptUI:Destroy()
 	end
 
 	return cleanup
 end
 
--- Puts the custom UI up for a prompt that has just been shown, and arms its teardown on every way the
--- prompt can go away. This used to park a thread on `prompt.PromptHidden:Wait()`, which only works while
--- the prompt outlives the show: Destroy drops every connection on the prompt (a waiting thread included),
--- and this game destroys shown prompts on nearly every interaction -- the buy prompt goes with the
--- purchase, the take prompt with the take, the remove prompt with its model -- so each of those stranded
--- the whole prompt UI (and its tweens) in PlayerGui for the rest of the session. Faded out, so nobody saw
--- it, but still laid out every frame.
+-- Puts the custom UI up and arms its teardown on every way the prompt can go. Parking on PromptHidden stranded UIs, since Destroy drops the waiting thread with it.
 function CustomProximityPromptController:_showPrompt(prompt: ProximityPrompt, inputType: Enum.ProximityPromptInputType)
 	if prompt.Style == Enum.ProximityPromptStyle.Default then
 		return
 	end
 
-	-- Shown again without a hide in between: take the last UI down before putting the next one up.
+	-- Shown again without a hide: take the last UI down before putting the next one up
 	self:_hidePrompt(prompt)
 
 	local cleanup = self:_createPrompt(prompt, inputType, getScreenGui())
 	local signalCleaner = Trove.new()
 
 	local function finish()
-		-- Already taken down by another of the signals below, or by the service-level hide.
+		-- Already taken down by another of the signals below, or by the service-level hide
 		if self._shown[prompt] ~= finish then
 			return
 		end
@@ -674,15 +660,13 @@ function CustomProximityPromptController:_showPrompt(prompt: ProximityPrompt, in
 		self._shown[prompt] = nil
 		signalCleaner:Destroy()
 
-		-- On its own thread: the fade-out inside waits before destroying the UI, and none of the signals
-		-- this hangs off should be held up by that.
+		-- On its own thread: the fade-out waits before destroying, and no signal should be held up by it
 		task.spawn(cleanup)
 	end
 
 	self._shown[prompt] = finish
 
-	-- Hidden while alive, destroyed while shown, or pulled out of the world without a Destroy (a server
-	-- reparent into storage reaches this client as the parent going nil) -- whichever lands first wins.
+	-- Hidden, destroyed, or reparented out of the world -- whichever lands first wins
 	signalCleaner:Connect(prompt.PromptHidden, finish)
 	signalCleaner:Connect(prompt.Destroying, finish)
 	signalCleaner:Connect(prompt.AncestryChanged, function(_, parent)
@@ -692,9 +676,7 @@ function CustomProximityPromptController:_showPrompt(prompt: ProximityPrompt, in
 	end)
 end
 
--- Takes a prompt's custom UI down if it's up. Driven off the service-level PromptHidden as well as the
--- prompt's own signals: the service's connection isn't one of the prompt's, so it survives the prompt
--- being destroyed.
+-- Takes a prompt's custom UI down. Also off the service-level PromptHidden, which survives the prompt being destroyed.
 function CustomProximityPromptController:_hidePrompt(prompt: ProximityPrompt)
 	local finish = self._shown[prompt]
 	if finish then
@@ -709,9 +691,7 @@ function CustomProximityPromptController:OnInit()
 		SoundController:PlaySound("ButtonClick")
 	end)
 
-	-- Record the shown state on the prompt itself so components that attach to
-	-- the prompt's subject after it's already shown (e.g. a tag added mid-show)
-	-- can query the current state instead of waiting for the next event.
+	-- Recorded on the prompt so a component attaching mid-show can read the state rather than await the next event
 	ProximityPromptService.PromptShown:Connect(function(prompt, inputType)
 		prompt:SetAttribute("Shown", true)
 		self:_showPrompt(prompt, inputType)

@@ -20,8 +20,7 @@ local EffectController = require(script.Parent.Parent.Controllers.EffectControll
 local PULSE_DURATION = 1.25
 local CLEANUP_DELAY = 3
 
--- One reward arriving out of a crate: a burst off it and a slow flash over it, long enough to still be
--- fading while the row hovers. Run per reward, so a crate paying out four of them fires this four times.
+-- One reward arriving: a burst and a slow flash, still fading as the row hovers. Run per reward.
 return function(loot: Model)
 	EffectController:RunEffect("HighlightPulse", { loot, CratesConfig.FLASH_COLOR, PULSE_DURATION, 0 })
 

@@ -22,20 +22,7 @@ local SoundController = require(Controllers.SoundController)
 -- Required lazily to break the cycle: CrateController requires this class.
 local CrateController
 
---[[
-    One spawned crate's own behaviour, on every client -- so an open is something the people around
-    you watch rather than something only you see.
-
-    Two states, and Open is terminal. A crate that's been thrown to its slot goes straight into it;
-    Idle is the resting hop of a crate that sits waiting to be opened instead, which is what the
-    post-tutorial playtime crate will be.
-
-    The open itself: the crate rattles, harder and faster and a little higher each beat, hops once
-    more, and slams back down onto its slot -- and on the frame it lands it blows out to POP_SCALE
-    while every part turns into a flat block of light and fades, its contents coming out of that
-    flash. The reveal is the controller's, since it's the half that has to talk to the server; this
-    class just hands off to it at the moment of the pop.
-]]
+-- One spawned crate's own behaviour on every client: Idle hops where it sits, Open rattles, slams and pops. The reveal is the controller's, handed off at the pop.
 
 --
 export type State = "Idle" | "Open"
@@ -57,8 +44,7 @@ function Crate.new(model: Model)
 	return self
 end
 
--- Changes the crate's state and runs the matching hook. Open is where a crate ends, so nothing moves
--- it out of there.
+-- Changes state and runs the matching hook. Open is terminal, so nothing moves out of it.
 function Crate:SetState(state: State): boolean
 	if self.State == state or self.State == "Open" then
 		return false
@@ -80,9 +66,7 @@ function Crate:Open(): boolean
 	return self:SetState("Open")
 end
 
--- The resting hop of a crate that's waiting to be opened rather than being thrown and opened on
--- arrival. Nothing spawns one of those yet -- it's what the post-tutorial playtime crate will be --
--- so this hangs off the AutoIdle spawn flag, and that crate is a flag rather than a rewrite.
+-- The resting hop of a crate waiting to be opened. Nothing spawns one yet -- it hangs off the AutoIdle flag.
 function Crate:OnIdle()
 	local model = self.Model
 
@@ -97,8 +81,7 @@ function Crate:OnIdle()
 	spinSpring.Speed = 15
 	spinSpring.Damper = 0.65
 
-	-- Pinned to where the crate is now, so this must not start until whatever put it there has
-	-- finished moving it or the two fight over the pivot.
+	-- Pinned to where the crate is now, so it must not start while anything is still moving it
 	local restCFrame = model:GetPivot()
 
 	self._idleCleaner:Add(RunService.RenderStepped:Connect(function()
@@ -126,8 +109,7 @@ function Crate:OnIdle()
 	end))
 end
 
--- The open: rattle up off the slot, hop, slam back down, and pop into light on the impact -- then
--- hand the reveal over to the controller.
+-- The open: rattle, hop, slam and pop into light, then hand the reveal to the controller.
 function Crate:OnOpen()
 	local model = self.Model
 
@@ -140,8 +122,7 @@ function Crate:OnOpen()
 	local basePivot = model:GetPivot()
 	local baseScale = model:GetScale()
 
-	-- The rattle: a random jolt per beat, coming faster each time and carrying the crate a little
-	-- further off its slot, so it builds rather than just buzzing.
+	-- A random jolt per beat, faster and further each time, so the rattle builds rather than buzzes
 	local angle = CratesConfig.TWITCH_ANGLE
 	local waitTime = CratesConfig.TWITCH_INITIAL_WAIT
 	local lift = 0
@@ -161,7 +142,7 @@ function Crate:OnOpen()
 		lift = math.min(lift + CratesConfig.TWITCH_LIFT_PER_BEAT, CratesConfig.TWITCH_LIFT_MAX)
 		Spr.target(model, 0.5, 6, { Pivot = basePivot * CFrame.new(0, lift, 0) * jolt })
 
-		-- The effect owns the puff, the flash and the rattle sound between them, so a beat is one call
+		-- The effect owns the puff, flash and sound between them, so a beat is one call
 		EffectController:RunEffect("CrateTwitch", model)
 
 		task.wait(waitTime)
@@ -172,12 +153,10 @@ function Crate:OnOpen()
 		return
 	end
 
-	-- The rattle stops on a full flash across the whole crate, which is what sells the hop as the crate
-	-- winding up rather than just pausing
+	-- The rattle ends on a full flash, which sells the hop as a wind-up rather than a pause
 	EffectController:RunEffect("HighlightPulse", { model, CratesConfig.FLASH_COLOR, 1, 0 })
 
-	-- One last hop, straight up and back level -- adding the lift in world space rather than through
-	-- the pivot drops the jolt's rotation with it, so the crate rights itself at the top
+	-- Lifted in world space rather than through the pivot, so the jolt's rotation drops and it rights itself
 	task.wait(CratesConfig.TWITCH_SETTLE)
 	Spr.target(model, 0.5, 4, { Pivot = basePivot + Vector3.new(0, lift + CratesConfig.WINDUP_LIFT, 0) })
 	task.wait(CratesConfig.WINDUP_DURATION)
@@ -186,7 +165,7 @@ function Crate:OnOpen()
 		return
 	end
 
-	-- Then straight back down onto the slot. What it lands on is the pop.
+	-- Then straight back down onto the slot. What it lands on is the pop
 	Spr.target(model, 0.5, 5, { Pivot = basePivot })
 	SoundController:PlaySound("CrateDrop", model.PrimaryPart, {
 		PlaybackSpeed = Random.new():NextNumber(0.97, 1.03),
@@ -197,11 +176,7 @@ function Crate:OnOpen()
 		return
 	end
 
-	-- The pop, all on one frame. Neon only reads if nothing is painted over it, so what's painted on
-	-- goes first: a SurfaceAppearance overrides colour and material outright, and a decal sits on top
-	-- of both -- leave either on and the crate swells and fades without ever lighting up. The model is
-	-- a clone that's seconds from being destroyed, so this costs the asset nothing. (Texture inherits
-	-- from Decal, so the one check covers both.)
+	-- Neon only reads with nothing painted over it, so the SurfaceAppearance and decals go first. The model is seconds from destruction, so this costs the asset nothing
 	for _, descendant in model:GetDescendants() do
 		if descendant:IsA("SurfaceAppearance") or descendant:IsA("Decal") then
 			descendant:Destroy()
@@ -214,16 +189,13 @@ function Crate:OnOpen()
 		end
 	end
 
-	-- Scale only: the slam already owns the pivot, and re-targeting it here with a different damping
-	-- would jerk the landing out from under itself
+	-- Scale only -- the slam owns the pivot, and re-targeting would jerk the landing out from under itself
 	Spr.target(model, 0.6, 4, { Scale = baseScale * CratesConfig.POP_SCALE })
 
-	-- The impact throws dust the same way any other landing does. The shell is only a husk from here,
-	-- but it has to outlive these particles, which is what POP_LINGER is sized for.
+	-- The shell is a husk from here but must outlive these particles, which is what POP_LINGER sizes
 	EffectController:RunEffect("CrateLand", model)
 
-	-- Same frame as the pop, so the contents come out of the flash rather than after it. The slot is
-	-- handed over rather than read back off the model, which is still mid-spring from the slam.
+	-- Same frame as the pop. The slot is handed over rather than read back, the model still mid-spring
 	CrateController = CrateController or require(script.Parent)
 	CrateController:RevealContents(model, basePivot)
 
@@ -233,9 +205,7 @@ function Crate:OnOpen()
 	end)
 end
 
--- Drops everything this crate owns. Spr is taken off the model first: a Pivot spring on a destroyed
--- instance is still stepped every frame forever, which is the leak that ate the frame rate once
--- already.
+-- Drops everything this crate owns. Spr comes off first -- a Pivot spring on a destroyed instance is stepped forever.
 function Crate:Destroy()
 	Spr.stop(self.Model)
 	self._cleaner:Destroy()

@@ -27,12 +27,7 @@ local UIController = {
 	_currentOpenedFrame = nil,
 }
 
---[[
-	Opens up the frame that we provide:
-	- frame: Frame - The frame to open
-	- independent: boolean? - Whether or not this frame is independent of others
-	if its not independent it will close any other open frames
-]]
+-- Opens `frame`, closing any other open frame unless `independent`.
 function UIController:OpenFrame(frame: Frame, independent: boolean?)
 	local uiScale = frame:FindFirstChildOfClass("UIScale")
 	if not uiScale then
@@ -75,12 +70,8 @@ function UIController:OpenFrame(frame: Frame, independent: boolean?)
 	self.OnFrameOpened:Fire(frame)
 end
 
---[[
-	Closes the frame that we provide
-	- frame: Frame - The frame to close
-]]
+-- Closes `frame`.
 function UIController:CloseFrame(frame: Frame)
-	--
 	frame.Visible = false
 
 	if self._currentOpenedFrame == frame then
@@ -96,22 +87,14 @@ function UIController:CloseFrame(frame: Frame)
 	self.OnFrameClosed:Fire(frame)
 end
 
---[[
-	Closes whatever frame is open, if any -- for callers that need the screen clear without knowing
-	what's on it. Nothing to do when nothing is open.
-]]
+-- Closes whatever frame is open, for callers needing the screen clear without knowing what's on it.
 function UIController:CloseOpenFrame()
 	if self._currentOpenedFrame then
 		self:CloseFrame(self._currentOpenedFrame)
 	end
 end
 
---[[
-	`activateOnPress` answers on the press instead of the release. Activated needs the release to land
-	back on the same button, which a button that moves under the finger can't promise -- the ones on a
-	BillboardGui tracking an animated NPC lose every touch that way. Only for buttons there's nothing to
-	change your mind about mid-tap; everything else wants the default, where sliding off cancels.
-]]
+-- `activateOnPress` answers on the press, for buttons that move under the finger -- a billboard on an animated NPC loses every touch otherwise.
 function UIController:BindButtonClick(
 	button: GuiButton,
 	clickCallback: () -> (),
@@ -128,7 +111,6 @@ function UIController:BindButtonClick(
 	}?,
 	activateOnPress: boolean?
 ): { Disconnect: () -> () }
-	--
 	local cleaner = Trove.new()
 
 	-- MouseButton1Down covers touch as well as the mouse, so there's no separate tap path to bind.
@@ -169,10 +151,8 @@ function UIController:BindButtonEffect(
 	}?,
 	activateOnPress: boolean?
 )
-	--
 	local cleaner = Trove.new()
 
-	--
 	properties = properties or {}
 	local showFrame = properties.ShowFrame or button
 	local buttonDownScale = properties.ButtonDownScale
@@ -182,7 +162,6 @@ function UIController:BindButtonEffect(
 	local clickSoundName = properties.ClickSoundName
 	local buttonNormalScale = properties.ButtonNormalScale
 
-	--
 	local uiScale = showFrame:FindFirstChildOfClass("UIScale")
 	if not uiScale then
 		uiScale = Instance.new("UIScale")
@@ -212,8 +191,7 @@ function UIController:BindButtonEffect(
 		end,
 	}
 
-	-- Track the held state so dragging (e.g. a slider handle moving under the
-	-- cursor) keeps the pressed spring instead of flickering to hover.
+	-- Tracked so dragging a handle under the cursor keeps the pressed spring instead of flickering to hover
 	local isPressed = false
 
 	cleaner:Add(button.MouseButton1Down:Connect(function()
@@ -221,9 +199,7 @@ function UIController:BindButtonEffect(
 		buttonSprings.Press()
 	end))
 
-	-- The click sound answers on the same edge the callback does, so what the player hears is only
-	-- ever a click that actually landed -- pressing and sliding off cancels both. The press spring
-	-- above stays on the way down: that's the button being held, not the click registering.
+	-- On the same edge as the callback, so only a click that landed is heard. The press spring stays on the way down
 	local soundSignal = if activateOnPress then button.MouseButton1Down else button.Activated
 
 	cleaner:Add(soundSignal:Connect(function()
@@ -283,7 +259,6 @@ end
 function UIController:OnInit()
 	SoundController = require(script.Parent.SoundController)
 
-	--
 	for _, v in PlayerGui:GetDescendants() do
 		if not v:IsA("UIStroke") then
 			continue

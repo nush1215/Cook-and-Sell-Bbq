@@ -11,9 +11,7 @@ return function(self)
 	local stall = workspace:WaitForChild("Stalls"):WaitForChild("StickStall")
 	local holder = PlayerGui:WaitForChild("StickShopUI").Holder
 
-	-- The glow goes on the stall and the beam still lands on the zone: the stall is the thing a player
-	-- scans the map for, but the zone is what actually opens the shop, and it's the zone the beam has
-	-- always been aimed at.
+	-- The glow marks the stall a player scans for; the beam stays on the zone, which is what opens the shop
 	local highlight = self:CreateBreathingHighlight(stall)
 	local beam = self:CreateBeam(zone, BEAM_HIDE_DISTANCE)
 

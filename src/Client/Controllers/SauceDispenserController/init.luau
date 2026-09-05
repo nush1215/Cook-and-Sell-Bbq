@@ -1,6 +1,4 @@
--- Sauce dispensers are postponed to a future update: the models are out of the workspace and the server
--- side is dormant, so there's nothing to render or fire at. Everything below is intact -- un-comment it
--- alongside SauceDispenserManager to bring it back.
+-- Dormant while sauce dispensers are postponed -- un-comment alongside SauceDispenserManager.
 
 --[==[
 -- Services

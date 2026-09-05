@@ -24,18 +24,7 @@ local PANEL_WIDTH = 300
 local ROW_HEIGHT = 22
 local BREAKDOWN_HEIGHT = 150
 
---[[
-	A read-out of what the current play session has come to: how long it's run, how many times the lever
-	has been pulled, and what came off the stands. Session only -- everything here is in memory and back
-	to zero on the next join.
-
-	Cooking and selling are the odd ones out: they're already counted for life in player data, so rather
-	than watch for them the session figure is read as how far those totals have moved since the join.
-
-	Opened with `sessionStats` (`ss`) in the command bar. The panel isn't built until then, and every
-	repaint bails while it's down, so a client that never opens it pays for four connections and a
-	counter each.
-]]
+-- A session read-out opened with `sessionStats` (`ss`). Nothing is built or repainted until it's open, and cooking and selling are read as movement in their lifetime totals.
 local DebugSessionStatsController = {
 	_sessionStart = 0,
 	_rolls = 0,
@@ -43,7 +32,7 @@ local DebugSessionStatsController = {
 	_boughtTotal = 0,
 	_buxSpent = 0,
 
-	-- Where the lifetime cook/sell counters stood at join, so the session figure is the difference.
+	-- Where the lifetime counters stood at join, so the session figure is the difference
 	_cookedBaseline = 0,
 	_soldBaseline = 0,
 	_cooked = 0,
@@ -57,8 +46,7 @@ local DebugSessionStatsController = {
 	_breakdownCleaner = Trove.new(), -- holds each repaint's per-ingredient rows
 }
 
--- One line of the panel: a name on the left, its value on the right. Hands back the value label to
--- write into, and the row itself so a rebuilt list can throw it away.
+-- One panel line, returning its value label to write into and the row itself to throw away.
 function DebugSessionStatsController:_addRow(parent: Instance, name: string, layoutOrder: number): (TextLabel, Frame)
 	local row = Instance.new("Frame")
 	row.BackgroundTransparency = 1
@@ -146,7 +134,7 @@ function DebugSessionStatsController:_build()
 	self._rows.Cooked = self:_addRow(panel, "Skewers cooked", 5)
 	self._rows.Sold = self:_addRow(panel, "Skewers sold", 6)
 
-	-- A transparent band holding the rule, so the line sits clear of the rows either side of it.
+	-- A transparent band holding the rule, so the line sits clear of the rows either side
 	local separator = Instance.new("Frame")
 	separator.BackgroundTransparency = 1
 	separator.Size = UDim2.new(1, 0, 0, 11)
@@ -180,13 +168,12 @@ function DebugSessionStatsController:_build()
 	breakdownLayout.Parent = breakdown
 end
 
--- The clock line on its own, since it's the one value that moves without anything firing.
+-- The clock line on its own, being the one value that moves without anything firing.
 function DebugSessionStatsController:_refreshTime()
 	self._rows.Time.Text = GuiUtil.ConvertSecondsToHHMMSS(os.clock() - self._sessionStart)
 end
 
--- Repaints every line from the current counters. Cheap enough to redo the breakdown wholesale rather
--- than diff it, and it does nothing at all while the panel is down.
+-- Repaints every line from the current counters. Rebuilt wholesale, and a no-op while the panel is down.
 function DebugSessionStatsController:_refresh()
 	if not self._open then
 		return
@@ -205,7 +192,7 @@ function DebugSessionStatsController:_refresh()
 		table.insert(sorted, { Id = ingredientId, Count = count })
 	end
 
-	-- Most-bought first, ties settled by id, so the list doesn't reshuffle under the cursor.
+	-- Most-bought first, ties settled by id, so the list doesn't reshuffle under the cursor
 	table.sort(sorted, function(a, b)
 		if a.Count ~= b.Count then
 			return a.Count > b.Count
@@ -222,14 +209,12 @@ function DebugSessionStatsController:_refresh()
 		self._breakdownCleaner:Add(row)
 	end
 
-	-- Grows with the list up to a cap, so nothing has been bought yet reads as no list at all rather
-	-- than a panel of empty space.
+	-- Grows to a cap, so an empty session reads as no list rather than a panel of empty space
 	self._separator.Visible = #sorted > 0
 	self._breakdown.Size = UDim2.new(1, 0, 0, math.min(#sorted * ROW_HEIGHT, BREAKDOWN_HEIGHT))
 end
 
--- Shows or hides the panel, building it the first time, and reports which way it went so the command
--- can say so.
+-- Shows or hides the panel, building it the first time, and reports which way it went.
 function DebugSessionStatsController:Toggle(): boolean
 	if not self._panel then
 		self:_build()
@@ -248,8 +233,7 @@ function DebugSessionStatsController:Toggle(): boolean
 end
 
 function DebugSessionStatsController:OnStart()
-	-- Counting runs from the join rather than from the first toggle, so opening the panel part way
-	-- through a session still reports the whole of it.
+	-- Counted from the join, not the first toggle, so opening part way through still reports the whole session
 	self._sessionStart = os.clock()
 
 	IngredientRollingController.OnRollPerformed:Connect(function()
@@ -264,7 +248,7 @@ function DebugSessionStatsController:OnStart()
 		self:_refresh()
 	end)
 
-	-- Off the loader thread: both reads await the replica.
+	-- Off the loader thread: both reads await the replica
 	task.spawn(function()
 		self._cookedBaseline = PlayerDataController:GetKey("SkewersCooked")
 		self._soldBaseline = PlayerDataController:GetKey("SkewersSold")
@@ -280,8 +264,7 @@ function DebugSessionStatsController:OnStart()
 		end)
 	end)
 
-	-- Everything else repaints off its own signal; the clock is the only line that has to be chased,
-	-- and a second is all a HH:MM:SS readout resolves.
+	-- The clock is the only line that has to be chased, and a second is all HH:MM:SS resolves
 	task.spawn(function()
 		while true do
 			task.wait(1)

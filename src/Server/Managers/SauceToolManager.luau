@@ -1,5 +1,4 @@
--- Sauce dispensers are postponed to a future update, so the bottles that fill them are dormant too.
--- Everything below is intact -- un-comment it alongside SauceDispenserManager to bring it back.
+-- Dormant while sauce dispensers are postponed -- un-comment alongside SauceDispenserManager.
 
 --[==[
 -- Services

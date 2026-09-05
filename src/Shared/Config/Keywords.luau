@@ -1,15 +1,4 @@
---[[
-    The words that get coloured when they turn up in player-facing text.
-
-    One vocabulary for the whole game, so a word carries the same colour wherever it's written. The
-    tutorial banner looks a keyword up by hand (TutorialController:Emphasize) because it knows which
-    word it means; notifications hand their whole line to Keywords.Highlight and let it find them,
-    because a toast is written once and read everywhere and nobody wants to mark up sixty of them.
-
-    Colours are borrowed rather than invented wherever something already owns one -- the rarity tiers
-    come off Shared.Colors so a Rare stick and the word "Rare" match, and a customer is the gold that
-    Highlights already uses to mean "there's money in this".
-]]
+-- One vocabulary of coloured words for all player-facing text, borrowing colours from Shared.Colors and Highlights so a word matches the thing it names.
 
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -23,30 +12,19 @@ local Highlights = require(Shared.Config.Highlights)
 --
 local Keywords = {}
 
--- Sticks, and the two places that deal in them. One colour across all three on purpose: the shop, the
--- stand and the stick itself are one errand, and colouring them alike is what says so before the player
--- has worked out that a stand is where a stick goes.
+-- One colour across the stick, its shop and its stand -- they're one errand, and this says so
 local STICK_COLOR = Color3.fromRGB(222, 184, 135)
 
--- The heat rather than the metal. A charcoal grill's own colour is a dark grey that would barely
--- carry on the banner, and the fire is the half of it the player is being sent to work anyway.
--- Shared with the shop that sells them, the same way the stick tan above covers the Stick Shop.
+-- The heat rather than the metal, a grill's own grey barely carrying. Shared with the shop that sells them
 local GRILLER_COLOR = Color3.fromRGB(255, 146, 40)
 
--- Numbers, and the "[3]" that says a notification has fired three times. The game's existing emphasis
--- gold -- the same #ffd400 that ShopManager, CodeManager and the daily reward already write by hand.
+-- Numbers and the "[N]" stack suffix, in the game's existing emphasis gold
 Keywords.NUMBER = Color3.fromRGB(255, 212, 0)
 
--- What the tutorial banner falls back to for a keyword this file doesn't name, so "Pull the Lever"
--- still says which word is the thing to go and find. Verbs and UI buttons ("Lever", "Accept",
--- "Store") live here rather than in the table below -- they aren't objects to go and recognise, and
--- giving them object colours would only dilute the words that are.
+-- The banner's fallback for an unnamed keyword. Verbs and buttons live here, not below -- they aren't objects to recognise
 Keywords.EMPHASIS = Color3.fromRGB(85, 255, 0)
 
--- Words that name a thing the player can picture, coloured as that thing rather than as the plain
--- emphasis green, so the word carries what it's pointing at and not just that it's worth reading.
--- Plurals are spelled out rather than stemmed; Highlight matches the longest key first, so "BBQs"
--- wins over "BBQ" and "Stick Shop" over "Stick".
+-- Objects, coloured as the thing rather than plain emphasis. Plurals are spelled out; longest key wins
 Keywords.Colors = {
 	Stick = STICK_COLOR,
 	Sticks = STICK_COLOR,
@@ -54,37 +32,27 @@ Keywords.Colors = {
 	["Stick Stand"] = STICK_COLOR,
 	["Stick Stands"] = STICK_COLOR,
 
-	-- Glazed and cooked, and kept clear of the griller's own colour: the two share a line more than once
-	-- ("Place your BBQ on the grill"), so they have to read as two things rather than one phrase.
+	-- Kept clear of the griller's colour -- they share a line, so they must read as two things
 	BBQ = Color3.fromRGB(225, 122, 78),
 	BBQs = Color3.fromRGB(225, 122, 78),
 
-	-- Only the noun: "grill" on its own is the verb ("You need a BBQ to grill!") and stays plain. The
-	-- shop's whole name is safe to name where that bare word isn't, since nothing else in the game
-	-- reads "Grill & Stand Shop" -- and it takes the griller's colour rather than the stand's tan so
-	-- the two shops don't come out looking like one.
+	-- The noun only; the bare verb stays plain. The shop takes the griller's colour, not the stand's tan
 	Griller = GRILLER_COLOR,
 	Grillers = GRILLER_COLOR,
 	["Grill & Stand Shop"] = GRILLER_COLOR,
 
-	-- The game's own gold, straight off the Highlights palette, where gold already means "there's money
-	-- in this" -- which is exactly what a customer is. Reused rather than mixed by hand so the word and
-	-- every claimable thing in the game say the same colour.
+	-- Straight off Highlights, where gold already means "there's money in this" -- which a customer is
 	Customer = Highlights.CLAIM,
 	Customers = Highlights.CLAIM,
 
-	-- The tool that moves a build around, named once when the tutorial hands it over and in every toast
-	-- about rearranging since. A plain steel grey-blue, deliberately the dullest thing in this table --
-	-- it's the one item here that isn't bought, cooked or sold, and it shouldn't read like it is.
+	-- A plain steel grey-blue, deliberately the dullest here -- it isn't bought, cooked or sold
 	Hammer = Color3.fromRGB(175, 185, 195),
 
-	-- The only word here with no colour of its own to borrow -- each crate carries a Color in
-	-- Config.Crates, but the generic word doesn't. A cool blue, picked to sit clear of the stick tan,
-	-- the BBQ orange and the customer gold so a line naming two of them still reads as two.
+	-- No colour of its own to borrow; a cool blue clear of the tan, orange and gold
 	Crate = Color3.fromRGB(120, 180, 230),
 	Crates = Color3.fromRGB(120, 180, 230),
 
-	-- The tier words, keyed off Shared.Colors so the word matches the thing it describes.
+	-- The tier words, keyed off Shared.Colors so the word matches the thing it describes
 	Common = Colors.Common.TextColor,
 	Uncommon = Colors.Uncommon.TextColor,
 	Rare = Colors.Rare.TextColor,
@@ -93,8 +61,7 @@ Keywords.Colors = {
 	Mythic = Colors.Mythic.TextColor,
 }
 
--- Keys lowered once and sorted longest-first, so Highlight can match case-insensitively ("customer"
--- keeps its lowercase c) and so "Uncommon" is tried before "Common".
+-- Lowered and sorted longest-first, so matching is case-insensitive and "Uncommon" beats "Common"
 local LOWERED_KEYWORDS = {}
 local SORTED_KEYWORDS = {}
 
@@ -112,20 +79,12 @@ local MONEY_PATTERN = "^%$%d[%d,]*%.?%d*%a*"
 -- The trailing "x" is part of a multiplier ("3x Common Crate"), so it colours with the number.
 local NUMBER_PATTERN = "^%d+%.?%d*x?"
 
--- A word only counts as a keyword if there's no letter or digit either side of it, so "Uncommon"
--- can't match as "Common" and "$500" can't match again as "500".
+-- Bounded, so "Uncommon" can't match as "Common" and "$500" can't match again as "500"
 local function isWordBoundary(character: string?): boolean
 	return character == nil or not character:match("[%w$]")
 end
 
---[[
-    Colours every keyword, price and number in a line of text, leaving anything already inside a
-    RichText tag exactly as it was -- so hand-written markup and GuiUtil.Colorize'd names (an
-    ingredient, a crate, a player) keep their own colour and never end up nested. That also makes this
-    safe to run twice on the same string.
-    @param text The text to colour
-    @return The text with RichText font tags around the words this file names
-]]
+-- Colours every keyword, price and number in a line, leaving existing RichText tags alone -- so it never nests, and is safe to run twice.
 function Keywords.Highlight(text: string): string
 	local result = {}
 	local index = 1

@@ -15,12 +15,7 @@ local PlayerDataManager
 local NotificationManager
 local StickManager
 
---[[
-	Owns the one-time group reward. GroupRewardController gates the claim on the player having
-	favorited the game before it ever fires -- that check is client-only, since AvatarEditorService
-	has no server side -- so everything that can be enforced lands here: the claim record, the group
-	membership check and the grant itself.
-]]
+-- Owns the one-time group reward: the claim record, the membership check and the grant. The favorite gate is the client's, AvatarEditorService having no server side.
 local GroupRewardManager = {
 	ClaimGroupRewardEvent = Network.Event("ClaimGroupReward"),
 
@@ -29,8 +24,7 @@ local GroupRewardManager = {
 
 -- Grants the reward once, to a player who is in the group and hasn't claimed before.
 function GroupRewardManager:ClaimGroupReward(player: Player)
-	-- Authoritative debounce; the controller has its own, but a spammed remote shouldn't be able to
-	-- queue a GetGroupsAsync call per frame.
+	-- Authoritative debounce, so a spammed remote can't queue a GetGroupsAsync call per frame
 	if self._inCooldown[player] then
 		NotificationManager:NotifyNormal(player, {
 			Text = "Please wait a moment before trying again",
@@ -59,8 +53,7 @@ function GroupRewardManager:ClaimGroupReward(player: Player)
 		return
 	end
 
-	-- GetGroupsAsync over Player:IsInGroupAsync: the latter caches for the session, so someone who
-	-- joins the group while playing would be told they aren't in it until they rejoined.
+	-- GetGroupsAsync, since IsInGroupAsync caches for the session and would deny someone who just joined
 	local success, groups = pcall(function()
 		return GroupService:GetGroupsAsync(player.UserId)
 	end)

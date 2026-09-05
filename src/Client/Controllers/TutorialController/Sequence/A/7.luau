@@ -1,6 +1,4 @@
--- Step 7: Buy a wooden stick. Two taps -- the stick's row, then the buy button that expands underneath
--- it -- so the spotlight walks from one to the other, and back again if the row is collapsed or the
--- player wanders out of the zone and the shop closes behind them.
+-- Step 7: buy a wooden stick. Two taps, so the spotlight walks from the row to the buy button and back if either is undone.
 local Players = game:GetService("Players")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
@@ -12,15 +10,14 @@ local StickShopController = require(script.Parent.Parent.Parent.Parent.StickShop
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer.PlayerGui
 
--- The one stick the tutorial points at. Cheapest in the shop and stocked every window without fail
--- (RestockChance 100), so it can neither be unaffordable off the starting balance nor sold out.
+-- The one stick pointed at: cheapest, and stocked every window, so it can't be unaffordable or sold out
 local TUTORIAL_STICK_ID = "WoodenStick"
 
 local SPOTLIGHT_PADDING = 10
 local BEAM_HIDE_DISTANCE = 14
 
 return function(self)
-	-- Named in the stick's own label colour, which is what its shop row is written in.
+	-- Named in the stick's own label colour, which is what its shop row is written in
 	local stick = Sticks.GetStickFromId(TUTORIAL_STICK_ID)
 	local stickName = self:Emphasize(`{stick.Name} Stick`, stick.TextColor)
 
@@ -32,19 +29,14 @@ return function(self)
 	local zone = workspace:WaitForChild("Core"):WaitForChild("Zones"):WaitForChild("StickShop")
 	local stall = workspace:WaitForChild("Stalls"):WaitForChild("StickStall")
 
-	-- Only the one stick this beat is pointing at will open. The spotlight walks from the row to the buy
-	-- button that expands under it, and any other row opening would slide that button out from under the
-	-- light and sell them something the beat isn't waiting on.
+	-- Only this stick opens, or another row would slide the buy button out from under the light
 	StickShopController:SetOnlySelectableStick(TUTORIAL_STICK_ID)
 
 	local function isSelected(): boolean
 		return StickShopController:GetSelectedStickId() == TUTORIAL_STICK_ID
 	end
 
-	-- Step 6's cues came down when the shop opened, and this beat had none of its own -- so a player who
-	-- wandered out was told to go back to the Stick Shop with nothing left pointing at it. Both are put
-	-- back whenever the shop is shut, and taken down again the moment it opens: inside it the spotlight
-	-- below is the cue, and a beam through the UI would only be in the way of it.
+	-- Put back whenever the shop is shut, since inside it the spotlight is the cue and a beam is in the way
 	local highlight = self:CreateBreathingHighlight(function()
 		return if holder.Visible then nil else stall
 	end)
@@ -53,12 +45,10 @@ return function(self)
 	end, BEAM_HIDE_DISTANCE)
 
 	local spotlight = self:GetSpotlight()
-	-- Rectangle, so the cutout takes the button's width and height. Every other shape squares off the
-	-- larger of the two, which over a wide shop row is a hole several times taller than the row.
+	-- Rectangle, so the cutout takes width and height -- other shapes square off the larger
 	spotlight:SetShape("Rectangle")
 
-	-- Re-aimed only when the target actually changes: FocusUI re-locks the ancestor scroll frames and
-	-- rebinds its own follow loop each call, so driving it every frame would churn through both.
+	-- Re-aimed only on a real change: FocusUI re-locks ancestors and rebinds its loop each call
 	local currentTarget
 	local function syncSpotlight()
 		local target = if not holder.Visible
@@ -82,8 +72,7 @@ return function(self)
 	syncSpotlight()
 	local spotlightConnection = RunService.Heartbeat:Connect(syncSpotlight)
 
-	-- Logged the first time they land on the right row, so the funnel separates "never picked anything"
-	-- from "picked it and never bought it".
+	-- Logged on the right row, so the funnel separates never picking from picking and never buying
 	task.spawn(function()
 		while not isSelected() do
 			task.wait()
@@ -92,8 +81,7 @@ return function(self)
 		self:LogStep("SelectStick")
 	end)
 
-	-- The server's own answer to the purchase, rather than watching for the stick to turn up in their
-	-- data: it's the one thing that fires exactly when the buy went through.
+	-- The server's own answer, being the one thing that fires exactly when the buy went through
 	local bought = false
 	local purchaseConnection = StickShopController.OnStickPurchased:Connect(function(stickId: string)
 		if stickId == TUTORIAL_STICK_ID then
@@ -128,11 +116,7 @@ return function(self)
 	highlight.Destroy()
 	StickShopController:SetOnlySelectableStick(nil)
 
-	-- Shut on the player's behalf, as if they'd pressed Exit. The next beat brings the top bar back and
-	-- asks for the Base button on it, and on a phone the shop sits right over that bar -- so left open it
-	-- blocks the one thing the tutorial is about to point at. Closed after the cues come down rather than
-	-- the moment the buy lands, since both of them read holder.Visible and would flash back onto the stall
-	-- the player is stood at. Nothing holds it shut: walking out and back in re-opens it as it always did.
+	-- Shut for them, since on a phone it covers the top bar the next beat points at. After the cues come down, or they'd flash back onto the stall
 	StickShopController:Close()
 
 	self:LogStep("BuyStick")

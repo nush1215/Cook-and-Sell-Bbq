@@ -31,11 +31,7 @@ local DATA_POLL_INTERVAL = 0.1
 --
 local PlayerDataToken = Replica.Token("PlayerData")
 
--- Pre-cleanup callbacks run synchronously right before the profile's final save
--- (leave, shutdown, or external session takeover). Callbacks receive the live data
--- table and should mutate it directly -- do NOT call SetPlayerDataKey here, the
--- player may already be gone from the Players service.
--- Callbacks MUST NOT yield; anything after a yield won't make it into the save.
+-- Run synchronously before the final save; mutate `data` directly and never yield -- see RegisterPreCleanupCallback
 local PlayerDataManager = {
 	OnDataChanged = Signal.new(),
 	_playerData = {},
@@ -77,12 +73,9 @@ local function deepCopy(value: any): any
 end
 
 -----[[ GET FUNCTIONS ]] -----
--- Note: all of the Get Functions returns a Promise
+-- Note: all of the Get functions return a Promise
 
--- Gets a copy of the player data and the replica
--- @param player The player to get data for
--- @param timeout Optional timeout in seconds (default: DEFAULT_TIMEOUT)
--- @returns Promise<PlayerData, Replica>
+-- Gets a copy of the player's data and their replica, as a Promise. `timeout` defaults to DEFAULT_TIMEOUT.
 function PlayerDataManager:GetPlayerData(player: Player, timeout: number?)
 	if not validatePlayer(player) then
 		return Promise.reject("Invalid player")
@@ -130,21 +123,13 @@ function PlayerDataManager:GetPlayerData(player: Player, timeout: number?)
 	end)
 end
 
--- The player's data as it stands right now, or nil if it hasn't loaded yet. The non-yielding
--- counterpart to GetPlayerData above, for callers on a hot path that can carry on without it -- a
--- promise there would change the contract of whatever they're called from. Read-only by convention:
--- writes still go through the Set/Increment functions below so the replica replicates them.
--- @param player The player to get data for
--- @returns the data table, or nil if the profile isn't loaded
+-- The player's data right now, or nil -- the non-yielding counterpart to GetPlayerData. Read-only by convention.
 function PlayerDataManager:GetLoadedPlayerData(player: Player)
 	local loadedPlayerData = self._playerData[player]
 	return loadedPlayerData and loadedPlayerData.Replica.Data
 end
 
--- Gets a specific key from player data
--- @param player The player to get data for
--- @param key The key to retrieve
--- @returns Promise<any>
+-- Gets one key from the player's data, as a Promise.
 function PlayerDataManager:GetPlayerDataKey(player: Player, key: string)
 	return Promise.new(function(resolve, reject)
 		local success, playerData, replica = self:GetPlayerData(player):await()
@@ -165,10 +150,7 @@ end
 
 -----[[ SET FUNCTIONS ]] -----
 
--- Sets a value in player data
--- @param player The player whose data to modify
--- @param key The key (string or table path) to set
--- @param newValue The new value to set
+-- Sets a value in the player's data. `key` may be a string or a table path.
 function PlayerDataManager:SetPlayerDataKey(player: Player, key: string | table, newValue: any)
 	if not validatePlayer(player) then
 		warn(`Cannot set data for invalid player: {player}`)
@@ -193,10 +175,7 @@ function PlayerDataManager:SetPlayerDataKey(player: Player, key: string | table,
 		end)
 end
 
--- Inserts a value into an array in player data
--- @param player The player whose data to modify
--- @param key The key (string or table path) to the array
--- @param value The value to insert
+-- Inserts a value into an array in the player's data.
 function PlayerDataManager:InsertPlayerDataKey(player: Player, key: string | table, value: any)
 	if not validatePlayer(player) then
 		warn(`Cannot insert data for invalid player: {player}`)
@@ -226,12 +205,7 @@ function PlayerDataManager:InsertPlayerDataKey(player: Player, key: string | tab
 		end)
 end
 
--- Inserts a value into an array in player data, trimming the oldest entries
--- (lowest indices) so the array length stays at or below maxSize after insertion.
--- @param player The player whose data to modify
--- @param key The key (string or table path) to the array
--- @param value The value to insert
--- @param maxSize The maximum number of entries to retain after insertion (must be >= 1)
+-- Inserts into an array, trimming the oldest entries so its length stays at or below `maxSize`.
 function PlayerDataManager:InsertCappedPlayerDataKey(player: Player, key: string | table, value: any, maxSize: number)
 	if not validatePlayer(player) then
 		warn(`Cannot insert capped data for invalid player: {player}`)
@@ -270,10 +244,7 @@ function PlayerDataManager:InsertCappedPlayerDataKey(player: Player, key: string
 		end)
 end
 
--- Removes a value from an array in player data
--- @param player The player whose data to modify
--- @param key The key (string or table path) to the array
--- @param value The value to remove
+-- Removes a value from an array in the player's data.
 function PlayerDataManager:RemovePlayerDataKey(player: Player, key: string | table, value: any)
 	if not validatePlayer(player) then
 		warn(`Cannot remove data for invalid player: {player}`)
@@ -309,10 +280,7 @@ function PlayerDataManager:RemovePlayerDataKey(player: Player, key: string | tab
 		end)
 end
 
--- Increments a numeric value in player data
--- @param player The player whose data to modify
--- @param key The key to increment
--- @param amount The amount to increment by (default: 1)
+-- Increments a numeric value in the player's data, by 1 unless `amount` says otherwise.
 function PlayerDataManager:IncrementDataKey(player: Player, key: string, amount: number?)
 	if not validatePlayer(player) then
 		warn(`Cannot increment data for invalid player: {player}`)
@@ -352,10 +320,7 @@ function PlayerDataManager:IncrementDataKey(player: Player, key: string, amount:
 		end)
 end
 
--- Decrements a numeric value in player data
--- @param player The player whose data to modify
--- @param key The key to decrement
--- @param amount The amount to decrement by (default: 1)
+-- Decrements a numeric value in the player's data, by 1 unless `amount` says otherwise.
 function PlayerDataManager:DecrementDataKey(player: Player, key: string, amount: number?)
 	if not validatePlayer(player) then
 		warn(`Cannot decrement data for invalid player: {player}`)
@@ -382,7 +347,6 @@ function PlayerDataManager:DecrementDataKey(player: Player, key: string, amount:
 end
 
 -- Resets a player's saved data to the current template.
--- @param player The player whose data to reset
 function PlayerDataManager:ResetPlayerData(player: Player): (boolean, string?)
 	if not validatePlayer(player) then
 		return false, "Invalid player"
@@ -410,10 +374,7 @@ function PlayerDataManager:ResetPlayerData(player: Player): (boolean, string?)
 end
 
 -----[[ LISTEN FUNCTIONS ]] -----
--- Listens for changes to a specific key in player data
--- @param player The player to listen for
--- @param key The key to listen for changes on
--- @param callback Function called when the key changes
+-- Calls back whenever one key in the player's data changes.
 function PlayerDataManager:ListenForChanges(player: Player, key: string, callback: (newValue: any) -> ())
 	return self.OnDataChanged:Connect(function(dataChangedPlayer, changedKey, newValue)
 		if dataChangedPlayer == player and changedKey == key then
@@ -422,11 +383,7 @@ function PlayerDataManager:ListenForChanges(player: Player, key: string, callbac
 	end)
 end
 
--- Registers a callback that runs synchronously right before a player's data is saved
--- for the last time (leave / shutdown / external session takeover). The callback
--- gets the live data table and should mutate it directly. Must not yield.
--- @param callback (player, data, reason: "Manual" | "External" | "Shutdown") -> ()
--- @returns function that unregisters the callback
+-- Registers a callback run just before a player's last save; it mutates the live data and must not yield. Returns an unregister function.
 function PlayerDataManager:RegisterPreCleanupCallback(callback: (player: Player, data: any, reason: string) -> ())
 	table.insert(self._preCleanupCallbacks, callback)
 
@@ -438,8 +395,7 @@ function PlayerDataManager:RegisterPreCleanupCallback(callback: (player: Player,
 	end
 end
 
--- Sets up player data when a player joins
--- @param player The player to set up
+-- Sets up player data when a player joins.
 function PlayerDataManager:_setupPlayer(player: Player)
 	if not validatePlayer(player) then
 		return
@@ -498,11 +454,7 @@ function PlayerDataManager:_setupPlayer(player: Player)
 	end
 end
 
--- Sets up leaderstats for a player. Returns the data-change connections that keep them current, so
--- the caller can drop them when the player leaves -- they hang off the one shared OnDataChanged signal,
--- and left in place every write for anyone still here would walk a listener for everyone who ever was.
--- @param player The player to set up leaderstats for
--- @param playerData The player's data
+-- Sets up a player's leaderstats and returns the connections keeping them current, for the caller to drop on leave.
 function PlayerDataManager:_setupLeaderstats(player: Player, playerData: any): { RBXScriptConnection }
 	local leaderstats = Instance.new("Folder")
 	leaderstats.Name = "leaderstats"
@@ -517,7 +469,7 @@ function PlayerDataManager:_setupLeaderstats(player: Player, playerData: any): {
 		end
 
 		local useSuffix = type(leaderstatSetting) == "table" and leaderstatSetting.UseSuffix
-		-- A Prefix ("$" for currency) forces the string form, since an IntValue can't carry it.
+		-- A Prefix ("$" for currency) forces the string form, since an IntValue can't carry it
 		local prefix = type(leaderstatSetting) == "table" and leaderstatSetting.Prefix or nil
 		local asString = useSuffix or prefix ~= nil
 		local statValue = Instance.new(if asString then "StringValue" else "IntValue")
@@ -546,9 +498,7 @@ function PlayerDataManager:_setupLeaderstats(player: Player, playerData: any): {
 	return connections
 end
 
--- Subscribes a player to their data replica
--- @param player The player to subscribe
--- @param dataReplica The replica to subscribe to
+-- Subscribes a player to their data replica.
 function PlayerDataManager:_subscribePlayerToReplica(player: Player, dataReplica: any)
 	if Replica.ReadyPlayers[player] then
 		dataReplica:Subscribe(player)
@@ -566,8 +516,7 @@ function PlayerDataManager:_subscribePlayerToReplica(player: Player, dataReplica
 	dataReplica.Maid:Add(connection)
 end
 
--- Cleans up player data when a player leaves
--- @param player The player to clean up
+-- Cleans up player data when a player leaves.
 function PlayerDataManager:_cleanupPlayer(player: Player)
 	local playerData = self._playerData[player]
 
@@ -582,8 +531,7 @@ function PlayerDataManager:_cleanupPlayer(player: Player)
 	end
 end
 
--- Initializes the PlayerDataManager
--- Sets up event connections for player join/leave
+-- Initializes the manager and its player join/leave connections.
 function PlayerDataManager:OnInit()
 	Players.PlayerAdded:Connect(function(player: Player)
 		self:_setupPlayer(player)
