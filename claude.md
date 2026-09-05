@@ -27,6 +27,7 @@
 ## Functions
 - Avoid one-off helper functions for logic that's only used once — inline it instead. Only extract to a named function if the logic is reused or complex enough that naming it genuinely aids readability.
 - Add a one-line doc comment to custom functions explaining what they do. Skip this for lifecycle/event hooks (`OnServerEvent`, `Heartbeat`, etc.) — their purpose is already obvious from context.
+- Don't add comments on variables when the name already makes the value obvious (`local playerCount = #players` needs no comment). Only comment a variable if it holds something non-obvious — a magic number, a unit, or a value whose meaning isn't clear from the name alone.
 - Comments are one line, no exceptions. If something is genuinely tricky (non-obvious algorithm, workaround, timing dependency), flag it with a short "why" note — never a multi-line explanation. If you can't say it in one line, the code needs a clearer name, not a longer comment.
 
 ## Defensive Checks
