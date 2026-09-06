@@ -63,7 +63,7 @@ CookStates.Data = {
 		Name = "Perfectly Cooked",
 		End = CookStates.PERFECT_END,
 		-- The baseline every ingredient price is tuned against, not a bonus on top of one
-		Multiplier = 1.8,
+		Multiplier = 1.4,
 		OfferMin = 1.1,
 		OfferMax = 1.35,
 		CounterChance = 90,
@@ -78,7 +78,7 @@ CookStates.Data = {
 		Name = "Cooked",
 		End = 1,
 		-- Overshooting is a nick, not a penalty -- a player who looked away still has a sellable skewer
-		Multiplier = 1.35,
+		Multiplier = 1.2,
 		OfferMin = 1.05,
 		OfferMax = 1.3,
 		CounterChance = 80,
@@ -93,7 +93,7 @@ CookStates.Data = {
 		Name = "Overcooked",
 		Overtime = 20,
 		-- Past the bar the haggle narrows rather than the offer dipping under the estimate
-		Multiplier = 0.9,
+		Multiplier = 1.05,
 		OfferMin = 1,
 		OfferMax = 1.15,
 		CounterChance = 50,
@@ -109,9 +109,9 @@ CookStates.Data = {
 		Name = "Charred",
 		Overtime = 60,
 		-- The narrowness lives in the cap, not the chance -- a counter that moves nothing teaches the state's worth
-		Multiplier = 0.8,
+		Multiplier = 0.98,
 		OfferMin = 1,
-		OfferMax = 1.05,
+		OfferMax = 1.01,
 		CounterChance = 40,
 		CounterCap = 1.14,
 		Icon = "rbxassetid://117732140813353",
@@ -241,7 +241,9 @@ function CookStates.GetElapsedForBar(
 	instabilityPhase: number?
 ): number
 	-- Catches a relight landing exactly on the start of the window
-	if CookStates.GetBarElapsed(0, cookTime, windowStretch, cookProgress, instability, instabilityPhase) >= barTarget then
+	if
+		CookStates.GetBarElapsed(0, cookTime, windowStretch, cookProgress, instability, instabilityPhase) >= barTarget
+	then
 		return 0
 	end
 
@@ -256,7 +258,10 @@ function CookStates.GetElapsedForBar(
 		end
 
 		local middle = (low + high) / 2
-		if CookStates.GetBarElapsed(middle, cookTime, windowStretch, cookProgress, instability, instabilityPhase) < barTarget then
+		if
+			CookStates.GetBarElapsed(middle, cookTime, windowStretch, cookProgress, instability, instabilityPhase)
+			< barTarget
+		then
 			low = middle
 		else
 			high = middle

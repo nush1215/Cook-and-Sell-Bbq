@@ -2109,6 +2109,30 @@ local NpcDialogue = {
 		"Not a single one",
 	},
 
+	-- Back for an order left unfinished when the player logged out, picking it up where it stood
+	CustomNPCReturned = {
+		"Remember me? Still waiting",
+		"I never got my order",
+		"Back for that BBQ",
+		"You left me hanging",
+		"Where's my order, chef?",
+		"Still here, still hungry",
+		"I waited, you know",
+		"Did you forget about me?",
+		"That order, any progress?",
+		"I came back for it",
+		"Told you I'd wait",
+		"Right where you left me",
+		"Ready when you are",
+		"Been here a while now",
+		"My order, remember?",
+		"Didn't go anywhere",
+		"Still after that one",
+		"Picking up where we left off",
+		"Hope you didn't forget",
+		"I'm a patient customer",
+	},
+
 	-- Asking on arrival, having never looked at the stand at all
 	CustomNPCArrived = {
 		"I know exactly what I want",

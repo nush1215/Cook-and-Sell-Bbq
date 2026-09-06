@@ -153,6 +153,29 @@ skips it. Same reasoning as `SeenRichCustomer` and `SeenHaggle` above.
 The grant is also latched in memory for the session, because the saved key is written behind a yield
 and three separate signals can race to be the one that reaches it.
 
+**`ActiveCustomOrder`** — the order they are part-way through, absent when there isn't one. It has no
+template entry: absent *is* the resting state, and a template default would make "no order" and "an order
+with nothing in it" indistinguishable. Written by `SaveActiveOrder` the moment the order is owed — as the
+offer card goes up, and again as the deal is struck — so it rides the ordinary auto-save rather than
+depending on a last save that a crash or a shutdown can skip. `SaveActiveOrderOnLastSave` only restamps
+the clock on the way out, so an order carries the time it actually had left rather than the time it had
+when it was struck; miss that and you come back with a more generous clock, not with nothing. Cleared in
+`_recordOutcome`, which every outcome funnels through — so a new outcome added later cannot forget to
+clear it and leave a ghost customer returning forever. `_runGuardedVisit` clears it too when a restore
+never gets its customer up, since a saved order both the roll and the next restore step over would
+otherwise cost that player every order they were owed for the rest of the file's life.
+
+`Phase` is `Pending` (asked, unanswered) or `Accepted` (deal struck, clock running), and it decides where
+the restored visit re-enters: a pending one asks again with a fresh `OFFER_TIMEOUT`, an accepted one goes
+straight back to waiting. An accepted one carries **`SecondsLeft`** rather than a deadline, which is the
+`CookPausedElapsed` trade above made for a customer instead of a cook: the clock is banked where it stood
+and restamped on return, so time offline never runs it down. A wall-clock deadline would mean every rejoin
+found a dead order, since the clock is only three to five minutes — unlike `LastCustomOrderVisit` beside
+it, which *is* wall-clock precisely because a cooldown should keep running while you're away.
+
+`Counts` is deliberately not saved: it is `countIngredients(Ingredients)`, and keeping a second copy of
+the same fact in the profile only creates something to fall out of step.
+
 **`CustomOrderHistory`** — the last `CustomOrderNpc.HISTORY_LENGTH` resolved orders, oldest first. This
 is the `RecentSales` idiom and it is here for the same reason: a rating has to be able to fall as well as
 climb, which a lifetime tally never can, and it is **stored as facts rather than a score** so retuning

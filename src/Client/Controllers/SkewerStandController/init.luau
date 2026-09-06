@@ -10,6 +10,9 @@ local Trove = require(Packages.Trove)
 local Shared = ReplicatedStorage.Shared
 local Network = require(Shared.Network)
 
+-- Controllers
+local CustomOrderNpcController = require(script.Parent.CustomOrderNpcController)
+
 -- Modules
 local SkewerStand = require(script.SkewerStand)
 
@@ -140,6 +143,11 @@ function SkewerStandController:OnStart()
 
 	-- BaseId lands after the stands are built and moves on assignment, so re-check every stand's prompts
 	LocalPlayer:GetAttributeChangedSignal("BaseId"):Connect(function()
+		self:_refreshPrompts()
+	end)
+
+	-- A custom order arriving or running out moves the stall's glow without any tool changing hands
+	self._cleaner:Connect(CustomOrderNpcController.OnOrderTargetChanged, function()
 		self:_refreshPrompts()
 	end)
 

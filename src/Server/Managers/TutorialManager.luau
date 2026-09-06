@@ -32,7 +32,7 @@ local VARIANT_KEY = "TutorialVariant"
 local FALLBACK_VARIANT = "B"
 
 -- Pinned so the first pull can't land something unaffordable. Garlic is cheap to buy and quick to cook
-local TUTORIAL_INGREDIENT_ID = "Garlic"
+local TUTORIAL_INGREDIENT_ID = "Corn"
 
 -- The stick B starts with: cheapest, and the only one restocking every window, so it's never sold out
 local TUTORIAL_STICK_ID = "WoodenStick"

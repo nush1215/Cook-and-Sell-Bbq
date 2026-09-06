@@ -16,6 +16,7 @@ local Highlights = require(Shared.Config.Highlights)
 -- Controllers
 local Controllers = script.Parent.Parent
 local SoundController = require(Controllers.SoundController)
+local CustomOrderNpcController = require(Controllers.CustomOrderNpcController)
 
 -- Modules
 local Modules = script.Parent.Parent.Parent.Modules
@@ -334,13 +335,13 @@ function SkewerStand:RefreshPrompt()
 	end
 end
 
--- Puts the same answer on the prompt and the glow. Any skewer with room qualifies, however it cooked.
+-- Any skewer with room qualifies, however it cooked. One a customer ordered keeps the prompt but drops the glow
 function SkewerStand:_refreshPlaceEligibility()
 	local skewer = EquippedItem.GetSkewer()
 	local hasRoom = self:_owned() and skewer ~= nil and self._count < MAX_SKEWERS
 
 	self._sellStall:SetAttribute("HighlightColor", Highlights.CLAIM)
-	if hasRoom then
+	if hasRoom and not CustomOrderNpcController:GetOrderTargetNpc() then
 		self._sellStall:AddTag(Highlights.TAG)
 	else
 		self._sellStall:RemoveTag(Highlights.TAG)

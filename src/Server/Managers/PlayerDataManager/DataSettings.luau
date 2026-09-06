@@ -90,6 +90,8 @@ return {
 		LastCustomOrderVisit = 0,
 		-- Whether one has ever visited; the first is given the moment they can fill one, not rolled for
 		SeenCustomOrder = false,
+		-- ActiveCustomOrder is written here while an order is live and cleared when it resolves, so it
+		-- has no template entry: absent is the resting state. See docs/player-data.md for its shape
 		-- The last HISTORY_LENGTH resolved orders, oldest first. Facts rather than a score -- see docs/player-data.md
 		CustomOrderHistory = {},
 

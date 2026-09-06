@@ -4,8 +4,8 @@
 local SellNpc = {}
 
 -- Seconds before a customer arrives. What an established player waits; EarlyBoost scales a new one's
-SellNpc.SPAWN_DELAY_MIN = 8
-SellNpc.SPAWN_DELAY_MAX = 15
+SellNpc.SPAWN_DELAY_MIN = 6
+SellNpc.SPAWN_DELAY_MAX = 12
 
 -- What a guaranteed customer waits: pacing rather than balance, so it's its own number
 SellNpc.GUARANTEED_SPAWN_DELAY = 3

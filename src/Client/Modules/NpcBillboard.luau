@@ -21,6 +21,9 @@ local UI = ReplicatedStorage.Assets.UI
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer.PlayerGui
 
+-- A rig dressed in a HumanoidDescription lands over several frames, so its head can trail the model it arrived on
+local HEAD_WAIT = 5
+
 -- The billboard rises BUBBLE_CLEARANCE studs per active bubble, so it clears the stack and steps back
 local BUBBLE_CLEARANCE = 0
 local RAISE_DAMPING = 0.7
@@ -77,9 +80,9 @@ local function pulseScale(scale: UIScale, startScale: number)
 	Spr.target(scale, PULSE_DAMPING, PULSE_FREQUENCY, { Scale = PULSE_TARGET })
 end
 
--- Mounts `templateName`'s billboards on the NPC's head and returns the state a caller drives them through, or nil if the rig has no head yet. `billboards` is every BillboardGui the template held, by name.
+-- Mounts `templateName`'s billboards on the NPC's head and returns the state a caller drives them through, or nil if the rig's head never turned up. `billboards` is every BillboardGui the template held, by name.
 function NpcBillboard.Attach(npc: Model, templateName: string, dialogueVariant: string?, dialoguePrefix: string)
-	local head = npc:FindFirstChild("Head") or npc:FindFirstChild("HumanoidRootPart")
+	local head = npc:WaitForChild("Head", HEAD_WAIT) or npc:FindFirstChild("HumanoidRootPart")
 	if not head then
 		return nil
 	end

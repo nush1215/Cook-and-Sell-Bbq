@@ -1,11 +1,13 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 
 -- Packages
 local Packages = ReplicatedStorage.Packages
 local Trove = require(Packages.Trove)
+local Signal = require(Packages.Signal)
 local Spr = require(Packages.Spr)
 
 -- Shared
@@ -22,6 +24,7 @@ local CustomOrderNpc = require(Shared.Config.CustomOrderNpc)
 local Modules = script.Parent.Parent.Modules
 local NpcBillboard = require(Modules.NpcBillboard)
 local EquippedItem = require(Modules.EquippedItem)
+local GuideBeam = require(Modules.GuideBeam)
 
 -- Controllers
 local UIController
@@ -42,7 +45,29 @@ local DELIVER_DEBOUNCE = 1
 local TIMER_NORMAL_COLOR = Color3.fromRGB(255, 255, 255)
 local TIMER_HURRY_COLOR = Color3.fromRGB(255, 65, 65)
 
--- Draws a custom order customer's billboards: the recipe card, the offer frame the owner answers on, and the countdown once the deal is struck.
+-- Whether two ingredient lists are the same multiset, which is the exact fill an order pays its premium for.
+local function ingredientsMatch(wanted: { string }, held: { string }): boolean
+	if #wanted ~= #held then
+		return false
+	end
+
+	local remaining = {}
+	for _, id in wanted do
+		remaining[id] = (remaining[id] or 0) + 1
+	end
+
+	for _, id in held do
+		local left = remaining[id] or 0
+		if left == 0 then
+			return false
+		end
+		remaining[id] = left - 1
+	end
+
+	return true
+end
+
+-- Draws a custom order customer's billboards: the recipe card, the offer frame the owner answers on, and the countdown once the deal is struck. Also owns the cue for the BBQ that fills the order: the customer's glow and a beam over to them.
 
 --
 local CustomOrderNpcController = {
@@ -55,11 +80,25 @@ local CustomOrderNpcController = {
 	CustomOrderEndEvent = Network.Event("CustomOrderEnd"),
 	CustomOrderSayEvent = Network.Event("CustomOrderSay"),
 
+	-- Fires when the customer the held BBQ is for changes, so the sell stall can drop its own glow
+	OnOrderTargetChanged = Signal.new(),
+
 	_active = {}, -- [npc] = { trove, running, ingredientsFrame, offerFrame, speak, ... } -- one live set per NPC
+	-- [npc] = true while its billboards are being built. Attach waits on the rig's Head, so a beat sent
+	-- in the same frame as the arrival -- which every restored order is -- can land before the state does
+	_attaching = {},
+	-- [npc] = the accept's own arguments, when it reached the client ahead of that customer's arrival.
+	-- Both go out in one server frame on a restored order, and they are two separate remotes
+	_pendingAccepts = {},
+	_orderTarget = nil, -- the customer waiting on exactly what's in hand, glowing with a beam to them
+	_beam = nil,
 }
 
 -- Tears down the NPC's billboards, springs, prompt and countdown.
 function CustomOrderNpcController:_cleanup(npc: Model)
+	self._attaching[npc] = nil
+	self._pendingAccepts[npc] = nil
+
 	local state = self._active[npc]
 	if not state then
 		return
@@ -72,10 +111,13 @@ function CustomOrderNpcController:_cleanup(npc: Model)
 	npc:RemoveTag(Highlights.TAG)
 
 	state.trove:Destroy()
+
+	-- Dropped from _active above, so this drops the beam too if the customer leaving was the target
+	self:_refreshOrderTarget()
 end
 
 -- Builds the customer's billboards. The decide flip runs off NPCUIAttachment, so both are mounted.
-function CustomOrderNpcController:_attach(npc: Model, inspecting: boolean)
+function CustomOrderNpcController:_attach(npc: Model, inspecting: boolean, greeting: string)
 	-- Said out loud, since a customer standing there with no billboards is the symptom either of
 	-- these used to present as, and neither left anything behind to read
 	if not npc then
@@ -83,14 +125,26 @@ function CustomOrderNpcController:_attach(npc: Model, inspecting: boolean)
 		return
 	end
 
-	if self._active[npc] then
+	if self._active[npc] or self._attaching[npc] then
 		return
 	end
 
+	-- Latched before Attach yields on the rig's Head, so the beats behind it know there's one coming
+	self._attaching[npc] = true
+
 	-- No variant: it arrives holding nothing, so its lines have no cook state to react to until the hand-over
 	local state = NpcBillboard.Attach(npc, "CustomOrderNPCUIAttachment", nil, "CustomNPC")
+	self._attaching[npc] = nil
+
 	if not state then
-		warn(`[CustomOrderNpcController] {npc:GetFullName()} has no head yet, so no billboards were built`)
+		warn(`[CustomOrderNpcController] {npc:GetFullName()} never got a head, so no billboards were built`)
+		return
+	end
+
+	-- The rig can be pooled or destroyed while Attach waits on its Head, and the hooks below are
+	-- connected too late to have caught it -- so these billboards would sit in PlayerGui for good
+	if npc.Parent == nil then
+		state.trove:Destroy()
 		return
 	end
 
@@ -118,7 +172,6 @@ function CustomOrderNpcController:_attach(npc: Model, inspecting: boolean)
 	end)
 
 	self._active[npc] = state
-	self:_refreshGlow(npc)
 
 	-- The flip is the sell stand's billboard, so this one mounts it alongside rather than redrawing it
 	if inspecting then
@@ -132,44 +185,92 @@ function CustomOrderNpcController:_attach(npc: Model, inspecting: boolean)
 		end
 	end
 
-	state.speak(if inspecting then "CustomNPCInspecting" else "CustomNPCArrived")
-end
+	state.speak(greeting)
 
--- Breathes the customer while a BBQ is in hand, the same answer and colour the sell stall gives.
--- Any skewer qualifies, however it cooked -- what it's worth is the grading's business, not the glow's.
-function CustomOrderNpcController:_refreshGlow(npc: Model)
-	npc:SetAttribute("HighlightColor", Highlights.CLAIM)
-
-	if EquippedItem.GetSkewer() then
-		npc:AddTag(Highlights.TAG)
-	else
-		npc:RemoveTag(Highlights.TAG)
+	-- An accept that landed before this did is replayed now there's a card and a clock to put it on
+	local pending = self._pendingAccepts[npc]
+	if pending then
+		self._pendingAccepts[npc] = nil
+		self:_startTimer(npc, pending.deadline, pending.ingredientIds)
 	end
 end
 
--- Re-reads every live customer, since one equip changes the answer for all of them at once.
-function CustomOrderNpcController:_refreshGlows()
-	for npc in self._active do
-		self:_refreshGlow(npc)
+-- The customer waiting on exactly what's in hand, or nil. Raw never counts: a hand-over is graded on its cook too.
+function CustomOrderNpcController:_findOrderTarget(): Model?
+	local skewer = EquippedItem.GetSkewer()
+	if not skewer or not skewer:GetAttribute("Cooked") then
+		return nil
 	end
+
+	local held = HttpService:JSONDecode(skewer:GetAttribute("Ingredients"))
+
+	-- One order runs at a time, so the first match is the answer rather than the nearest of several
+	for npc, state in self._active do
+		if state.orderIngredients and ingredientsMatch(state.orderIngredients, held) then
+			return npc
+		end
+	end
+
+	return nil
 end
 
--- Watches the local character's tools so the glow tracks what they equip.
+-- Moves the glow and the beam onto whichever customer the held BBQ is for, and says so if that moved.
+function CustomOrderNpcController:_refreshOrderTarget()
+	local target = self:_findOrderTarget()
+	if target == self._orderTarget then
+		return
+	end
+
+	if self._orderTarget then
+		self._orderTarget:RemoveTag(Highlights.TAG)
+	end
+	if self._beam then
+		self._beam.Destroy()
+		self._beam = nil
+	end
+
+	self._orderTarget = target
+
+	if target then
+		target:SetAttribute("HighlightColor", Highlights.CLAIM)
+		target:AddTag(Highlights.TAG)
+
+		-- Hidden at the hand-over range, so the beam gives out exactly as the prompt comes in
+		local beam = GuideBeam.Create(target, DELIVER_PROMPT_DISTANCE)
+
+		-- The session's first beam waits on its template, so they can have put the BBQ down since
+		if self._orderTarget ~= target then
+			beam.Destroy()
+			return
+		end
+
+		self._beam = beam
+	end
+
+	self.OnOrderTargetChanged:Fire()
+end
+
+-- The customer to take the held BBQ to, or nil. Read by the sell stall, which stands down while there is one.
+function CustomOrderNpcController:GetOrderTargetNpc(): Model?
+	return self._orderTarget
+end
+
+-- Watches the local character's tools so the cue tracks what they equip.
 function CustomOrderNpcController:_watchCharacter(character: Model)
 	self._characterCleaner:Clean()
 
 	self._characterCleaner:Connect(character.ChildAdded, function(child)
 		if child:IsA("Tool") then
-			self:_refreshGlows()
+			self:_refreshOrderTarget()
 		end
 	end)
 	self._characterCleaner:Connect(character.ChildRemoved, function(child)
 		if child:IsA("Tool") then
-			self:_refreshGlows()
+			self:_refreshOrderTarget()
 		end
 	end)
 
-	self:_refreshGlows()
+	self:_refreshOrderTarget()
 end
 
 -- Runs the flip the inspecting variation opens on, always landing on Not Interested.
@@ -208,6 +309,7 @@ function CustomOrderNpcController:_buildRecipe(state, ingredientIds: { string })
 
 	for index, id in ingredientIds do
 		local ingredient = Ingredients.GetIngredientFromId(id)
+
 		if not ingredient then
 			continue
 		end
@@ -235,26 +337,40 @@ function CustomOrderNpcController:_buildRecipe(state, ingredientIds: { string })
 		entry.Parent = container
 		state.trove:Add(entry)
 	end
+
+	state.recipeBuilt = true
+end
+
+-- Raises the recipe card, springing it up from nothing so it lands rather than appearing.
+function CustomOrderNpcController:_openRecipeCard(state)
+	local holder = state.holder
+	holder.Title.Text = "Custom Order"
+	holder.Visible = true
+
+	local scale = holder.UIScale
+	Spr.stop(scale, "Scale")
+	scale.Scale = 0
+	Spr.target(scale, CustomOrderNpc.UI_POP_DAMPING, CustomOrderNpc.UI_POP_FREQUENCY, { Scale = 1 })
+end
+
+-- The customer's live set, waiting out an attach still in flight -- see _attaching.
+function CustomOrderNpcController:_awaitState(npc: Model)
+	while self._attaching[npc] do
+		task.wait()
+	end
+
+	return self._active[npc]
 end
 
 -- Opens the recipe card and the offer frame. Owner only, and `payout` is what the sale would actually bank.
 function CustomOrderNpcController:_showOffer(npc: Model, ingredientIds: { string }, payout: number, bonus: number)
-	local state = self._active[npc]
+	local state = self:_awaitState(npc)
 	if not state or not state.running then
 		return
 	end
 
 	self:_buildRecipe(state, ingredientIds)
-
-	local holder = state.holder
-	holder.Title.Text = "Custom Order"
-	holder.Visible = true
-
-	-- Sprung from nothing, so the card lands rather than appearing
-	local scale = holder.UIScale
-	Spr.stop(scale, "Scale")
-	scale.Scale = 0
-	Spr.target(scale, CustomOrderNpc.UI_POP_DAMPING, CustomOrderNpc.UI_POP_FREQUENCY, { Scale = 1 })
+	self:_openRecipeCard(state)
 
 	local amount = `<font color="{OFFER_AMOUNT_COLOR}">${GuiUtil.ConvertNumberWithSuffix(payout)}</font>`
 
@@ -334,10 +450,27 @@ function CustomOrderNpcController:_showDeliverPrompt(state, npc: Model)
 end
 
 -- Starts the countdown and the hand-over prompt once the deal is struck.
-function CustomOrderNpcController:_startTimer(npc: Model, deadline: number)
-	local state = self._active[npc]
-	if not state or not state.running then
+function CustomOrderNpcController:_startTimer(npc: Model, deadline: number, ingredientIds: { string })
+	local state = self:_awaitState(npc)
+
+	-- Nothing to draw on yet: the arrival is still on its way, so this is held for _attach to replay
+	if not state then
+		self._pendingAccepts[npc] = { deadline = deadline, ingredientIds = ingredientIds }
 		return
+	end
+
+	if not state.running then
+		return
+	end
+
+	-- Held from the accept rather than the offer: the prompt the cue points at only exists from here
+	state.orderIngredients = ingredientIds
+
+	-- A restored order re-enters past the offer, so the card that beat would have drawn is drawn here --
+	-- without this its holder stays hidden and empty, and only the countdown inside it ever comes up
+	if not state.recipeBuilt then
+		self:_buildRecipe(state, ingredientIds)
+		self:_openRecipeCard(state)
 	end
 
 	state.offerFrame.Visible = false
@@ -367,6 +500,9 @@ function CustomOrderNpcController:_startTimer(npc: Model, deadline: number)
 			alert.Visible = hurrying
 		end
 	end)
+
+	-- Last, since the first beam of a session waits on its template and the card mustn't wait with it
+	self:_refreshOrderTarget()
 end
 
 -- Takes the order card down once the visit is over, leaving the bubbles to carry the last beats.
@@ -383,6 +519,10 @@ function CustomOrderNpcController:_endOrder(npc: Model)
 
 	-- Drops the countdown and the hand-over prompt; the billboards themselves outlive this
 	state.timerTrove:Clean()
+
+	-- There's nothing left to hand over, so the glow and the beam come off with the prompt
+	state.orderIngredients = nil
+	self:_refreshOrderTarget()
 end
 
 function CustomOrderNpcController:OnInit()
@@ -392,7 +532,7 @@ end
 function CustomOrderNpcController:OnStart()
 	self._characterCleaner = Trove.new()
 
-	-- Equipping or unequipping a BBQ changes whether a waiting customer should be lit
+	-- Equipping or unequipping a BBQ changes which waiting customer, if any, it's for
 	if LocalPlayer.Character then
 		self:_watchCharacter(LocalPlayer.Character)
 	end
@@ -400,8 +540,9 @@ function CustomOrderNpcController:OnStart()
 		self:_watchCharacter(character)
 	end)
 
-	self.CustomOrderArriveEvent:OnClientEvent(function(npc: Model, inspecting: boolean)
-		self:_attach(npc, inspecting)
+	self.CustomOrderArriveEvent:OnClientEvent(function(npc: Model, inspecting: boolean, greeting: string)
+
+		self:_attach(npc, inspecting, greeting)
 	end)
 
 	self.CustomOrderInspectEvent:OnClientEvent(function(npc: Model, decideAt: number)
@@ -412,8 +553,9 @@ function CustomOrderNpcController:OnStart()
 		self:_showOffer(npc, ingredientIds, payout, bonus)
 	end)
 
-	self.CustomOrderAcceptedEvent:OnClientEvent(function(npc: Model, deadline: number)
-		self:_startTimer(npc, deadline)
+	self.CustomOrderAcceptedEvent:OnClientEvent(function(npc: Model, deadline: number, ingredientIds)
+
+		self:_startTimer(npc, deadline, ingredientIds)
 	end)
 
 	self.CustomOrderEndEvent:OnClientEvent(function(npc: Model)
