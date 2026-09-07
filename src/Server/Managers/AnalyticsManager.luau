@@ -23,6 +23,7 @@ local BadgeManager
 local TutorialManager
 local TutorialCrateManager
 local PlaytimeManager
+local RatingManager
 
 -- The one place AnalyticsService is spoken to: subscribes to every manager's signals and turns each into an event. Every call is spawned and pcall'd, so it can't block or error gameplay.
 local AnalyticsManager = {
@@ -101,6 +102,25 @@ local function getSessionLengthBucket(sessionLength: number): string
 	return "60m+"
 end
 
+-- Buckets a rating, a two-decimal star being too granular to break a chart down by. Unrated is its own band.
+local function getRatingBucket(stars: number?): string
+	if not stars then
+		return "Pending"
+	end
+
+	if stars < 1 then
+		return "0-1"
+	elseif stars < 2 then
+		return "1-2"
+	elseif stars < 3 then
+		return "2-3"
+	elseif stars < 4 then
+		return "3-4"
+	end
+
+	return "4-5"
+end
+
 -- Returns the cook state most of a haul's skewers share, so a bulk sale still reads as one quality.
 local function getDominantCookState(skewerRecords: { StickModel.StickRecord }): string?
 	local counts = {}
@@ -166,6 +186,7 @@ function AnalyticsManager:OnInit()
 	TutorialManager = require(script.Parent.TutorialManager)
 	TutorialCrateManager = require(script.Parent.TutorialCrateManager)
 	PlaytimeManager = require(script.Parent.PlaytimeManager)
+	RatingManager = require(script.Parent.RatingManager)
 end
 
 function AnalyticsManager:OnStart()
@@ -287,6 +308,11 @@ function AnalyticsManager:OnStart()
 	end)
 	BadgeManager.OnBadgeAwarded:Connect(function(player, badgeKey)
 		logCustom(player, "Badge Awarded", 1, badgeKey)
+	end)
+
+	-- The rating rides a field rather than the value, so opens break down by band instead of averaging out
+	RatingManager.OnStatsPanelOpened:Connect(function(player, stars)
+		logCustom(player, "Stats Panel Opened", 1, getRatingBucket(stars))
 	end)
 
 	-- One funnel per variant, so a rework reports separately. The 2 is versioning -- the cooking beats merged when the knob went

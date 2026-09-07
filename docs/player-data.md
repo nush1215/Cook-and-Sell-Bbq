@@ -69,9 +69,13 @@ the bar (see `CookStates.GetBarElapsed`). Every one is **stamped as the skewer g
 at the take, so the bar bends the same way from first frame to last, a rejoin included. A record without
 them is one whose cook has been bought out with the Robux skip, sitting settled until collected.
 
-A cook frozen by its owner leaving also carries **`CookPausedElapsed`**: the real seconds it had run at
-their last save, which `CookStartedAt` is restamped off on their return so time offline doesn't advance it
-(see `GrillerManager`).
+A cook paused by its owner leaving also carries the pair **`CookPausedElapsed`** and **`CookPausedAt`**: the
+real seconds it had run at their last save, and the moment that save happened. `GrillerManager` restamps
+`CookStartedAt` off both on their return, so the cook **runs on through the time away** — but only up to
+`CookStates.GetOfflineStopBar`, a walk-up lead short of where Perfect opens. Offline time does the waiting;
+the window itself can never be won or lost while nobody is watching. A cook already past that spot when its
+owner left is simply frozen where it stood, since the alternative would be rewinding it. Both fields are
+dropped by the write that resumes the cook, so a record only ever carries them while its owner is away.
 
 **`SkewerStand`** — the sell stall's display: an array (max 6) of cooked skewers in placement order. One
 stand per base, so a plain list rather than slot-keyed.
@@ -167,16 +171,18 @@ otherwise cost that player every order they were owed for the rest of the file's
 
 `Phase` is `Pending` (asked, unanswered) or `Accepted` (deal struck, clock running), and it decides where
 the restored visit re-enters: a pending one asks again with a fresh `OFFER_TIMEOUT`, an accepted one goes
-straight back to waiting. An accepted one carries **`SecondsLeft`** rather than a deadline, which is the
-`CookPausedElapsed` trade above made for a customer instead of a cook: the clock is banked where it stood
-and restamped on return, so time offline never runs it down. A wall-clock deadline would mean every rejoin
-found a dead order, since the clock is only three to five minutes — unlike `LastCustomOrderVisit` beside
-it, which *is* wall-clock precisely because a cooldown should keep running while you're away.
+straight back to waiting. An accepted one carries **`SecondsLeft`** rather than a deadline: the clock is
+banked where it stood and restamped on return, so time offline never runs it down. A wall-clock deadline
+would mean every rejoin found a dead order, since the clock is only three to five minutes — unlike
+`LastCustomOrderVisit` beside it, which *is* wall-clock precisely because a cooldown should keep running
+while you're away. This is the last of the three doctrines a saved clock can take, and the only one still
+fully frozen: a cook's `CookPausedElapsed` banks the same way but then spends the time away against a
+ceiling, because a cook has a safe place to stop at and an order does not.
 
 `Counts` is deliberately not saved: it is `countIngredients(Ingredients)`, and keeping a second copy of
 the same fact in the profile only creates something to fall out of step.
 
-**`CustomOrderHistory`** — the last `CustomOrderNpc.HISTORY_LENGTH` resolved orders, oldest first. This
+**`CustomOrderHistory`** — the last `Rating.ORDER_WINDOW` resolved orders, oldest first. This
 is the `RecentSales` idiom and it is here for the same reason: a rating has to be able to fall as well as
 climb, which a lifetime tally never can, and it is **stored as facts rather than a score** so retuning
 what a good order is worth re-rates the whole window rather than leaving old entries priced by old rules.
@@ -244,9 +250,15 @@ nothing here.
 be cooked and never served, and a rich customer sells six at once. Distinct from `RecentSales`, which ages
 entries out and so can't answer what the player has ever sold.
 
-**`RecentSales`** — the last `StatsManager.RECENT_SALES` skewers sold, oldest first. What a stall
+**`RecentSales`** — the last `Rating.SALE_WINDOW` skewers sold, oldest first. What a stall
 reputation averages over — a rolling window can fall as well as climb, which a lifetime tally never can.
 Stored as **facts rather than a score**, so retuning what a good skewer is worth re-rates the whole window.
+
+An entry is `{ StickId, Ingredients, CookState, Sauce?, Mutation?, Value }`. `StickId` and `Ingredients`
+are what the **Menu** trait reads — how varied the menu is, how dear, and how full the skewers go out.
+Entries written before that trait existed carry neither and **cannot be backfilled**, since the ingredients
+were never recorded; `Rating.ScoreMenu` skips those rather than scoring them zero, and the window heals
+itself as they age out.
 
 ## Sauce dispensers (dormant)
 

@@ -46,6 +46,14 @@ local HIDE_HUD_FOR_UI = {
 		"Right",
 		"BottomRight",
 	},
+
+	ShopRatingUI = {
+		"Top",
+		"Left",
+		"Right",
+		"BottomLeft",
+		"BottomRight",
+	},
 }
 
 -- Frames that come down on their own while a UI is open. The shop keeps Currency, which is what a Bux browser is watching

@@ -550,11 +550,11 @@ function Grill:_showCookingUI()
 
 	local cookingUI = UI.CookingUI:Clone()
 
-	-- Bands are fractions of the bar, so the marks sit in the same places whatever's cooking
+	-- Read per cook, not once: the perfect band's cap pulls its mark in on anything long
 	local border = cookingUI.Bar.Border
 	local position = border.Position
 
-	for index, boundary in CookStates.BOUNDARIES do
+	for index, boundary in CookStates.GetBoundaries(self._cookTime) do
 		local marker = if index == 1 then border else border:Clone()
 		marker.Position = UDim2.new(boundary, position.X.Offset, position.Y.Scale, position.Y.Offset)
 		marker.Parent = cookingUI.Bar
@@ -840,7 +840,7 @@ function Grill:Update()
 				)
 			self._perfectEndsAt = self._cookStartedAt
 				+ CookStates.GetElapsedForBar(
-					CookStates.PERFECT_END * cookTime,
+					CookStates.GetPerfectEnd(cookTime) * cookTime,
 					cookTime,
 					self._cookWindowStretch,
 					self._cookProgress,
@@ -859,7 +859,7 @@ function Grill:Update()
 			local remaining = (if opening then self._perfectStartsAt else self._perfectEndsAt) - now
 
 			-- The live pace, not the steady one: an unstable grill's stall visibly climbs and its surge collapses
-			local barTarget = (if opening then CookStates.RAW_END else CookStates.PERFECT_END) * cookTime
+			local barTarget = (if opening then CookStates.RAW_END else CookStates.GetPerfectEnd(cookTime)) * cookTime
 			local rate = CookStates.GetBarRate(
 				self:_elapsed(),
 				cookTime,

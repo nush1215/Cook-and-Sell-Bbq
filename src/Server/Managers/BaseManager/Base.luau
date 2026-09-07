@@ -354,6 +354,16 @@ function Base:ApplyUnlocks(unlocks: { [string]: number }, animate: boolean?)
 			continue
 		end
 	end
+
+	-- Nil off an unowned base, so its board comes down rather than reading zeroes
+	self:PublishUnlockLevels(if self._owner then unlocks else nil)
+end
+
+-- Mirrors the owner's unlock levels onto the base model, which is a visitor's only view of them. Nil clears them, marking the base unowned.
+function Base:PublishUnlockLevels(unlocks: { [string]: number }?)
+	for _, unlock in BaseUnlocks.Data do
+		self._model:SetAttribute(BaseUnlocks.GetLevelAttribute(unlock.Id), unlocks and (unlocks[unlock.Id] or 0))
+	end
 end
 
 -- The part a plot's build grid is measured off, or nil for a plot that has none (or isn't a plot).

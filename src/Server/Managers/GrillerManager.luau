@@ -572,7 +572,7 @@ function GrillerManager:RecordCookResult(player: Player, stateId: string, elapse
 	end
 end
 
--- Banks each running cook's elapsed on the last save, so time away doesn't advance it. Must not yield.
+-- Banks each running cook's elapsed on the last save, and when that happened. Must not yield.
 function GrillerManager:PauseCooksOnLastSave(data)
 	for _, record in data.Grillers do
 		-- Already banked means it was paused and never resumed, so recomputing would bank the gap again
@@ -581,10 +581,12 @@ function GrillerManager:PauseCooksOnLastSave(data)
 		end
 
 		record.CookPausedElapsed = math.max(0, workspace:GetServerTimeNow() - record.CookStartedAt)
+		-- Absolute, so the return can tell how long they were away; the banked elapsed alone can't say
+		record.CookPausedAt = workspace:GetServerTimeNow()
 	end
 end
 
--- Restamps every paused cook and lights anything found sitting unlit, which old data is full of.
+-- Restamps every paused cook, running it on through the time away, and lights anything found sitting unlit.
 function GrillerManager:ResumePausedCooks(player: Player)
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
@@ -606,11 +608,30 @@ function GrillerManager:ResumePausedCooks(player: Player)
 		end
 
 		-- No bank means the session ended without its save, so restart the leg rather than settle on a stale stamp
+		local elapsed = record.CookPausedElapsed or 0
+
+		-- Time away runs the cook on, but only up to the parking spot -- the perfect window is never spent offline
+		local stopBar = if record.CookPausedAt then CookStates.GetOfflineStopBar(record.CookTime) else nil
+		if stopBar then
+			local stop = CookStates.GetElapsedForBar(
+				stopBar,
+				record.CookTime,
+				record.CookWindowStretch,
+				record.CookProgress,
+				record.CookInstability,
+				record.CookInstabilityPhase
+			)
+
+			-- Floored at where it already stood, so a cook left past the spot stays frozen rather than rewinding
+			local away = workspace:GetServerTimeNow() - record.CookPausedAt
+			elapsed = math.min(elapsed + away, math.max(elapsed, stop))
+		end
+
 		PlayerDataManager:SetPlayerDataKey(player, { "Grillers", uid }, {
 			StickId = record.StickId,
 			Ingredients = table.clone(record.Ingredients),
 			Cooking = true,
-			CookStartedAt = workspace:GetServerTimeNow() - (record.CookPausedElapsed or 0),
+			CookStartedAt = workspace:GetServerTimeNow() - elapsed,
 			CookTime = record.CookTime,
 			CookWindowStretch = record.CookWindowStretch,
 			CookProgress = record.CookProgress,

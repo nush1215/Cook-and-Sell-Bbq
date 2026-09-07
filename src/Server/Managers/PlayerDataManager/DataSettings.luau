@@ -92,7 +92,7 @@ return {
 		SeenCustomOrder = false,
 		-- ActiveCustomOrder is written here while an order is live and cleared when it resolves, so it
 		-- has no template entry: absent is the resting state. See docs/player-data.md for its shape
-		-- The last HISTORY_LENGTH resolved orders, oldest first. Facts rather than a score -- see docs/player-data.md
+		-- The last Rating.ORDER_WINDOW resolved orders, oldest first. Facts rather than a score -- see docs/player-data.md
 		CustomOrderHistory = {},
 
 		-- Boosts
@@ -135,7 +135,7 @@ return {
 		CustomOrderEarnings = 0, -- every dollar taken in from orders, so their share of income is readable
 		-- [cookStateId] = lifetime orders delivered in that state; grows on demand, as CookStateCounts does
 		CustomOrderCookStateCounts = {},
-		-- The last RECENT_SALES skewers sold, oldest first. Stored as facts, so retuning re-rates the whole window
+		-- The last Rating.SALE_WINDOW skewers sold, oldest first. Stored as facts, so retuning re-rates the whole window
 		RecentSales = {},
 	},
 

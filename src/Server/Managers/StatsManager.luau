@@ -4,16 +4,13 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 -- Shared
 local Shared = ReplicatedStorage.Shared
 local StickModel = require(Shared.StickModel)
-local CustomOrderNpc = require(Shared.Config.CustomOrderNpc)
+local Rating = require(Shared.Config.Rating)
 
 ----
 local PlayerDataManager
 
 -- The player's lifetime record, recorded per gameplay event rather than per counter. RecentSales stores the facts of each sale rather than a score, so a reputation can be retuned without rewriting saved data.
 local StatsManager = {}
-
--- How far back the rolling sale window reaches: long enough that one bad haul doesn't tank a reputation
-StatsManager.RECENT_SALES = 50
 
 -- Records a cook settling, bumping the lifetime total and the per-state tally.
 function StatsManager:RecordCookCompleted(player: Player, cookStateId: string)
@@ -64,6 +61,9 @@ function StatsManager:RecordSaleCompleted(player: Player, skewerRecords: { Stick
 		soldCookStateCounts[cookStateId] = (soldCookStateCounts[cookStateId] or 0) + 1
 
 		table.insert(recentSales, {
+			StickId = skewerRecord.StickId,
+			-- Cloned, since a declined skewer's record goes back on the stand carrying this same array
+			Ingredients = table.clone(skewerRecord.Ingredients),
 			CookState = cookStateId,
 			Sauce = skewerRecord.Sauce,
 			Mutation = skewerRecord.Mutation,
@@ -72,7 +72,7 @@ function StatsManager:RecordSaleCompleted(player: Player, skewerRecords: { Stick
 	end
 
 	-- Oldest first, so trimming the front is what ages entries out of the window
-	local overflow = #recentSales - self.RECENT_SALES
+	local overflow = #recentSales - Rating.SALE_WINDOW
 	if overflow > 0 then
 		recentSales = table.move(recentSales, overflow + 1, #recentSales, 1, {})
 	end
@@ -124,7 +124,7 @@ function StatsManager:RecordCustomOrderResolved(player: Player, entry)
 	table.insert(history, entry)
 
 	-- Oldest first, so trimming the front is what ages entries out of the window
-	local overflow = #history - CustomOrderNpc.HISTORY_LENGTH
+	local overflow = #history - Rating.ORDER_WINDOW
 	if overflow > 0 then
 		history = table.move(history, overflow + 1, #history, 1, {})
 	end

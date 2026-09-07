@@ -147,22 +147,107 @@ Three things are checked at load rather than left to be noticed in-game:
 ## Cook states
 
 A skewer passes through three bands along the 0–1 cooking bar, then two more that only a skewer nobody
-came back for reaches. The first three are fixed fractions of the bar, so a client reads them straight off
-the progress it already derives from `CookStartedAt` — only the bar's *length* varies per skewer. Past the
+came back for reaches. The bands are fractions of the bar, so a client reads them straight off the
+progress it already derives from `CookStartedAt` — only the bar's *length* varies per skewer. Past the
 end of the bar, states take over on `Overtime`: wall-clock seconds rather than a fraction, so a quick
 skewer and a slow one get the same time to notice and react.
 
 `RAW_END` also sizes the cook itself: an ingredient's `CookTime` is the seconds until it first reads
-cooked, so a run is that stretched over the whole bar. Widening the gap between `RAW_END` and
-`PERFECT_END` is what makes the window more forgiving.
+cooked, so a run is that stretched over the whole bar. It is the one boundary that is load-bearing twice —
+move it and every cook's length moves with it — which is why the perfect window is tuned from the other
+end.
 
 | State | Ends | Multiplier | OfferMin–Max | CounterChance | CounterCap |
 |---|---|---|---|---|---|
 | Raw | RAW_END | 1 | 1 – 1.05 | 30 | 1.1 |
-| Perfect | PERFECT_END | 1.8 | 1.1 – 1.35 | 90 | 1.55 |
-| Cooked | 1 | 1.35 | 1.05 – 1.3 | 80 | 1.45 |
-| Overcooked | +20s | 0.9 | 1 – 1.15 | 50 | 1.26 |
-| Charred | +60s | 0.8 | 1 – 1.05 | 40 | 1.14 |
+| Perfect | PERFECT_END, capped | 1.4 | 1.1 – 1.35 | 90 | 1.55 |
+| Cooked | 1 | 1.2 | 1.05 – 1.3 | 80 | 1.45 |
+| Overcooked | +20s | 1.05 | 1 – 1.15 | 50 | 1.26 |
+| Charred | +60s | 0.98 | 1 – 1.01 | 40 | 1.14 |
+
+### The perfect window's ceiling
+
+Perfect is the one band whose end **moves per cook**. As a flat fraction it is 25% of the bar, and the bar
+scales with the food on it, so the window scaled without limit: a lone Corn got 3.3s while a full
+Legendary stick got twelve minutes — a free pass rather than a timing test. `MAX_PERFECT_SECONDS` puts a
+ceiling on it in wall-clock seconds, and `CookStates.GetPerfectEnd` is the one place it is applied:
+
+```
+perfectEnd = RAW_END + min(PERFECT_END - RAW_END, MAX_PERFECT_SECONDS / cookTime)
+```
+
+At 45s the cap bites above **108 ingredient seconds**, so everything through Rare singles and 2× Uncommon
+is untouched and only Epic-and-up loads and multi-slot stacks are trimmed:
+
+| Load | Ingredient secs | Window uncapped | Capped | % of bar |
+|---|---|---|---|---|
+| 1× Corn (8) | 8 | 3.3s | 3.3s | 25% |
+| 1× Uncommon (40) | 40 | 16.7s | 16.7s | 25% |
+| 1× Rare (82) | 82 | 34.2s | 34.2s | 25% |
+| 1× Epic (150) | 150 | 62.5s | 45s | 18% |
+| 5× Rare | 393.6 | 2.7 min | 45s | 6.9% |
+| 8× Legendary | 1721 | 12.0 min | 45s | 1.6% |
+| 8× Mythic | 2295 | 15.9 min | 45s | 1.2% |
+
+Three things follow from capping `PERFECT_END` rather than `RAW_END`:
+
+- **Time-to-perfect and total cook time are untouched.** The window's *start* is still exactly the
+  ingredient seconds and the bar still fills on the second it always would; only the width moves. The
+  space it gives up goes to **Cooked**, which is the forgiving band anyway — so overshooting a long cook
+  is still a nick rather than a punishment.
+- **Nothing extra is replicated.** `GetPerfectEnd` is a pure function of `CookTime`, which the client
+  already reads off the slot, so the server's stop and the client's bar derive the same boundary with no
+  new attribute and no data migration.
+- **The mark goes thin at the top end.** On an 8× Mythic stack the band is 1.2% of the bar, so the two
+  tick marks nearly touch. That's the honest position — the "Perfect ends in" countdown is what carries
+  the timing on cooks that long, and widening the mark would put it somewhere the band isn't.
+
+`CookSpeed` still trades against the window in the same direction: it shrinks `cookTime`, and
+`min(0.25 × cookTime, MAX_PERFECT_SECONDS)` is monotone in `cookTime`, so a faster grill is still a
+tighter window.
+
+### Where an offline cook parks
+
+A cook keeps running while its owner is away, but it stops inside **Raw**, short of where Perfect opens.
+`CookStates.GetOfflineStopBar` is the one place that spot is decided, and `GrillerManager` solves it back
+into wall seconds with `GetElapsedForBar` as the player returns:
+
+```
+offlineStop = RAW_END * cookTime - OFFLINE_STOP_LEAD,   nil where RAW_END * cookTime <= OFFLINE_STOP_LEAD
+```
+
+`RAW_END * cookTime` is exactly the skewer's ingredient seconds over the grill's `CookSpeed`, so the lead
+is a plain subtraction off a number the config already states. What it gives, at `OFFLINE_STOP_LEAD = 20`:
+
+| Load | Ingredient secs | Parks at | Headroom |
+|---|---|---|---|
+| 1× Corn (8) | 8 | — | no offline time |
+| 1× Common (20) | 20 | — | no offline time |
+| 1× Uncommon (40) | 40 | 50% of Raw | 20s |
+| 1× Rare (82) | 82 | 75.6% of Raw | 20s |
+| 1× Epic (150) | 150 | 86.7% of Raw | 20s |
+| 8× Legendary | 1721 | 98.8% of Raw | 20s |
+
+Four things follow from stopping short of the boundary rather than on it:
+
+- **The window is never spent offline.** Perfect can't be won by logging off, and — the half that actually
+  matters — it can't be lost either. Offline time buys the *wait*, which is the boring part, and leaves the
+  timing test exactly where it was. That is also why there's no cap on how long you can be away: ten
+  minutes and ten hours land on the same spot, so a cap would be a constant that changes nothing.
+- **The lead is a walk, not a fraction.** Twenty seconds is roughly a spawn plus a run across a base, and
+  that cost doesn't scale with the skewer — a fraction of the bar would hand an 8× Legendary a five-minute
+  lead-in it has no use for and a Corn under two seconds, which is the case that matters.
+- **A band shorter than the lead gets nothing at all.** Below ~20 ingredient seconds there is no room to
+  park with a walk-up left, and a partial advance would be *worse* than freezing: the player would return
+  to a bar with a second on it and slide into Cooked before reaching the grill. Freezing hands them the
+  whole remaining band instead, and the cook is under a minute anyway.
+- **A cook already past the spot is frozen where it stood**, not pulled back to it. The cap is
+  `max(whereItWas, offlineStop)`, so leaving mid-Perfect is the one case that still behaves exactly as it
+  did before any of this — the alternative is un-cooking food, which no player would read as a favour.
+
+The lead is in **bar** seconds, so an unstable grill crosses it at a rate that swings; in practice that
+costs under a second even at `MAX_INSTABILITY`, since 20s is a thin slice of any bar long enough to
+qualify. `OFFLINE_STOP_LEAD` is the one number to move if the walk-up reads tight or generous in play.
 
 ### The negotiation gap
 
@@ -187,7 +272,7 @@ Per-state notes:
 - **Cooked** — overshooting is a nick, not a penalty: a player who looked away still has a sellable skewer.
 - **Overcooked** — past the bar the haggle narrows rather than the offer dipping under the estimate.
 - **Charred** has the narrowest range of any state, and the narrowness lives in the cap rather than the
-  chance: a customer counters happily, there's just nothing above 1.05 to reach into. A counter that
+  chance: a customer counters happily, there's just nothing above 1.01 to reach into. A counter that
   visibly moves nothing teaches the state's worth better than a roll that silently fails.
 
 ### The bar warps (`GetBarElapsed`)
@@ -196,7 +281,9 @@ All three warps live in one function because it is the one place the server's st
 both derive from — a caller that skipped one would draw a bar the stop doesn't resolve against.
 
 - **`windowStretch`** widens the perfect window in real time without moving where it sits on the bar, so
-  the bar still fills on the same second and Overtime still starts there. Absent or 1 is the identity.
+  the bar still fills on the same second and Overtime still starts there. Absent or 1 is the identity. It
+  stretches the *capped* window, not the flat 25% — tutorial cooks are short enough that the cap never
+  bites, so the ×3 is unchanged in practice.
 - **`instability`** swings the rate either side of 1 all the way up the bar, so the fill surges and stalls.
   It too leaves the fill second untouched.
 - **`cookProgress`** enters the timeline part-way along, for a cook resumed from an earlier raw pull.

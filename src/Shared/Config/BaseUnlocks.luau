@@ -148,6 +148,11 @@ function BaseUnlocks.GetProductStringId(unlockId: string, level: number): string
 	return `{unlockId}_L{level}`
 end
 
+-- The base-model attribute one unlock's level is published under, so the server write and the client read can't drift.
+function BaseUnlocks.GetLevelAttribute(unlockId: string): string
+	return `Unlock_{unlockId}`
+end
+
 function BaseUnlocks.GetUnlockFromId(id: string): Unlock?
 	for _, v in BaseUnlocks.Data do
 		if v.Id == id then

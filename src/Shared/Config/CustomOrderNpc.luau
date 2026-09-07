@@ -56,8 +56,7 @@ CustomOrderNpc.MULTIPLIER_CAP = 1.3
 -- What each ingredient they added but weren't asked for costs, so padding the stick out can't pay
 CustomOrderNpc.EXTRA_INGREDIENT_PENALTY = 0.15
 
--- Resolved orders kept as facts for the rolling rating window, the way StatsManager.RECENT_SALES is
-CustomOrderNpc.HISTORY_LENGTH = 20
+-- How many resolved orders are kept reads off Config.Rating.ORDER_WINDOW, beside the sale window it pairs with
 
 -- The clock, split so a long recipe gets cooking time and every slot gets time to be rolled for
 CustomOrderNpc.LEEWAY_BASE = 90

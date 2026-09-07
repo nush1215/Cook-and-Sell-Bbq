@@ -359,7 +359,9 @@ end
 -- Adds a notification to the chat
 function NotificationController:NotifyChat(notificationText: string)
 	local rbxSystemTextChannel = TextChatService.TextChannels.RBXSystem
-	rbxSystemTextChannel:DisplaySystemMessage(`<font color="#ffffff">{notificationText}</font>`)
+
+	-- White is the base the coloured runs nest inside, so anything Keywords didn't match still reads as a system line
+	rbxSystemTextChannel:DisplaySystemMessage(`<font color="#ffffff">{Keywords.Highlight(notificationText)}</font>`)
 end
 
 -- Displays a global rare-tame announcement in the dedicated chat tab.

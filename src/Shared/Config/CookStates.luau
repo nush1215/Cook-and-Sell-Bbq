@@ -7,6 +7,12 @@ local CookStates = {}
 CookStates.RAW_END = 0.6
 CookStates.PERFECT_END = 0.85
 
+-- The perfect band's ceiling in wall seconds. Past it a longer cook buys no more room -- a minutes-wide window is a free pass
+CookStates.MAX_PERFECT_SECONDS = 45
+
+-- How far short of the perfect window a cook run offline parks, so a returning player can reach the grill
+CookStates.OFFLINE_STOP_LEAD = 20
+
 -- How far a charred part is dragged toward its Tint. Short of 1, so it still reads as its ingredients
 CookStates.BURNT_STRENGTH = 0.65
 
@@ -124,15 +130,36 @@ CookStates.Data = {
 
 table.freeze(CookStates.Data)
 
--- Where the bands meet, derived so a new state marks itself. Only states on the bar get one.
-CookStates.BOUNDARIES = {}
-for _, state in CookStates.Data do
-	if state.End and state.End < 1 then
-		table.insert(CookStates.BOUNDARIES, state.End)
-	end
+-- Where the perfect band ends on a bar this long. Capped in seconds, so a long cook can't hand out a minutes-wide window.
+function CookStates.GetPerfectEnd(cookTime: number): number
+	local window = math.min(CookStates.PERFECT_END - CookStates.RAW_END, CookStates.MAX_PERFECT_SECONDS / cookTime)
+	return CookStates.RAW_END + window
 end
 
-table.freeze(CookStates.BOUNDARIES)
+-- Where a cook run offline parks on the bar: the end of Raw, less a walk-up lead. Nil where the band can't spare one.
+function CookStates.GetOfflineStopBar(cookTime: number): number?
+	local rawEnd = CookStates.RAW_END * cookTime
+
+	-- A band no longer than the lead is a cook shorter than the walk to it -- advancing it would only eat the reaction
+	if rawEnd <= CookStates.OFFLINE_STOP_LEAD then
+		return nil
+	end
+
+	return rawEnd - CookStates.OFFLINE_STOP_LEAD
+end
+
+-- Where the bands meet on a bar this long, derived so a new state marks itself. Only states on the bar get one.
+function CookStates.GetBoundaries(cookTime: number): { number }
+	local boundaries = {}
+
+	for _, state in CookStates.Data do
+		if state.End and state.End < 1 then
+			table.insert(boundaries, if state.Id == "Perfect" then CookStates.GetPerfectEnd(cookTime) else state.End)
+		end
+	end
+
+	return boundaries
+end
 
 function CookStates.GetStateFromId(id: string): CookState?
 	for _, state in CookStates.Data do
@@ -154,8 +181,12 @@ function CookStates.GetStateFromCook(elapsed: number, cookTime: number): string
 
 	if overtime < 0 then
 		local progress = math.max(elapsed, 0) / cookTime
+		local perfectEnd = CookStates.GetPerfectEnd(cookTime)
+
 		for _, state in CookStates.Data do
-			if state.End and progress < state.End then
+			-- Perfect's end is the one that moves with the cap; the rest are structural
+			local finish = if state.Id == "Perfect" then perfectEnd else state.End
+			if finish and progress < finish then
 				return state.Id
 			end
 		end
@@ -202,7 +233,7 @@ function CookStates.GetBarElapsed(
 		return elapsed
 	end
 
-	local windowLength = (CookStates.PERFECT_END - CookStates.RAW_END) * cookTime
+	local windowLength = (CookStates.GetPerfectEnd(cookTime) - CookStates.RAW_END) * cookTime
 	local stretched = windowLength * stretch
 
 	if elapsed <= windowStart + stretched then
