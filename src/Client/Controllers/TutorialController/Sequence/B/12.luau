@@ -1,55 +1,148 @@
--- Step 12: Take the cooked BBQ off the griller.
-local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
+-- Step 12: serve the customer. The Decline button is taken off this one offer, leaving Accept as the only thing to press -- a first-time player turning down the payoff has no idea what they've done.
+local RunService = game:GetService("RunService")
 
-local NEAR_DISTANCE = 12
-local BEAM_HIDE_DISTANCE = 12
+local HudController = require(script.Parent.Parent.Parent.Parent.HudController)
+local PlayerDataController = require(script.Parent.Parent.Parent.Parent.PlayerDataController)
+local SellNpcController = require(script.Parent.Parent.Parent.Parent.SellNpcController)
+local SkewerStandController = require(script.Parent.Parent.Parent.Parent.SkewerStandController)
+
+-- Pixels of breathing room left around the lit button
+local SPOTLIGHT_PADDING = 14
+
+-- The HUD frame holding the currency total, hidden for the rest of the run
+local CURRENCY_FRAME = "BottomLeft"
+
+-- How long the total stays up: the count springs and a floating +$ rises, so pulling it at once cuts the payoff in half
+local CURRENCY_HOLD_DURATION = 2.5
+
+-- Projects the Accept button into the world for FocusWorld. FocusUI can't be used -- the button lives in a BillboardGui, its own coordinate root, riding a walking customer. Nil while there's nothing to project against.
+local function buttonFocusPoint(button: GuiObject): (Vector3?, number?)
+	local billboard = button:FindFirstAncestorOfClass("BillboardGui")
+	local adornee = billboard and billboard.Adornee :: BasePart?
+	local camera = workspace.CurrentCamera
+	if not adornee or not camera then
+		return nil
+	end
+
+	local cameraCFrame = camera.CFrame
+
+	-- StudsOffset is on the camera's axes with Z toward it; StudsOffsetWorldSpace is on the world's
+	local studsOffset = billboard.StudsOffset
+	local anchor = adornee.Position
+		+ billboard.StudsOffsetWorldSpace
+		+ cameraCFrame.RightVector * studsOffset.X
+		+ cameraCFrame.UpVector * studsOffset.Y
+		- cameraCFrame.LookVector * studsOffset.Z
+
+	-- Depth along the look vector, so a customer at the screen edge doesn't measure further and get a smaller hole
+	local depth = cameraCFrame.LookVector:Dot(anchor - cameraCFrame.Position)
+	if depth <= 0 then
+		return nil
+	end
+
+	local studsPerPixel = (2 * depth * math.tan(math.rad(camera.FieldOfView) / 2)) / camera.ViewportSize.Y
+
+	-- A difference of two AbsolutePositions, so whatever space the billboard measures in cancels out
+	local offset = (button.AbsolutePosition + button.AbsoluteSize / 2)
+		- (billboard.AbsolutePosition + billboard.AbsoluteSize / 2)
+
+	-- Along the camera's axes, the plane a billboard faces. Y is negated -- screen space counts down
+	local position = anchor
+		+ cameraCFrame.RightVector * (offset.X * studsPerPixel)
+		- cameraCFrame.UpVector * (offset.Y * studsPerPixel)
+
+	local radius = (math.max(button.AbsoluteSize.X, button.AbsoluteSize.Y) / 2 + SPOTLIGHT_PADDING)
+		* studsPerPixel
+
+	return position, radius
+end
 
 return function(self)
-	local slot = self:GetStructure("Grillers")
+	-- Dropped for this beat alone: everything so far has been spending, so this is the first number they see
+	HudController:SetHudFrameHiddenFor(self, CURRENCY_FRAME, false)
 
-	-- The grill's own attachment rather than the slot: the take prompt rides on the skewer, which is
-	-- seated inches from it, and the model is wide enough that its centre reads as near from places
-	-- nothing on it is in reach. The knob beats measure from the knob for the same reason -- each beat's
-	-- "near" is wherever the thing it's asking for can be reached from. Found the whole way down, since it
-	-- sits on Grill.Main.Base rather than on the griller itself.
-	local promptAttachment = slot:FindFirstChild("GrillAttachment", true)
+	local spotlight = self:GetSpotlight()
+	spotlight:SetShape("Circle")
 
-	local highlight = self:CreateHighlight(slot)
+	-- Every offer frame this beat hid a Decline on, so they all go back however the sale ends
+	local hiddenDeclines = {}
+	local activeNpc = nil
+	local activeButton = nil
 
-	-- The skewer rather than the griller: it's what the banner is naming, and the take prompt rides on it.
-	-- The server rebuilds it on every record write -- the raw -> cooked swap this beat opens on is one --
-	-- so it's resolved each frame, falling back to the prompt's own attachment inches away while it's
-	-- between builds.
-	local beam = self:CreateBeam(function()
-		return slot:FindFirstChild("Skewer") or promptAttachment
-	end, BEAM_HIDE_DISTANCE)
+	local shownConnection = SellNpcController.OnOfferShown:Connect(function(npc, offerFrame)
+		local buttons = offerFrame.Buttons
+
+		buttons.Decline.Visible = false
+		hiddenDeclines[buttons.Decline] = true
+
+		activeNpc = npc
+		activeButton = buttons.Accept
+		spotlight:Show()
+	end)
+
+	local endedConnection = SellNpcController.OnOfferEnded:Connect(function()
+		activeNpc = nil
+		activeButton = nil
+		spotlight:Hide()
+	end)
+
+	-- FocusWorld is one-shot, so re-aim per frame: the customer walks and the camera turns
+	local spotlightConnection = RunService.Heartbeat:Connect(function()
+		if not activeButton or not activeButton.Parent then
+			return
+		end
+
+		local position, radius = buttonFocusPoint(activeButton)
+		if position then
+			spotlight:FocusWorld(position, radius)
+		end
+	end)
+
+	local sold = false
+	local dataConnection = PlayerDataController:ListenForChange("SalesCompleted", function(newValue, oldValue)
+		if newValue > (oldValue or 0) then
+			sold = true
+		end
+	end)
 
 	self:AwaitGoal({
 		{
-			Description = `Go to your {self:Emphasize("Griller")}`,
+			Description = `Wait for a {self:Emphasize("Customer")}`,
 			Check = function()
-				return self:IsNear(promptAttachment, NEAR_DISTANCE)
-			end,
-		},
-		{
-			Description = "Put away what you're holding",
-			Check = function()
-				return EquippedItem.GetTool() == nil
+				return activeNpc ~= nil
 			end,
 		},
 	}, {
-		Description = `Take your {self:Emphasize("BBQ")}`,
+		Description = `Click {self:Emphasize("Accept")} to sell it`,
 		Wait = function()
-			while slot:GetAttribute("PlacedStickId") ~= nil do
-				slot:GetAttributeChangedSignal("PlacedStickId"):Wait()
-			end
+			repeat
+				task.wait()
+			until sold
 		end,
 	})
 
-	beam.Destroy()
-	highlight.Destroy()
+	shownConnection:Disconnect()
+	endedConnection:Disconnect()
+	spotlightConnection:Disconnect()
+	if dataConnection then
+		dataConnection:Disconnect()
+	end
 
-	self:LogStep("TakeFromGrill")
+	for decline in hiddenDeclines do
+		decline.Visible = true
+	end
+
+	-- Step 11 held this out for the sale. The stand is empty now, so this only ends the hold with the sequence
+	SkewerStandController:SetTakeLocked(false)
+
+	spotlight:Hide()
+
+	-- On a delay, not a wait: blocking held the step open through the count and read as Accept not registering
+	task.delay(CURRENCY_HOLD_DURATION, function()
+		HudController:SetHudFrameHiddenFor(self, CURRENCY_FRAME, true)
+	end)
+
+	self:LogStep("AcceptOffer")
 
 	self.SequenceFinish:Fire()
 end

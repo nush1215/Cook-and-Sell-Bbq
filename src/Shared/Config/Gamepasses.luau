@@ -12,9 +12,7 @@ export type Gamepass = {
 
 local Gamepasses = {}
 
--- A pass needs no callbacks when what it does is passive: ShopManager tags every owner with the pass's
--- Id, on purchase and again on each join, so the systems it affects just ask for the tag. Doubling
--- lives in CurrencyManager:IncrementCurrency for that reason, and the Id here is the tag it looks for.
+-- A passive pass needs no callbacks: ShopManager tags every owner with its Id, and the systems read the tag
 Gamepasses.Data = {
 	{
 		Id = "x2Bux",

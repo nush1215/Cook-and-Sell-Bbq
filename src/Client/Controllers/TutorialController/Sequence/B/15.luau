@@ -1,48 +1,125 @@
--- Step 15: Take the Store teleport. The stick shop isn't on the player's base -- it's in the shared
--- store -- and the top bar's Store button is how you get there. The spotlight teaches the button;
--- arriving is what ends the beat, so walking there counts the same as pressing it.
---
--- Last in this variant rather than fifth, and the sale two beats ago is what pays for it: selling a BBQ
--- destroys the stick under it, so the player really is at zero here. The trip is them restocking after
--- a loop they've now done once, instead of an errand run before they've seen one pay out.
---
--- Looked up per check rather than held, for the same reason the trip home uses a zone: a reference
--- taken on one side of a teleport is worth nothing on the other if the thing it points at has been
--- out of the world in between.
--- Controllers
-local HudController = require(script.Parent.Parent.Parent.Parent.HudController)
+-- Step 15: buy a wooden stick. Two taps, so the spotlight walks from the row to the buy button and back if either is undone.
+local Players = game:GetService("Players")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
 
--- The bar the Store button sits on, held down for the rest of the run by Start.
-local TOP_BAR_FRAME = "Top"
+local Sticks = require(ReplicatedStorage.Shared.Config.Sticks)
 
-local ARRIVED_DISTANCE = 60
+local StickShopController = require(script.Parent.Parent.Parent.Parent.StickShopController)
+
+local LocalPlayer = Players.LocalPlayer
+local PlayerGui = LocalPlayer.PlayerGui
+
+-- The one stick pointed at: cheapest, and stocked every window, so it can't be unaffordable or sold out
+local TUTORIAL_STICK_ID = "WoodenStick"
+
+local SPOTLIGHT_PADDING = 10
+local BEAM_HIDE_DISTANCE = 14
 
 return function(self)
-	local teleports = workspace:WaitForChild("Core"):WaitForChild("Teleports")
+	-- Named in the stick's own label colour, which is what its shop row is written in
+	local stick = Sticks.GetStickFromId(TUTORIAL_STICK_ID)
+	local stickName = self:Emphasize(`{stick.Name} Stick`, stick.TextColor)
 
-	-- This is the beat that wants it, so it comes back for exactly as long as the beat lasts.
-	HudController:SetHudFrameHiddenFor(self, TOP_BAR_FRAME, false)
+	local holder = PlayerGui:WaitForChild("StickShopUI").Holder
+	local scrollingFrame = holder.Container:WaitForChild("ScrollingFrame")
+	local row = scrollingFrame:WaitForChild(TUTORIAL_STICK_ID)
+	local buyButton = scrollingFrame:WaitForChild("ButtonChoices"):WaitForChild("CurrencyPurchase")
 
-	local spotlight = self:SpotlightHudButton("Store")
+	local zone = workspace:WaitForChild("Core"):WaitForChild("Zones"):WaitForChild("StickShop")
+	local stall = workspace:WaitForChild("Stalls"):WaitForChild("StickStall")
 
-	self:AwaitGoal(nil, {
-		Description = `You're out of {self:Emphasize("Sticks")}! Click the {self:Emphasize("Store")} button`,
+	-- Only this stick opens, or another row would slide the buy button out from under the light
+	StickShopController:SetOnlySelectableStick(TUTORIAL_STICK_ID)
+
+	local function isSelected(): boolean
+		return StickShopController:GetSelectedStickId() == TUTORIAL_STICK_ID
+	end
+
+	-- Put back whenever the shop is shut, since inside it the spotlight is the cue and a beam is in the way
+	local highlight = self:CreateBreathingHighlight(function()
+		return if holder.Visible then nil else stall
+	end)
+	local beam = self:CreateBeam(function()
+		return if holder.Visible then nil else zone
+	end, BEAM_HIDE_DISTANCE)
+
+	local spotlight = self:GetSpotlight()
+	-- Rectangle, so the cutout takes width and height -- other shapes square off the larger
+	spotlight:SetShape("Rectangle")
+
+	-- Re-aimed only on a real change: FocusUI re-locks ancestors and rebinds its loop each call
+	local currentTarget
+	local function syncSpotlight()
+		local target = if not holder.Visible
+			then nil
+			elseif isSelected() then buyButton
+			else row.Button
+
+		if target == currentTarget then
+			return
+		end
+		currentTarget = target
+
+		if target then
+			spotlight:FocusUI(target, SPOTLIGHT_PADDING)
+			spotlight:Show()
+		else
+			spotlight:Hide()
+		end
+	end
+
+	syncSpotlight()
+	local spotlightConnection = RunService.Heartbeat:Connect(syncSpotlight)
+
+	-- Logged on the right row, so the funnel separates never picking from picking and never buying
+	task.spawn(function()
+		while not isSelected() do
+			task.wait()
+		end
+
+		self:LogStep("SelectStick")
+	end)
+
+	-- The server's own answer, being the one thing that fires exactly when the buy went through
+	local bought = false
+	local purchaseConnection = StickShopController.OnStickPurchased:Connect(function(stickId: string)
+		if stickId == TUTORIAL_STICK_ID then
+			bought = true
+		end
+	end)
+
+	self:AwaitGoal({
+		{
+			Description = `Go to the {self:Emphasize("Stick Shop")}`,
+			Check = function()
+				return holder.Visible
+			end,
+		},
+		{
+			Description = `Click the {stickName}`,
+			Check = isSelected,
+		},
+	}, {
+		Description = `Buy the {stickName}`,
 		Wait = function()
-			local function atStore(): boolean
-				local store = teleports:FindFirstChild("Store")
-				return store ~= nil and self:IsNear(store, ARRIVED_DISTANCE)
-			end
-
-			while not atStore() do
+			repeat
 				task.wait()
-			end
+			until bought
 		end,
 	})
 
-	spotlight.Destroy()
-	HudController:SetHudFrameHiddenFor(self, TOP_BAR_FRAME, true)
+	spotlightConnection:Disconnect()
+	purchaseConnection:Disconnect()
+	spotlight:Hide()
+	beam.Destroy()
+	highlight.Destroy()
+	StickShopController:SetOnlySelectableStick(nil)
 
-	self:LogStep("OpenStore")
+	-- Shut for them, since on a phone it covers the top bar the next beat points at. After the cues come down, or they'd flash back onto the stall
+	StickShopController:Close()
+
+	self:LogStep("BuyStick")
 
 	self.SequenceFinish:Fire()
 end

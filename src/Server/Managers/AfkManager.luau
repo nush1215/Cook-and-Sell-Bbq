@@ -7,19 +7,16 @@ local TeleportService = game:GetService("TeleportService")
 local Shared = ReplicatedStorage.Shared
 local Network = require(Shared.Network)
 
--- Moves players whose client has reported them idle into a fresh server of this place, freeing the
--- slot they were holding. AfkController owns the 15 minute detection; this side owns the teleport.
+-- Teleports idle players into a fresh server, freeing their slot. AfkController owns the detection.
 local AfkManager = {
 	ReportAfkEvent = Network.Event("ReportAfk"),
 
 	_teleporting = {}, -- [player] = true while a TeleportAsync for them is in flight
 }
 
--- Sends an idle player into a new server of this same place. TeleportAsync always fails in Studio, so
--- the warn there is expected rather than a fault.
+-- Sends an idle player to a new server. TeleportAsync always fails in Studio, so that warn is expected.
 function AfkManager:ReturnPlayerToNewServer(player: Player)
-	-- Authoritative guard: the client resets its own timer after reporting, but a spammed remote
-	-- shouldn't be able to queue a teleport per frame
+	-- Authoritative guard: a spammed remote shouldn't be able to queue a teleport per frame
 	if self._teleporting[player] then
 		return
 	end

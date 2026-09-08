@@ -56,8 +56,7 @@ function CodeManager:ClaimCode(player: Player, code: string)
 		return
 	end
 
-	-- Keyed on the code as authored, never as typed: the lookup above is case-insensitive, so storing
-	-- the raw input would let "release" redeem again after "RELEASE".
+	-- Keyed as authored, not as typed -- the lookup is case-insensitive, so "release" could redeem twice
 	if table.find(playerData.RedeemedCodes, codeData.Code) then
 		NotificationManager:NotifyNormal(player, {
 			Text = "You have already redeemed this code!",

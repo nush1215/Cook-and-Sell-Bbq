@@ -1,17 +1,9 @@
 --!strict
--- Pure grid math for tiling a base into square cells, shared by the client ghost preview and the
--- server placement validation. Cell indices are measured off the starting plot's floor, in that
--- part's local space, so a rotated base still grids correctly.
---
--- One lattice covers the whole base rather than one per plot, and which of it a player may build on
--- is the union of the plots they own (see BuildGround below). That's what lets a structure straddle
--- the seam between two plots: the cells run straight through it, so there's nothing there to stop at.
--- Cells on a plot behind or left of the starting one are simply negative.
+-- Pure grid maths for tiling a base into cells, measured off the starting plot's floor so a rotated base still grids. One lattice covers the whole base, which is what lets a structure straddle a plot seam.
 
 local GridUtil = {}
 
--- A run of cells one plot's floor covers, as half-open ranges: the Max edges are the first cell
--- *past* the plot, which is what lets two abutting plots' rects meet with neither a gap nor an overlap.
+-- A plot's cells as half-open ranges, so two abutting plots meet with neither gap nor overlap
 export type Rect = {
 	MinX: number,
 	MinZ: number,
@@ -19,10 +11,7 @@ export type Rect = {
 	MaxZ: number,
 }
 
--- Every cell a player may build on, plus where the lattice sits in the world. Rects is one per owned
--- plot rather than a merged shape, because the union of a few rectangles is cheaper to test against
--- than it is to compute -- and the Min/Max below are the bounding box of the lot, which is what the
--- ghost clamps into.
+-- Every buildable cell and where the lattice sits. One rect per plot, cheaper to test than to merge
 export type Ground = {
 	Origin: CFrame, -- world pose of cell (0, 0)'s min corner, on the floors' top surface
 	Rects: { Rect },
@@ -32,10 +21,7 @@ export type Ground = {
 	MaxZ: number,
 }
 
--- Where the base's lattice is measured from: the starting plot's floor, at its (-X, -Z) corner on its
--- top surface and turned the way it is. Read on its own by anything that only has to turn cells back
--- into poses -- a structure standing on cells its owner has since had cleared still belongs where it
--- was put, so rendering one asks where the lattice is and never which of it is owned.
+-- Where the lattice is measured from. Read alone by anything only turning cells back into poses
 function GridUtil.GetOrigin(startFloor: BasePart): CFrame
 	local size = startFloor.Size
 	return startFloor.CFrame * CFrame.new(-size.X / 2, size.Y / 2, -size.Z / 2)
@@ -53,16 +39,7 @@ local function getFloorCorners(floor: BasePart): { Vector3 }
 	}
 end
 
--- The ground a player may build on: the base's lattice, measured off the starting plot's floor, and
--- the cells each of the floors they own covers within it.
---
--- Extents are rounded to the nearest cell rather than floored inwards, so floors that abut hand off
--- to each other exactly instead of each leaving a sub-cell margin -- which would put an unbuildable
--- strip down every seam. It's the same rounding Structures.GetFootprint measures a structure with, so
--- a floor and the things standing on it are sized by the same rule.
---
--- @param startFloor The Plots.START floor, which every base has and which anchors the lattice
--- @param floors The floors of the plots the player owns, the starting one included
+-- The ground a player may build on. Extents round to the nearest cell, the same rule GetFootprint uses, so abutting floors hand off exactly.
 function GridUtil.BuildGround(startFloor: BasePart, floors: { BasePart }, cellSize: number): Ground
 	local ground: Ground = {
 		Origin = GridUtil.GetOrigin(startFloor),
@@ -77,8 +54,7 @@ function GridUtil.BuildGround(startFloor: BasePart, floors: { BasePart }, cellSi
 		local minX, minZ = math.huge, math.huge
 		local maxX, maxZ = -math.huge, -math.huge
 
-		-- Walked as corners rather than read off the size, so a floor turned against the starting plot's
-		-- still claims the cells it actually covers.
+		-- Walked as corners, so a floor turned against the starting plot's still claims what it covers
 		for _, corner in getFloorCorners(floor) do
 			local point = ground.Origin:PointToObjectSpace(floor.CFrame:PointToWorldSpace(corner))
 
@@ -95,8 +71,7 @@ function GridUtil.BuildGround(startFloor: BasePart, floors: { BasePart }, cellSi
 			MaxZ = math.round(maxZ / cellSize),
 		}
 
-		-- A floor less than a cell across rounds away to nothing. That's a plot with no room on it rather
-		-- than one that reaches into its neighbour's cells, so it contributes no ground at all.
+		-- A sub-cell floor rounds to nothing -- a plot with no room rather than one reaching into its neighbour
 		if rect.MaxX <= rect.MinX or rect.MaxZ <= rect.MinZ then
 			continue
 		end
@@ -109,8 +84,7 @@ function GridUtil.BuildGround(startFloor: BasePart, floors: { BasePart }, cellSi
 		ground.MaxZ = math.max(ground.MaxZ, rect.MaxZ)
 	end
 
-	-- Nothing to build on, so the bounding box is a point rather than the infinities above -- callers
-	-- clamp into it, and an infinity there would come back as a NaN cell.
+	-- A point rather than the infinities above, which callers clamping into would turn into NaN cells
 	if #ground.Rects == 0 then
 		ground.MinX, ground.MinZ, ground.MaxX, ground.MaxZ = 0, 0, 0, 0
 	end
@@ -118,10 +92,7 @@ function GridUtil.BuildGround(startFloor: BasePart, floors: { BasePart }, cellSi
 	return ground
 end
 
--- True when every cell of the footprint block sits on ground the player owns. A block spanning two
--- plots passes on the cells each of them covers, which is the whole of what makes building across a
--- seam legal -- and a block over a plot they haven't bought fails on the cells nothing covers, so
--- ownership is this test rather than a check beside it.
+-- Whether every cell of the block sits on owned ground. Ownership is this test rather than a check beside it.
 function GridUtil.IsBlockOnGround(
 	ground: Ground,
 	cellX: number,
@@ -149,9 +120,7 @@ function GridUtil.IsBlockOnGround(
 	return true
 end
 
--- Maps a world position to the anchor (min-corner) cell of a footprint block CENTERED on that
--- position, so the block sits under the cursor instead of extending off toward one corner. May be off
--- the player's ground; callers clamp against it.
+-- The anchor cell of a block centred on `position`, so it sits under the cursor. May be off their ground.
 function GridUtil.WorldToCenteredAnchor(
 	origin: CFrame,
 	worldPosition: Vector3,
@@ -165,8 +134,7 @@ function GridUtil.WorldToCenteredAnchor(
 	return anchorX, anchorZ
 end
 
--- World CFrame of the footprint block's center on the base's top surface, oriented like the lattice.
--- Callers lift the model by its half-height: cf * CFrame.new(0, halfHeight, 0).
+-- The block centre's world CFrame on the top surface. Callers lift by half-height themselves.
 function GridUtil.CellToSurfaceCFrame(
 	origin: CFrame,
 	cellX: number,
@@ -180,8 +148,7 @@ function GridUtil.CellToSurfaceCFrame(
 	return origin * CFrame.new(localX, 0, localZ)
 end
 
--- Swaps the footprint's X/Z for quarter-turn rotations (odd rotation indices 1 and 3), which is what
--- makes a turned structure reserve the cells it actually covers rather than the ones it started on.
+-- Swaps X/Z on a quarter-turn, so a turned structure reserves the cells it actually covers.
 function GridUtil.RotateFootprint(footprintX: number, footprintZ: number, rotation: number): (number, number)
 	if rotation % 2 == 1 then
 		return footprintZ, footprintX

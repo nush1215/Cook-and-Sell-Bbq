@@ -64,8 +64,7 @@ function FriendController:SendRandomFriendRequest()
 	StarterGui:SetCore("PromptSendFriendRequest", randomPlayer)
 end
 
--- Starts the random friend invite, the thing on the bottom left. Not running by default -- start it
--- with `task.spawn(FriendController._runRandomInviteFriend, self)` in OnStart.
+-- Starts the bottom-left random friend invite. Not running by default -- spawn it from OnStart.
 function FriendController:_runRandomInviteFriend()
 	local currentRandomFriendId
 	local clickBindable = Instance.new("BindableFunction")
@@ -122,7 +121,6 @@ function FriendController:_setupUI()
 		self:OpenFriendInvitePrompt()
 	end, true)
 
-	--
 	local friendsAmount = LocalPlayer:GetAttribute("FriendsAmount") or 0
 	friendBoost.Title.Text = `Friend Boost: +{friendsAmount * 10}%`
 	LocalPlayer:GetAttributeChangedSignal("FriendsAmount"):Connect(function()

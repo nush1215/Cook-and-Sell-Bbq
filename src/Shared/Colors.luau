@@ -3,9 +3,7 @@ return {
 
 	Currency = Color3.fromRGB(0, 255, 0),
 
-	-- Rarity Colors, keyed by the tier word sticks are authored with and ingredient tiers take their
-	-- Id from -- so a Rare stick and a Rare ingredient read the same colour. Ingredients still show
-	-- odds rather than the word itself (see Config.Rarity).
+	-- Rarity colours by tier word, so a Rare stick and a Rare ingredient match. Ingredients show odds instead
 	Common = {
 		TextColor = Color3.fromRGB(85, 170, 0),
 		StrokeColor = Color3.fromRGB(0, 50, 0),

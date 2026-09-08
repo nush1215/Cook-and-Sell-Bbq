@@ -40,24 +40,7 @@ local PlayerGui = LocalPlayer.PlayerGui
 local CRATE_TAG = "Crate"
 local CRATE_TOOL_TAG = "CrateTool"
 
---[[
-    Draws every crate anyone opens, and drives the local player's own.
-
-    Opening is a server call that spawns one model per crate in a ring around the player, each with
-    its payout already rolled and stamped onto it as an attribute. Every client then animates every
-    one of those models off those attributes -- the throw out of the owner's hands, the twitch, the
-    pop and the row of rewards that comes out of it are all local, so an open is something the people
-    around you watch rather than something only you see. Only the owner's client fires the claim at
-    the end, and the server checks that it is the owner before it grants.
-
-    A crate carrying an Owner is one somebody just opened, so it throws itself and opens on arrival.
-    One carrying AutoIdle instead sits and hops where it was spawned until something opens it --
-    nothing spawns those yet; that's the post-tutorial playtime crate.
-
-    The reveal deliberately uses no springs. The rewards are short-lived clones and spr keeps
-    stepping springs on destroyed instances, so all four are driven through their rise, hover and
-    collect by one render loop that ends when the last of them lands.
-]]
+-- Draws every crate anyone opens off the payout stamped on its model, so an open is watched by everyone; only the owner's client claims. The reveal uses no springs, since spr keeps stepping destroyed instances.
 
 --
 local CrateController = {
@@ -73,9 +56,7 @@ local CrateController = {
 	_characterCleaner = nil,
 }
 
--- Arcs a crate out of its owner's hands and onto its slot on the ground. A hand-rolled quadratic
--- bezier rather than physics, since the crate is anchored and everything else about it moves by
--- pivoting too.
+-- Arcs a crate from its owner's hands onto its slot, as a hand-rolled bezier since the crate is anchored.
 function CrateController:_throwToSlot(model: Model, startPosition: Vector3, slotPivot: CFrame)
 	local targetPosition = slotPivot.Position
 	local rotation = slotPivot.Rotation
@@ -104,8 +85,7 @@ function CrateController:_throwToSlot(model: Model, startPosition: Vector3, slot
 
 		model:PivotTo(CFrame.new(position) * rotation)
 
-		-- Dust and a flash, no sound of its own -- CrateDrop belongs to the slam at the end of the
-		-- rattle, and firing it here too would spend the impact twice in one open
+		-- No sound of its own -- CrateDrop belongs to the slam, and firing it here would spend the impact twice
 		if alpha >= 1 then
 			EffectController:RunEffect("CrateLand", model)
 			return
@@ -115,9 +95,7 @@ function CrateController:_throwToSlot(model: Model, startPosition: Vector3, slot
 	end
 end
 
--- Takes a freshly spawned crate from its owner's hands out to its slot and opens it there. Every
--- client runs this for every crate, so the throw comes from the right player's hands whoever is
--- watching.
+-- Throws a fresh crate from its owner's hands to its slot and opens it. Every client runs this for every crate.
 function CrateController:_playOpenSequence(crate, model: Model)
 	local slotPivot = model:GetPivot()
 	local openIndex = model:GetAttribute("OpenIndex") or 1
@@ -126,8 +104,7 @@ function CrateController:_playOpenSequence(crate, model: Model)
 	local character = ownerPlayer and ownerPlayer.Character
 	local rootPart = character and character:FindFirstChild("HumanoidRootPart")
 
-	-- No owner to throw from (they left, or their character hasn't loaded on this client) just means
-	-- the crate opens where it landed rather than nothing happening at all.
+	-- No owner to throw from just means the crate opens where it landed
 	if rootPart then
 		local startPosition = rootPart.Position + Vector3.new(0, CratesConfig.THROW_START_HEIGHT, 0)
 		model:PivotTo(CFrame.new(startPosition) * slotPivot.Rotation)
@@ -139,8 +116,7 @@ function CrateController:_playOpenSequence(crate, model: Model)
 			return
 		end
 
-		-- The server spawns an owner's crate invisible so it can't flash on its slot before the throw.
-		-- Now that it's in their hands, it's safe to show.
+		-- Spawned invisible so it can't flash on its slot; now it's in their hands, it's safe to show
 		for _, descendant in model:GetDescendants() do
 			if descendant:IsA("BasePart") then
 				descendant.Transparency = descendant:GetAttribute("RevealTransparency") or 0
@@ -165,10 +141,7 @@ function CrateController:_playOpenSequence(crate, model: Model)
 	crate:Open()
 end
 
--- Draws what a crate paid out: every reward rises out of the pop at once into a row centred on where
--- the crate stood, hovers there, then flies into the owner one after another. Called by the crate
--- class on the frame it pops, and `originCFrame` is the crate's own slot rather than the pose it
--- happened to be mid-jolt at.
+-- Draws a crate's payout: rewards rise into a centred row, hover, then fly into the owner one by one.
 function CrateController:RevealContents(model: Model, originCFrame: CFrame)
 	local rewards = HttpService:JSONDecode(model:GetAttribute("Rewards"))
 	if #rewards == 0 then
@@ -178,8 +151,7 @@ function CrateController:RevealContents(model: Model, originCFrame: CFrame)
 	local uniqueId = model:GetAttribute("UniqueId")
 	local owner = model:GetAttribute("Owner")
 
-	-- A crate nobody opened has no owner to fly its rewards into, so they go to whoever is watching --
-	-- and nobody claims it, which leaves the server to hand the rewards over itself
+	-- No owner means they fly to whoever is watching, and nobody claims -- the server hands them over itself
 	local targetPlayer = (owner and Players:GetPlayerByUserId(owner)) or LocalPlayer
 
 	local cleaner = Trove.new()
@@ -194,29 +166,21 @@ function CrateController:RevealContents(model: Model, originCFrame: CFrame)
 		local rewardModel = entry.Model:Clone()
 		cleaner:Add(rewardModel)
 
-		-- Every reward is drawn at one size whatever it actually is, so a grape and a gold stick read
-		-- as equals in the row. Measured before the scale, seated after it, since the offset from a
-		-- model's authored pivot to its centre scales along with the model.
+		-- One size for everything, so a grape and a gold stick read as equals. Measured before the scale, seated after
 		local displayScale = rewardModel:GetScale()
 			* (CratesConfig.REWARD_DISPLAY_SIZE / StickIngredients.GetMaxExtent(rewardModel))
 		rewardModel:ScaleTo(displayScale)
 
-		-- Rewards are seated on their bounding-box centre, not their authored pivot -- a stick's is on
-		-- its grip, so pivoting it onto a slot would hang it off the end of the row.
+		-- Seated on the bounding-box centre -- a stick's pivot is on its grip, which would hang it off the row
 		local seatOffset = StickIngredients.GetPivotToCenter(rewardModel):Inverse()
 
-		-- The same billboard a rolling stand puts over what it landed on, so a reward out of a crate is
-		-- labelled the way the player already reads one. Built here, while the model is still at full
-		-- display scale, so it's seated off the size it ends up at rather than the 0.2x it launches from.
+		-- The same billboard a rolling stand uses. Built at full display scale, so it seats off the final size
 		local info = UI.IngredientInfo:Clone()
 		local billboard = info.UI
 
 		billboard.IngredientName.Text = if isIngredient then entry.Name else `{entry.Name} Stick`
 
-		-- The name and nothing else. The odds line means the ingredient's own roll chance off a stand,
-		-- and what got this here was the crate's slot chance -- a different number, so printing one and
-		-- meaning the other is exactly what Config.Rarity exists to stop. The price is off because a
-		-- reward isn't for sale: quoting what it would have cost only reads as what it's worth.
+		-- Name only: the odds line would mean the stand's chance, not the crate's, and a reward isn't for sale
 		billboard.Rarity.Visible = false
 		billboard.Price.Visible = false
 
@@ -231,9 +195,7 @@ function CrateController:RevealContents(model: Model, originCFrame: CFrame)
 			end
 		end
 
-		-- The row is centred on the crate: one reward sits dead centre, and each extra one shifts the
-		-- whole row so it stays that way. The crate's slot already faces the player, so this spreads
-		-- left to right across their view.
+		-- Centred on the crate, so each extra reward shifts the whole row. The slot already faces the player
 		local offsetX = (index - (#rewards + 1) / 2) * CratesConfig.REWARD_HOVER_SPACING
 		local startCFrame = originCFrame * CFrame.new(0, CratesConfig.REWARD_START_LIFT, 0)
 
@@ -251,8 +213,7 @@ function CrateController:RevealContents(model: Model, originCFrame: CFrame)
 		rewardModel:PivotTo(startCFrame * seatOffset)
 		rewardModel.Parent = workspace
 
-		-- Trails the reward appearing rather than firing with it, so the burst reads as coming off the
-		-- thing rather than being the thing
+		-- Trails the reward appearing, so the burst reads as coming off it rather than being it
 		task.delay(CratesConfig.SHOW_LOOT_DELAY, function()
 			if rewardModel:IsDescendantOf(workspace) then
 				EffectController:RunEffect("CrateShowLoot", rewardModel)
@@ -260,8 +221,7 @@ function CrateController:RevealContents(model: Model, originCFrame: CFrame)
 		end)
 	end
 
-	-- Once, as the row comes out of the flash -- not when it settles. The rewards arriving is the beat
-	-- worth marking; them coming to rest is just the end of it.
+	-- Once as the row leaves the flash -- the arrival is the beat worth marking, not the settling
 	SoundController:PlaySound("CrateReveal", originCFrame, {
 		PlaybackSpeed = Random.new():NextNumber(0.99, 1.01),
 	}, true)
@@ -276,15 +236,10 @@ function CrateController:RevealContents(model: Model, originCFrame: CFrame)
 		local character = targetPlayer.Character
 		local rootPart = character and character:FindFirstChild("HumanoidRootPart")
 
-		-- One spin shared by the whole row, running from the moment they leave the crate, so there's no
-		-- jump where the rise hands over to the hover
+		-- One spin for the whole row from the moment they leave, so the rise hands over to the hover with no jump
 		local spin = CFrame.Angles(0, elapsed * CratesConfig.REWARD_SPIN_SPEED, 0)
 
-		-- The bob is faded in across the rise rather than running from the first frame. At full strength
-		-- from the start, every reward is climbing toward a target that's already displaced and moving --
-		-- and since each one's phase is offset, they're displaced by different amounts. That's what made
-		-- the climb read as a wobble instead of a float. By the time it's at full strength the rewards
-		-- are already at rest, so nothing jumps at the handover.
+		-- Faded in across the rise, or each reward climbs toward an already-displaced target and reads as a wobble
 		local bobRamp = math.min(elapsed / riseEnd, 1)
 
 		for index, item in items do
@@ -300,9 +255,7 @@ function CrateController:RevealContents(model: Model, originCFrame: CFrame)
 			local hoverPose = item.RestCFrame * CFrame.new(0, bob, 0) * spin
 
 			if elapsed < riseEnd then
-				-- Quad/Out is the curve something thrown upward actually follows -- quick off the mark,
-				-- decelerating the whole way into the row. Deliberately not Back/Out, which overshoots the
-				-- target and snaps back: on a reward this size that reads as a jolt rather than a float.
+				-- Quad/Out is what a thrown thing follows; Back/Out would overshoot and read as a jolt
 				local eased = TweenService:GetValue(elapsed / riseEnd, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
 				local scale = CratesConfig.REWARD_START_SCALE + (1 - CratesConfig.REWARD_START_SCALE) * eased
 
@@ -317,8 +270,7 @@ function CrateController:RevealContents(model: Model, originCFrame: CFrame)
 				continue
 			end
 
-			-- Nobody left to fly into: drop the reward rather than leaving it hanging. The server hands
-			-- the rewards over on its own if this client never gets to claim.
+			-- Nobody to fly into, so drop it -- the server hands the rewards over if this client never claims
 			if not rootPart then
 				item.Done = true
 				item.Model:Destroy()
@@ -326,13 +278,11 @@ function CrateController:RevealContents(model: Model, originCFrame: CFrame)
 				continue
 			end
 
-			-- Pinned on the first collect frame so the arc starts where the reward actually was, bob and
-			-- all, rather than at its rest pose
+			-- Pinned on the first collect frame so the arc starts where the reward was, bob and all
 			if not item.CollectFrom then
 				item.CollectFrom = hoverPose.Position
 
-				-- Left where the reward set off from rather than riding it in: the model is destroyed the
-				-- moment it reaches the player, which would cut a 3D sound parented to it short
+				-- Left where it set off, since the model is destroyed on arrival and would cut a 3D sound short
 				SoundController:PlaySound("CrateFly", item.CollectFrom, {
 					PlaybackSpeed = Random.new():NextNumber(1, 1.12),
 				}, true)
@@ -398,10 +348,7 @@ function CrateController:_initCrate(model: Model)
 		return
 	end
 
-	-- A crate that waits where it was put instead of being thrown. The bob pins itself to wherever the
-	-- crate is, so it must not start on the one client that's about to yank this into the sky for the
-	-- crash -- that client starts it once the crate lands. Keyed on PlayCrash rather than on being the
-	-- crash owner, so a crate restored on a rejoin still bobs for the player it belongs to.
+	-- The bob pins to wherever the crate is, so the crash owner starts it on landing. Keyed on PlayCrash, so a rejoin still bobs
 	local playingCrash = model:GetAttribute("PlayCrash")
 		and model:GetAttribute("CrashOwner") == LocalPlayer.UserId
 
@@ -410,8 +357,7 @@ function CrateController:_initCrate(model: Model)
 	end
 end
 
--- Starts the resting bob on a crate that's already been picked up by the tag sweep. Used by the
--- meteor crash, so the bob only begins once the crate has settled at its landing spot.
+-- Starts the resting bob on an already-tracked crate, for the meteor crash once it has settled.
 function CrateController:IdleCrate(model: Model)
 	local entry = self._crates[model]
 	if entry then
@@ -419,9 +365,7 @@ function CrateController:IdleCrate(model: Model)
 	end
 end
 
--- Plays the open on a crate that's already been picked up by the tag sweep. Used by the tutorial
--- crate, whose open is broadcast to every client so the whole base sees it rather than just its
--- owner -- the reveal reads Owner off the model to decide who claims and who it flies to.
+-- Plays the open on an already-tracked crate, for the tutorial crate the whole base watches.
 function CrateController:OpenCrate(model: Model)
 	local entry = self._crates[model]
 	if entry then
@@ -440,8 +384,7 @@ function CrateController:_cleanupCrate(model: Model)
 	entry.Crate:Destroy()
 end
 
--- Opens the panel that asks how many to open. Until one is authored in the place there's nothing to
--- choose between, so activating the tool just opens a single crate.
+-- Opens the how-many panel, or opens a single crate if the place has never authored one.
 function CrateController:OpenPanel()
 	local tool = EquippedItem.GetCrate()
 	if not tool then
@@ -505,14 +448,11 @@ function CrateController:RequestOpen(desired: number)
 	end
 end
 
--- Watches for the local player pulling a crate out, since a crate is used by clicking it rather than
--- by walking up to something with it. Equipping parents the tool into the character, so that's the
--- one signal both halves come off.
+-- Watches for the local player equipping a crate, which parents the tool into the character.
 function CrateController:_watchCharacter(character: Model)
 	self._characterCleaner:Clean()
 
-	-- Held apart from the character's own cleaner so putting the crate away drops its Activated
-	-- binding without tearing down the equip watch that would put it back
+	-- Apart from the character's cleaner, so putting the crate away doesn't tear down the equip watch
 	local toolCleaner = self._characterCleaner:Extend()
 
 	local function bind(child: Instance)
@@ -532,8 +472,7 @@ function CrateController:_watchCharacter(character: Model)
 
 		toolCleaner:Clean()
 
-		-- Only ever closes the crate's own panel, so putting a crate away while some other frame is
-		-- open doesn't pull that one shut (or snap the camera's field of view back) with it
+		-- Only the crate's own panel, so putting one away can't pull an unrelated frame shut
 		if self.UI and self.UI.Holder.Visible then
 			UIController:CloseFrame(self.UI.Holder)
 		end
@@ -552,8 +491,7 @@ function CrateController:OnInit()
 	UIController = require(script.Parent.UIController)
 	NotificationController = require(script.Parent.NotificationController)
 
-	-- FindFirstChild rather than WaitForChild: the loader runs every OnInit on one thread, so yielding
-	-- here for a panel that hasn't been authored yet would hang the whole client boot.
+	-- FindFirstChild, since the loader runs every OnInit on one thread and yielding would hang the boot
 	self.UI = PlayerGui:FindFirstChild("CrateUI")
 	self._characterCleaner = self._cleaner:Extend()
 end
@@ -571,8 +509,7 @@ function CrateController:OnStart()
 			self:RequestOpen(1)
 		end, true)
 
-		-- Asks for everything rather than for the cap, so someone holding more than the cap is told
-		-- they've only opened part of their stack instead of it silently opening ten
+		-- Asks for everything rather than the cap, so an over-cap stack is told it only opened part of itself
 		UIController:BindButtonClick(holder.Buttons.OpenAll, function()
 			self:RequestOpen(math.huge)
 		end, true)

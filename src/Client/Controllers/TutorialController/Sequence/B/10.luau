@@ -1,53 +1,112 @@
--- Step 10: Light the stove. Takes GrillerController's stop lock, which step 11 holds until the BBQ is
--- actually cooked -- see there for why.
+-- Step 10: wait the cook out, then take the BBQ off. The take is held shut until the bar clears the raw band, since a raw pull on the one sale being taught reads as the game being broken.
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local RunService = game:GetService("RunService")
+
+local CookStates = require(ReplicatedStorage.Shared.Config.CookStates)
+
+-- Modules
+local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
+
+-- Controllers
 local GrillerController = require(script.Parent.Parent.Parent.Parent.GrillerController)
 
-local NEAR_DISTANCE = 12
-local BEAM_HIDE_DISTANCE = 12
+-- Matches the grill prompts' MaxActivationDistance, so the beat clears where the prompt comes in reach
+local NEAR_DISTANCE = 15
+local BEAM_HIDE_DISTANCE = 15
 
 return function(self)
 	local slot = self:GetStructure("Grillers")
-	local knob = slot.Knob.Handle
 
-	-- Taken before the cook exists at all, not on the Cooking attribute: the grill's own attribute
-	-- handlers connect before any waiter this step could put on it, so their refresh runs first and a
-	-- lock taken on that signal is already one "Stop Cooking" flash too late. Harmless this early --
-	-- it only gates the stop, and nothing is cooking yet. The knob's glow goes down with its prompt.
-	GrillerController:SetStopLocked(true)
+	-- The grill's attachment, the take prompt riding on the skewer seated inches from it
+	local promptAttachment = slot:FindFirstChild("GrillAttachment", true)
 
-	local highlight = self:CreateHighlight(knob)
+	local highlight = self:CreateHighlight(slot)
 
-	-- The knob rather than the griller, matching what this beat counts as near: the griller is wide
-	-- enough that a beam into its middle lands nowhere near the thing being asked for.
-	local beam = self:CreateBeam(knob, BEAM_HIDE_DISTANCE)
+	-- The skewer, resolved each frame since the server rebuilds it, falling back to the prompt's attachment. This is also the beat players most often wander out of
+	local beam = self:CreateBeam(function()
+		return slot:FindFirstChild("Skewer") or promptAttachment
+	end, BEAM_HIDE_DISTANCE)
+
+	-- Read the way the griller derives it, both warps included -- the raw clock would free the take while the bar still showed raw
+	local function cookProgress(): number
+		local startedAt = slot:GetAttribute("CookStartedAt")
+		local cookTime = slot:GetAttribute("CookTime")
+		if not startedAt or not cookTime or cookTime <= 0 then
+			return 0
+		end
+
+		local elapsed = CookStates.GetBarElapsed(
+			workspace:GetServerTimeNow() - startedAt,
+			cookTime,
+			slot:GetAttribute("CookWindowStretch"),
+			slot:GetAttribute("CookProgress"),
+			slot:GetAttribute("CookInstability"),
+			slot:GetAttribute("CookInstabilityPhase")
+		)
+
+		return elapsed / cookTime
+	end
+
+	local function isCooking(): boolean
+		return slot:GetAttribute("Cooking") == true
+	end
+
+	local function isCookedEnough(): boolean
+		return isCooking() and cookProgress() >= CookStates.RAW_END
+	end
+
+	-- Watched for, there being no state change between placing and taking. A cook ending raw releases it too
+	local releaseConnection
+	releaseConnection = RunService.Heartbeat:Connect(function()
+		if isCooking() and not isCookedEnough() then
+			return
+		end
+
+		releaseConnection:Disconnect()
+		releaseConnection = nil
+
+		GrillerController:SetTakeLocked(false)
+		GrillerController:SetStopLocked(false)
+	end)
 
 	self:AwaitGoal({
 		{
-			Description = `Go to your {self:Emphasize("Griller")}`,
-			-- The knob, not the griller: this beat is asking for the knob's own prompt, so what counts as
-			-- near is wherever that prompt is in reach from.
+			Description = `Stay by your {self:Emphasize("Griller")}`,
 			Check = function()
-				return self:IsNear(knob, NEAR_DISTANCE)
+				return self:IsNear(promptAttachment, NEAR_DISTANCE)
 			end,
 		},
+		-- Above the cook guard: asked while bar remains it costs nothing, asked at the window it costs the window
+		{
+			Description = "Put away what you're holding",
+			Check = function()
+				return EquippedItem.GetTool() == nil
+			end,
+		},
+		{
+			Description = "Let it cook...",
+			Check = isCookedEnough,
+		},
 	}, {
-		Description = `Turn the {self:Emphasize("Knob")} to start cooking`,
+		-- "Take", matching the prompt's ActionText, so the banner and the button say the same word
+		Description = `It's ready! Take your {self:Emphasize("BBQ")}`,
 		Wait = function()
-			while slot:GetAttribute("Cooking") ~= true do
-				slot:GetAttributeChangedSignal("Cooking"):Wait()
+			while slot:GetAttribute("PlacedStickId") ~= nil do
+				slot:GetAttributeChangedSignal("PlacedStickId"):Wait()
 			end
-
-			-- Step 9 held this from the moment the BBQ went down; the cook is what it was holding out for.
-			-- Nothing visible changes here -- a cooking grill offers no take of its own -- it just means the
-			-- hold ends with the beat that wanted it rather than outliving the tutorial.
-			GrillerController:SetTakeLocked(false)
 		end,
 	})
 
+	if releaseConnection then
+		releaseConnection:Disconnect()
+	end
+	-- The path where the take lands before the heartbeat got there; a lock already released no-ops
+	GrillerController:SetTakeLocked(false)
+	GrillerController:SetStopLocked(false)
 	beam.Destroy()
 	highlight.Destroy()
 
-	self:LogStep("StartCook")
+	self:LogStep("TakeFromGrill")
 
 	self.SequenceFinish:Fire()
 end

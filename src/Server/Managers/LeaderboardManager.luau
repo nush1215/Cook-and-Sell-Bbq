@@ -67,7 +67,6 @@ function LeaderboardManager:UpdateLeaderboardRig(leaderboardKey: string, topEntr
 end
 
 function LeaderboardManager:SaveLeaderboard()
-	--
 	if RunService:IsStudio() then
 		return
 	end
@@ -89,8 +88,7 @@ function LeaderboardManager:SaveLeaderboard()
 
 					local value = math.round(currentKeyData)
 
-					-- Values < 1 are filtered out by the minValue in GetSortedAsync, and
-					-- unchanged values don't need to be rewritten — both waste write budget.
+					-- Values under 1 are filtered by GetSortedAsync's minValue, and unchanged ones waste write budget
 					if value < 1 or lastSaved[dataKey] == value then
 						continue
 					end
@@ -147,10 +145,8 @@ function LeaderboardManager:RemoveUserIdFromLeaderboards(userId: number)
 end
 
 function LeaderboardManager:OnInit()
-	--
 	PlayerDataManager = require(script.Parent.PlayerDataManager)
 
-	--
 	self._leaderboardReplica = Replica.New({
 		Token = Replica.Token("Leaderboard"),
 		Data = {
@@ -159,12 +155,10 @@ function LeaderboardManager:OnInit()
 		},
 	})
 
-	--
 	Players.PlayerRemoving:Connect(function(player)
 		self._lastSaved[player.UserId] = nil
 	end)
 
-	--
 	task.spawn(function()
 		while true do
 			self:SaveLeaderboard()
@@ -179,7 +173,6 @@ function LeaderboardManager:OnInit()
 		end
 	end)
 
-	--
 	task.delay(3, function()
 		self._leaderboardReplica:Replicate()
 	end)

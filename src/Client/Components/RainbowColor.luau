@@ -12,9 +12,7 @@ local RainbowColor = Component.new({
 	Tag = script.Name,
 })
 
---[[
-ts will make the instance attached do a rainobow thing as long as it has the color property cruh
-]]
+-- Cycles the tagged instance's Color property through a rainbow.
 
 function RainbowColor:Start()
 	self._cleaner = Trove.new()

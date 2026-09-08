@@ -1,63 +1,37 @@
--- Step 13: Put the BBQ out on the sell stall, which is what brings a customer. Ends by holding the take
--- off, which step 14 releases once the sale has gone through -- see there.
-local HttpService = game:GetService("HttpService")
+-- Step 13: take the Store teleport. Last rather than fifth -- the sale two beats ago destroyed the stick, so this is restocking after a loop they've done once. Looked up per check, since a reference taken before a teleport is worth nothing after it.
+local HudController = require(script.Parent.Parent.Parent.Parent.HudController)
 
-local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
-local SkewerStandController = require(script.Parent.Parent.Parent.Parent.SkewerStandController)
+-- The bar the Store button sits on, held down for the rest of the run by Start
+local TOP_BAR_FRAME = "Top"
 
-local NEAR_DISTANCE = 12
-local BEAM_HIDE_DISTANCE = 12
+local ARRIVED_DISTANCE = 60
 
 return function(self)
-	local base = self:GetBase()
-	local stand = base.Stalls.SellStall.SkewerStand
+	local teleports = workspace:WaitForChild("Core"):WaitForChild("Teleports")
 
-	local highlight = self:CreateHighlight(stand)
-	local beam = self:CreateBeam(stand, BEAM_HIDE_DISTANCE)
+	-- This is the beat that wants it, so it comes back for exactly as long as the beat lasts
+	HudController:SetHudFrameHiddenFor(self, TOP_BAR_FRAME, false)
 
-	self:AwaitGoal({
-		{
-			Description = `Go to your {self:Emphasize("Stall")}`,
-			Check = function()
-				return self:IsNear(stand, NEAR_DISTANCE)
-			end,
-		},
-		{
-			Description = `Equip your {self:Emphasize("BBQ")}`,
-			Check = function()
-				return EquippedItem.GetSkewer() ~= nil
-			end,
-		},
-	}, {
-		Description = `Place your {self:Emphasize("BBQ")} on the stand`,
+	local spotlight = self:SpotlightHudButton("Store")
+
+	self:AwaitGoal(nil, {
+		Description = `You're out of {self:Emphasize("Sticks")}! Click the {self:Emphasize("Store")} button`,
 		Wait = function()
-			-- The stand's contents ride on one attribute as a JSON list. Counted against what was already
-			-- there rather than against empty: a customer mid-visit when the player last left puts the
-			-- skewer it was holding back on the stand, so the stand isn't always bare when this opens.
-			local function placedCount(): number
-				local encoded = stand:GetAttribute("PlacedSkewers")
-				return if encoded then #HttpService:JSONDecode(encoded) else 0
+			local function atStore(): boolean
+				local store = teleports:FindFirstChild("Store")
+				return store ~= nil and self:IsNear(store, ARRIVED_DISTANCE)
 			end
 
-			local startingCount = placedCount()
-			while placedCount() <= startingCount do
-				stand:GetAttributeChangedSignal("PlacedSkewers"):Wait()
+			while not atStore() do
+				task.wait()
 			end
-
-			-- Taken here rather than after AwaitGoal returns, which is a frame later: the skewer's own take
-			-- prompt is built with the model it rides on, so it's live on the frame the place lands.
-			--
-			-- What follows is a wait for a customer, and the only thing in reach during it is a prompt
-			-- offering to take back the very skewer being waited on -- which would leave the beat waiting
-			-- for a sale on an empty stand, with nothing to say so.
-			SkewerStandController:SetTakeLocked(true)
 		end,
 	})
 
-	beam.Destroy()
-	highlight.Destroy()
+	spotlight.Destroy()
+	HudController:SetHudFrameHiddenFor(self, TOP_BAR_FRAME, true)
 
-	self:LogStep("PlaceOnSellStand")
+	self:LogStep("OpenStore")
 
 	self.SequenceFinish:Fire()
 end

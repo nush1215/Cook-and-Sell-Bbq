@@ -91,9 +91,7 @@ function BadgeManager:AwardBadge(player: Player, badgeKey: string, dontAnnounce:
 		return false
 	end
 
-	-- A refused award (place isn't associated with the badge, badge is disabled, award limit hit) comes back
-	-- as a plain false rather than an error, so it has to be caught here -- caching it would leave the player
-	-- marked as holding a badge they were never given, and they'd never be retried for it.
+	-- A refused award returns plain false, not an error, so it must be caught -- caching it would strand the player
 	if not awarded then
 		warn(`BadgeManager:AwardBadge -> Badge "{badgeKey}" was not awarded to {player.Name}`)
 		return false

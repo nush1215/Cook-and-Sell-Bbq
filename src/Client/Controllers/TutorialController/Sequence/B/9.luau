@@ -1,20 +1,20 @@
--- Step 9: Get the BBQ onto the griller. Ends by holding the take off, which step 14 releases once the
--- stove is lit -- see there.
+-- Step 9: get the BBQ onto the griller, which starts it cooking. Ends holding the take off, which step 10 releases.
 local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 local GrillerController = require(script.Parent.Parent.Parent.Parent.GrillerController)
 
-local NEAR_DISTANCE = 12
-local BEAM_HIDE_DISTANCE = 12
+-- Matches the grill prompts' MaxActivationDistance, so the beat clears where the prompt comes in reach
+local NEAR_DISTANCE = 15
+local BEAM_HIDE_DISTANCE = 15
 
 return function(self)
 	local slot = self:GetStructure("Grillers")
 
-	-- The place prompt's attachment rather than the slot: it marks where the player has to stand to place,
-	-- and the model is wide enough that its centre reads as near from places nothing on it is in reach.
-	-- The knob beats measure from the knob for the same reason -- each beat's "near" is wherever the thing
-	-- it's asking for can be reached from. Found the whole way down, since it sits on Grill.Main.Base
-	-- rather than on the griller itself.
+	-- The prompt's attachment, not the slot -- the model is wide enough that its centre reads as near from out of reach
 	local promptAttachment = slot:FindFirstChild("GrillAttachment", true)
+
+	-- Both held up front, since placing is what starts the cook and there's no gap between them to take a lock in. Step 10 hands both back
+	GrillerController:SetTakeLocked(true)
+	GrillerController:SetStopLocked(true)
 
 	local highlight = self:CreateHighlight(slot)
 	local beam = self:CreateBeam(promptAttachment, BEAM_HIDE_DISTANCE)
@@ -33,22 +33,12 @@ return function(self)
 			end,
 		},
 	}, {
-		-- "Place", matching the prompt's own ActionText, so the banner and the thing they press say the
-		-- same word.
+		-- "Place", matching the prompt's ActionText, so the banner and the button say the same word
 		Description = `Place your {self:Emphasize("BBQ")} on the grill`,
 		Wait = function()
 			while slot:GetAttribute("PlacedStickId") == nil do
 				slot:GetAttributeChangedSignal("PlacedStickId"):Wait()
 			end
-
-			-- Taken here rather than after AwaitGoal returns, which is a frame later: the take goes live on
-			-- the same frame the place lands, and that frame is long enough to press it back off in.
-			--
-			-- Nothing about the next beat wants the BBQ coming back off. The griller is holding it, the
-			-- banner is asking for the knob, and a prompt sat on top of it offering to undo the step they
-			-- just finished is the only other thing in reach -- and taking it would drop them back to a
-			-- beat the tutorial has already passed, with no way to say so.
-			GrillerController:SetTakeLocked(true)
 		end,
 	})
 

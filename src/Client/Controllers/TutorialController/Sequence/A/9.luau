@@ -1,5 +1,4 @@
--- Step 9: Hold the stick. A bought stick goes straight into the player's hands, so this usually passes
--- the moment it opens -- it's here for the case where it doesn't.
+-- Step 9: hold the stick. A bought one goes straight into their hands, so this usually passes as it opens.
 local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 
 return function(self)

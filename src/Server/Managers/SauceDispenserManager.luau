@@ -1,7 +1,4 @@
--- Sauce dispensers are postponed to a future update: the models are out of the workspace, so the whole
--- manager is dormant. Everything below is intact -- un-comment it (and the rest of the sauce system:
--- SauceToolManager, SauceDispenserController, Shared.Config.Sauces / SauceDispenser, the BaseUnlocks
--- entry and DebugUpgradeController's rows) to bring it back.
+-- Dormant while sauce dispensers are postponed. Un-comment with SauceToolManager, SauceDispenserController, Config.Sauces / SauceDispenser, the BaseUnlocks entry and DebugUpgradeController's rows.
 
 --[==[
 -- Services
@@ -455,7 +452,7 @@ function SauceDispenserManager:ToggleSauceSkewer(player: Player, slotId: string)
 			CookState = skewer.CookState,
 			Sauce = skewer.Sauce,
 			Mutation = skewer.Mutation,
-		})
+		}, nil, skewer.Uid)
 		PlayerDataManager:SetPlayerDataKey(player, { "SauceDispensers", slotId, "Skewer" }, nil)
 
 		self._toggling[player] = nil
@@ -500,6 +497,8 @@ function SauceDispenserManager:ToggleSauceSkewer(player: Player, slotId: string)
 	end
 
 	PlayerDataManager:SetPlayerDataKey(player, { "SauceDispensers", slotId, "Skewer" }, {
+		-- Carried across so taking it back hands the same skewer over -- the held estimate is seeded off it.
+		Uid = filled.Uid,
 		StickId = filled.StickId,
 		Ingredients = table.clone(filled.Ingredients),
 		Cooked = filled.Cooked,

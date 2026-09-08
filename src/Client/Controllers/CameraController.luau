@@ -29,13 +29,7 @@ local function validateCameraShaker(self: any): boolean
 	return true
 end
 
--- Shakes the camera once with custom parameters
--- @param magnitude The magnitude of the shake
--- @param roughness The roughness of the shake
--- @param fadeInTime Time to fade in the shake
--- @param fadeOutTime Time to fade out the shake
--- @param posInfluence Position influence vector
--- @param rotInfluence Rotation influence vector
+-- Shakes the camera once, with its own magnitude, roughness, fades and position/rotation influence.
 function CameraController:ShakeCustom(
 	magnitude: number,
 	roughness: number,
@@ -51,11 +45,7 @@ function CameraController:ShakeCustom(
 	self._cameraShaker:ShakeOnce(magnitude, roughness, fadeInTime, fadeOutTime, posInfluence, rotInfluence)
 end
 
--- Sets the camera to a specific CFrame position
--- @param cframe The target CFrame or BasePart to set the camera to
--- @param animate Whether to animate the camera movement (uses tween) or set instantly
--- @param tweenInfo Optional TweenInfo for the animation (defaults to 0.4s Sine easing)
--- @remarks When a CFrame is locked, camera shake will be applied relative to this locked position
+-- Locks the camera to a CFrame or BasePart, optionally tweened. Shake is then applied relative to it.
 function CameraController:SetCameraCFrameTo(cframe: CFrame | BasePart, animate: boolean, tweenInfo: TweenInfo?)
 	if typeof(cframe) == "Instance" then
 		cframe = cframe.CFrame
@@ -79,17 +69,13 @@ function CameraController:SetCameraCFrameTo(cframe: CFrame | BasePart, animate: 
 	end
 end
 
--- Resets the camera back to default behavior
--- @remarks Unlocks the camera CFrame and sets camera type back to Custom, allowing normal camera following
+-- Unlocks the camera and returns it to Custom, so it follows the character again.
 function CameraController:SetBackToDefault()
 	self._lockedCFrame = nil
 	Camera.CameraType = Enum.CameraType.Custom
 end
 
--- Turns the camera to look along a horizontal direction, keeping its current pitch
--- @param lookDirection The world-space direction the camera should face
--- @remarks Does not take control of the camera: the default camera re-derives its orientation from
--- the live Camera.CFrame each frame, so it picks this up and keeps following the character as normal
+-- Turns the camera along a horizontal direction, keeping its pitch. Doesn't take control -- the default camera re-derives from the live CFrame.
 function CameraController:AlignCameraYawTo(lookDirection: Vector3)
 	local pitch = Camera.CFrame:ToEulerAnglesYXZ()
 	local yaw = math.atan2(-lookDirection.X, -lookDirection.Z)
@@ -97,8 +83,7 @@ function CameraController:AlignCameraYawTo(lookDirection: Vector3)
 	Camera.CFrame = CFrame.new(Camera.CFrame.Position) * CFrame.fromEulerAnglesYXZ(pitch, yaw, 0)
 end
 
--- Shakes the camera using a preset
--- @param presetName The name of the preset to use
+-- Shakes the camera using a named preset.
 function CameraController:ShakePreset(presetName: string)
 	if not validateCameraShaker(self) then
 		return
@@ -112,13 +97,7 @@ function CameraController:ShakePreset(presetName: string)
 	return self._cameraShaker:Shake(CameraShaker.Presets[presetName])
 end
 
--- Starts a sustained camera shake
--- @param magnitude The magnitude of the shake
--- @param roughness The roughness of the shake
--- @param fadeInTime Time to fade in the shake
--- @param fadeOutTime Time to fade out the shake
--- @param posInfluence Position influence vector
--- @param rotInfluence Rotation influence vector
+-- Starts a sustained camera shake, with its own magnitude, roughness, fades and influence.
 function CameraController:ShakeSustain(
 	magnitude: number,
 	roughness: number,
@@ -131,7 +110,7 @@ function CameraController:ShakeSustain(
 		return
 	end
 
-	-- If there is already an existing one then we just update that
+	-- If one is already running, update it rather than starting a second
 	local shakeSustain = self._shakeSustain
 	if shakeSustain then
 		shakeSustain.Magnitude = magnitude or shakeSustain.Magnitude
@@ -147,7 +126,7 @@ function CameraController:ShakeSustain(
 		self._cameraShaker:StartShake(magnitude, roughness, fadeInTime, fadeOutTime, posInfluence, rotInfluence)
 end
 
--- Stops a sustained camera shake
+-- Stops a sustained camera shake.
 function CameraController:StopShakeSustain(duration: number?)
 	if not validateCameraShaker(self) then
 		return
@@ -157,8 +136,7 @@ function CameraController:StopShakeSustain(duration: number?)
 	self._shakeSustain = nil
 end
 
--- Sets the camera subject
--- @param subject Optional subject to set (defaults to player's humanoid)
+-- Sets the camera subject, defaulting to the player's humanoid.
 function CameraController:SetSubject(subject: Instance?)
 	local character = LocalPlayer.Character
 	if not character then

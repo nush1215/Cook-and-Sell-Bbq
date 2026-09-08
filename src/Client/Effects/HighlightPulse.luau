@@ -2,9 +2,7 @@
 local TweenService = game:GetService("TweenService")
 
 --
--- `pulses` splits the same total duration into that many fades instead of one long one -- each repeat
--- snaps back to startTransparency and fades out again, so the model blinks rather than dimming once.
--- Defaults to a single fade.
+-- `pulses` splits the duration into that many fades, so the model blinks rather than dimming once. Defaults to one.
 return function(model: Model | BasePart, color: Color3, duration: number, startTransparency: number, pulses: number?)
 	local pulseCount = pulses or 1
 

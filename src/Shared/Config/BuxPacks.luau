@@ -1,17 +1,4 @@
---[[
-    The Bux the shop sells for Robux, one entry per card in ShopUI's Bux category.
-
-    An entry's Id is the name of its card in the shop and its id in Products.luau, so a pack is added
-    by authoring a card and an entry under the same name -- nothing else needs an edit.
-
-    Amounts are provisional. They're pinned to a playtest that earned roughly 20,000 Bux in fifteen
-    minutes -- about 80k an hour -- so each is noted below as how long that pack saves a player, which
-    is the number worth arguing about rather than the Bux itself. Retuning is a matter of editing
-    Amount here: the card reads it, the grant reads it, and the currency upsell sorts on it.
-
-    Boosts deliberately don't apply to these. The card advertises a fixed number and that's what has
-    to land, so an x2 Bux owner can't double a Robux purchase (see ShopManager:GrantBuxPack).
-]]
+-- The Bux the shop sells for Robux, one entry per ShopUI card of the same name. Amounts are provisional and noted as hours saved against an ~80k/hour playtest. Boosts deliberately don't apply.
 
 --
 export type BuxPack = {

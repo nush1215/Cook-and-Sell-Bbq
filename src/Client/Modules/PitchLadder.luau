@@ -32,8 +32,7 @@ local DEFAULTS = {
 	MaxHits = 5,
 }
 
--- Creates a pitch ladder that ramps PlaybackSpeed up on consecutive hits and resets after a pause.
--- @param config: Optional overrides for Base/Increment/Max/ResetSeconds/MaxHits
+-- Creates a pitch ladder ramping PlaybackSpeed on consecutive hits, resetting after a pause.
 function PitchLadder.new(config: Config?): PitchLadder
 	local config = config or {}
 
@@ -47,9 +46,7 @@ function PitchLadder.new(config: Config?): PitchLadder
 	}, PitchLadder)
 end
 
--- Advances the ladder for the given key and returns the pitch to play.
--- Each key (plot, player, etc.) ramps independently; a pause longer than ResetSeconds restarts it at base.
--- @param key: Any value identifying the independent ramp (Model, Player, etc.)
+-- Advances `key`'s own ramp and returns the pitch; a pause past ResetSeconds restarts it at base.
 function PitchLadder.Next(self: PitchLadder, key: any): number
 	local now = os.clock()
 	local state = self.states[key]

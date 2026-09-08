@@ -1,9 +1,4 @@
--- Sauce dispensers are postponed to a future update, so there are no sauces to apply and Data is
--- empty. The API below stays live rather than going dormant with the rest of the system: StickModel
--- requires this module, and everything that renders or prices a skewer requires StickModel. With no
--- entries GetSauceFromId returns nil and GetMultiplier returns 1, so every one of those callers takes
--- the unsauced path it already had. Un-comment the Assets, Data and back-fill below alongside
--- SauceDispenserManager to bring the system back.
+-- Dormant while sauce dispensers are postponed: Data is empty, but the API stays live so StickModel's callers take their existing unsauced path.
 
 -- Services
 -- local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -21,15 +16,13 @@ export type Sauce = {
 	Color: Color3, -- the [KETCHUP] tag's colour on the skewer's inventory label
 	Particles: ParticleEmitter, -- not authored below, back-filled from Assets.SauceParticles
 	Template: BasePart?, -- authored as the template's name (a string) only when it differs from Id;
-	-- back-filled to the Assets.SauceTemplates part the bottle's fill copies its look from, or nil if
-	-- that part is missing
+	-- back-filled to the SauceTemplates part the bottle's fill copies, or nil if it's missing
 }
 
 --
 local Sauces = {}
 
--- Ordered weakest to strongest. A skewer carries one sauce, applied at a dispenser once it's cooked,
--- and keeps it wherever it goes -- so Multiplier is the whole economy weight of the sauce system.
+-- Weakest to strongest. A skewer keeps its one sauce wherever it goes, so Multiplier is the whole weight
 Sauces.Data = {}
 
 --[==[
@@ -110,9 +103,7 @@ function Sauces.GetAllSauces(): { Sauce }
 	return Sauces.Data
 end
 
--- What a skewer wearing this sauce sells for, as a multiple of its ingredient value. An unsauced
--- skewer -- or one carrying an id the config no longer has -- is worth its plain value, so callers
--- can multiply unconditionally.
+-- A sauce's sale multiple. An unsauced or unknown one is 1, so callers multiply unconditionally.
 function Sauces.GetMultiplier(id: string?): number
 	local sauce = id and Sauces.GetSauceFromId(id)
 	return if sauce then sauce.Multiplier else 1

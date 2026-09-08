@@ -1,19 +1,4 @@
---[[
-    The one-time offer a new player gets, and what's in it.
-
-    Everything the shop card shows about an entry -- its name, icon and what it's worth -- is read out
-    of the Sticks or Ingredients config it points at, so this file only says what and how many. That
-    keeps a repriced ingredient or a re-iconed stick from needing an edit here too.
-
-    The offer is timed, and the clock is a stamp rather than a duration: ShopManager writes an absolute
-    expiry into the player's StarterPackStart the first time they join, so it keeps running while
-    they're offline and can't be reset by rejoining. DURATION is only how far ahead that stamp is set.
-
-    Buying it is PurchaseOnce, which stops a second purchase for yourself. It doesn't take the card
-    off the shop, though: PurchaseOnce is validated against the recipient when gifting, so an owner
-    can still gift the pack to someone who hasn't had it, and only the clock running out ends the
-    offer.
-]]
+-- The one-time new-player offer. Entries name what and how many; names, icons and values come off the configs they point at. The clock is an absolute stamp, so it runs offline and a rejoin can't reset it.
 
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -38,8 +23,7 @@ local StarterPack = {}
 StarterPack.Id = "StarterPack" -- also its Products.luau id, and the tag a buyer is given
 StarterPack.Name = "Starter Pack"
 
--- The Robux dev product that buys it. A 0 here means none has been made on the dashboard yet, which
--- Products.luau checks -- no product means no shop card, rather than a button that can't charge.
+-- The product that buys it; a 0 means none exists yet, so Products.luau leaves the card off
 StarterPack.RobuxProductId = 3709199992
 
 -- How long a player has to take the offer, measured from their first join.
@@ -52,8 +36,7 @@ StarterPack.Contents = {
 	{ Type = "Ingredient", Id = "Pineapple", Amount = 2 },
 }
 
--- An entry pointing at a stick or ingredient the config doesn't have is dropped rather than left in,
--- so a typo can't be sold and then fail to grant halfway through handing the pack over.
+-- An entry naming something the config doesn't have is dropped, so a typo can't be sold and then fail
 for index = #StarterPack.Contents, 1, -1 do
 	local entry = StarterPack.Contents[index]
 	local exists = if entry.Type == "Stick"

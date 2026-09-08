@@ -26,26 +26,11 @@ local AnimationController = require(script.Parent.Parent.Controllers.AnimationCo
 -- Assets
 local UI = ReplicatedStorage.Assets.UI
 
---[[
-	Draws the visual for any held tool -- a plain stick, a filled skewer, a single ingredient or an
-	unopened crate -- welded above the player's head, and plays the overhead Hold pose.
-
-	Ancestors = { workspace } ties it to equip state: a tool in the Backpack isn't under workspace, so
-	this is dormant; equipping reparents the tool into the Character (under workspace) and Start
-	fires, unequipping reparents it back and Stop fires. The visual is built off the tool's own
-	attributes, so every client draws it (not just the owner) and the owner also plays the animation.
-
-	Built in Start rather than Construct, like every component here that owns something: the framework
-	only runs Stop for a component that reached Start, so anything made in Construct is stranded if the
-	tool is gone again before Start's deferred hop -- an equip/unequip inside one frame would leave the
-	welded model and the Hold pose behind for good.
-]]
+-- Draws any held tool's visual above the player's head off the tool's own attributes, so every client sees it. Built in Start, since only a component that reached Start gets a Stop.
 
 --
 local HOLD_ANIMATION = "Hold"
--- How far above the root the carried item's underside sits. The Hold pose is arms-up/overhead, so the
--- item rides above the head; the lift then scales with the model's own size (below) so items of any
--- size clear the head by this same margin. Tune in Studio to match the pose.
+-- How far above the root the item's underside sits; the lift scales with the model, so any size clears by this margin
 local HOLD_BASE_HEIGHT = 2.7
 -- Gap between the top of the carried item and the underside of its billboard.
 local INFO_UI_HEIGHT_MARGIN = 0.25
@@ -56,9 +41,7 @@ local HeldItem = Component.new({
 	Ancestors = { workspace },
 })
 
--- Resolves the display model for a held tool from its attributes: a filled skewer rebuilt via the
--- shared StickModel, or a plain stick / single ingredient / crate cloned straight from config. Every
--- client runs this off the replicated tool, so the whole visual comes from the tool's own attributes.
+-- Resolves a held tool's display model from its attributes, so every client draws the same visual.
 local function buildModel(tool: Tool): Model?
 	if tool:GetAttribute("FilledStickUid") then
 		return StickModel.BuildStickModel({
@@ -109,21 +92,17 @@ function HeldItem:Start()
 	self._cleaner = Trove.new()
 	self._cleaner:Add(model)
 
-	-- Weld the model rigid internally, seat its bounding-box centre above the head, then weld to the
-	-- root. Part0 is the model's PrimaryPart so the WeldConstraint lives on the model and is destroyed
-	-- with it on Stop. Seating on the bounding-box centre means the offset places sticks, skewers and
-	-- ingredients alike, whatever their authored pivots.
+	-- Welded via the PrimaryPart so it dies with the model, and seated on the bounding-box centre so authored pivots don't matter
 	GlobalUtil.WeldModel(model, false)
 
-	-- Lift by half the model's extent on top of the base height, so a big skewer floats higher than a
-	-- lone ingredient and both clear the head by the same margin.
+	-- Lifted by half the model's extent, so a big skewer and a lone ingredient clear the head alike
 	local extent = StickIngredients.GetMaxExtent(model)
 	local holdOffset = CFrame.new(0, HOLD_BASE_HEIGHT + extent / 2, 0)
 	model:PivotTo(root.CFrame * holdOffset * StickIngredients.GetPivotToCenter(model):Inverse())
 
 	GlobalUtil.Weld(model.PrimaryPart, character.Head)
 
-	-- Render-only so the carried item doesn't collide or get raycast against.
+	-- Render-only, so the carried item doesn't collide or get raycast against
 	for _, descendant in model:GetDescendants() do
 		if descendant:IsA("BasePart") then
 			descendant.CanCollide = false
@@ -134,13 +113,7 @@ function HeldItem:Start()
 
 	model.Parent = workspace
 
-	-- Only a cooked skewer gets a value readout -- a bare stick or a loose ingredient has no record to
-	-- price, and a raw one isn't finished yet, so quoting a figure for it would just read as what it's
-	-- worth rather than as what it's worth unfinished. Cooked is the "has been through a grill" flag, so
-	-- it covers a burnt skewer too; a skewer pulled off raw carries neither it nor CookState and is
-	-- indistinguishable from one that was never lit. Every client draws it off the tool's own attributes
-	-- plus the holder's replicated boost, and the estimate is seeded by the uid rather than rolled, so
-	-- everyone watching one skewer lands on the same figure.
+	-- Only a cooked skewer gets a value readout; a raw pull carries no flag and reads as never lit. Seeded by uid, so every watcher lands on the same figure
 	local holder = Players:GetPlayerFromCharacter(character)
 	local uid = tool:GetAttribute("FilledStickUid")
 	local cooked = tool:GetAttribute("Cooked")
@@ -154,15 +127,10 @@ function HeldItem:Start()
 			Mutation = tool:GetAttribute("Mutation"),
 		}
 
-		-- The root is the anchor, since it's what the skewer's own height was measured off above -- so
-		-- the billboard rides along without depending on the model's authored pivot. It needs the
-		-- cleaner explicitly, not being a descendant of the model that gets dropped on unequip.
+		-- The root is the anchor the height was measured off. Needs the cleaner explicitly, not being under the model
 		local valueUI = UI.EstimatedValueAttachment:Clone()
 
-		-- The guess quotes what the sale would bank rather than the skewer's plain worth, so it carries
-		-- the holder's boosts -- the same figure the sell stand's offer frame is on. Redrawn rather than
-		-- set once, since a boost can land mid-hold: a friend joining, a gamepass finishing its check, or
-		-- EarlyBoost decaying on the sale before this one.
+		-- Quotes what the sale would bank, boosts included, and is redrawn since a boost can land mid-hold
 		local function drawEstimate()
 			local boostFraction = holder:GetAttribute("BoostFraction") or 0
 			local estimate = StickModel.GetEstimatedValue(record, uid, boostFraction)
@@ -172,9 +140,7 @@ function HeldItem:Start()
 		drawEstimate()
 		self._cleaner:Add(holder:GetAttributeChangedSignal("BoostFraction"):Connect(drawEstimate))
 
-		-- The state is read the same way the sell price reads it, so the figure and the badge under it
-		-- are always saying the same thing -- including on a skewer saved before cook states existed,
-		-- which resolves to Cooked rather than reading blank.
+		-- Read the way the sell price reads it, so the figure and the badge always agree
 		local stateId = StickModel.GetCookStateId(record)
 		valueUI.UI.CookStateIcon.Image = CookStates.GetStateFromId(stateId).Icon
 
@@ -182,9 +148,7 @@ function HeldItem:Start()
 		self._cleaner:Add(valueUI)
 	end
 
-	-- Its own template, mirroring the billboard a rolling stand puts over what it landed on, so an
-	-- ingredient in hand reads the way it read on the stand it came off. Every client draws it off the
-	-- tool's replicated IngredientId, like the rest of the visual. buildModel already resolved the id.
+	-- Its own template, mirroring a rolling stand's, so an ingredient reads the same in hand as on the stand
 	local ingredientId = tool:GetAttribute("IngredientId")
 	if ingredientId then
 		local ingredient = Ingredients.GetIngredientFromId(ingredientId)
@@ -204,10 +168,7 @@ function HeldItem:Start()
 			stroke.Color = tier.StrokeColor
 		end
 
-		-- Hung off the PrimaryPart rather than the model: a stand's result sits still, but this one is
-		-- welded to the head and has to ride along. Seated over the same bounding box the hold offset
-		-- above seats on, so an ingredient of any size clears by this same margin. No cleaner entry
-		-- needed, being a descendant of the model that's already on it.
+		-- On the PrimaryPart, since this one rides a welded head. Seated over the same box the hold offset uses
 		local boundingCFrame, boundingSize = model:GetBoundingBox()
 		info.CFrame = model.PrimaryPart.CFrame:ToObjectSpace(
 			boundingCFrame * CFrame.new(0, boundingSize.Y / 2 + INFO_UI_HEIGHT_MARGIN, 0)
@@ -215,14 +176,14 @@ function HeldItem:Start()
 		info.Parent = model.PrimaryPart
 	end
 
-	-- Hide the hand handle so only the carried visual shows.
+	-- Hide the hand handle so only the carried visual shows
 	local handle = tool:FindFirstChild("Handle")
 	if handle and handle:IsA("BasePart") then
 		handle.Transparency = 1
 		handle.CanCollide = false
 	end
 
-	-- Only the owning client plays the hold animation; it replicates to others.
+	-- Only the owning client plays the hold animation; it replicates to others
 	if holder == Players.LocalPlayer then
 		AnimationController:PlayAnimation(HOLD_ANIMATION)
 		self._playingAnimation = true

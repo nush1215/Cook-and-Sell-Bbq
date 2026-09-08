@@ -15,11 +15,9 @@ local RainbowUI = Component.new({
 function RainbowUI:Start()
 	self._cleaner = Trove.new()
 
-	--
 	local ui = self.Instance
 
-	-- A stroke takes the sequence directly; anything else gets a gradient of its own, which is ours to
-	-- take back with the component.
+	-- A stroke takes the sequence directly; anything else gets a gradient of ours to take back
 	local rainbowGradient = ui
 	if not ui:IsA("UIStroke") then
 		rainbowGradient = self._cleaner:Add(Instance.new("UIGradient"))
@@ -29,7 +27,6 @@ function RainbowUI:Start()
 	local time = ui:GetAttribute("RainbowSpeed") or 2 -- amount of time it takes to get from 0 to 1
 	local range = 10 -- amount of colors
 
-	--
 	self._cleaner:Connect(RunService.Heartbeat, function()
 		local loop = tick() % time / time
 		local colors = {}

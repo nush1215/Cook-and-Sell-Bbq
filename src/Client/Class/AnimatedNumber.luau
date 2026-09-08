@@ -14,29 +14,20 @@ local MathUtil = require(Shared.MathUtil)
 --
 local DEFAULT_TIME_TO_TAKE = 0.2
 
---[[
-    Class to easily create an animated number for cool counting effect fr
-]]
-
---
+-- A number that tweens between values, for counting-up effects.
 local AnimatedNumber = {}
 AnimatedNumber.__index = AnimatedNumber
 
 function AnimatedNumber.new(initialVal: number, timeToTake: number)
-	--
 	local cleaner = Trove.new()
 
-	--
 	local self = setmetatable({
-		--
 		OnChangedValue = cleaner:Construct(Signal),
 
-		--
 		_initialVal = initialVal,
 		_timeToTake = timeToTake,
 		_value = nil,
 
-		--
 		_cleaner = cleaner,
 	}, AnimatedNumber)
 
@@ -44,20 +35,19 @@ function AnimatedNumber.new(initialVal: number, timeToTake: number)
 	return self
 end
 
+-- Builds the backing NumberValue and republishes its tween steps as OnChangedValue.
 function AnimatedNumber:_init()
-	--
 	local value = self._cleaner:Construct(Instance, "NumberValue")
 	self._value = value
 
-	--
 	value:GetPropertyChangedSignal("Value"):Connect(function()
 		self.OnChangedValue:Fire(MathUtil.RoundUpTo2Dec(value.Value))
 	end)
 
-	--
 	self:UpdateNumber(self._initialVal or 0)
 end
 
+-- Tweens the number to `amount` over the configured duration.
 function AnimatedNumber:UpdateNumber(amount: number)
 	TweenService:Create(self._value, TweenInfo.new(self._timeToTake or DEFAULT_TIME_TO_TAKE), {
 		Value = amount,

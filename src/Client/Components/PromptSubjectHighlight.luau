@@ -10,23 +10,7 @@ local Trove = require(Packages.Trove)
 -- Constants
 local TWEEN_INFO = TweenInfo.new(0.5)
 
---[[
-	PromptSubjectHighlight -- outlines whatever a ProximityPrompt is attached to for as long as that
-	prompt is on screen, so the thing being offered is obvious rather than having to be picked out from
-	behind the label.
-
-	Tag an instance that holds a prompt somewhere beneath it. Unlike BreathingHighlight this says
-	"you're in range of this" rather than "you can act on this" -- the prompt's own visibility is the
-	whole condition, so nothing here reads eligibility.
-
-	Attributes (optional):
-		HighlightColor (Color3) default white -- the outline's colour, read live, so an instance whose
-		                                         prompt changes meaning can recolour without being
-		                                         untagged and retagged. Only the outline takes it: the
-		                                         fill stays fully transparent here.
-
-	Don't put this and BreathingHighlight on the same instance -- see the note there.
-]]
+-- Outlines whatever a ProximityPrompt hangs off for as long as it's on screen -- "you're in range", where BreathingHighlight says "you can act". Never share an adornee with it.
 local PromptSubjectHighlight = Component.new({
 	Tag = script.Name,
 })
@@ -36,22 +20,15 @@ function PromptSubjectHighlight:Construct()
 end
 
 function PromptSubjectHighlight:Start()
-	--
 	local subject: Model = self.Instance
 	local prompt: ProximityPrompt = subject:FindFirstChildWhichIsA("ProximityPrompt", true)
 
-	--
 	if not prompt then
 		--	warn("PromptSubjectHighlight: Start: No ProximityPrompt found")
 		return
 	end
 
-	-- Use a single, persistent highlight that we fade in/out instead of
-	-- creating one on show and queuing a delayed Destroy on hide. The old
-	-- approach raced: a rapid hide -> show would re-create the highlight while
-	-- the previous hide's `task.delay` destroy was still pending, and because
-	-- that closure captured the `highlight` upvalue it would destroy the *new*
-	-- highlight — so the outline never appeared.
+	-- One persistent highlight faded in and out; creating per show raced a pending delayed Destroy, which then destroyed the new one
 	local highlight = Instance.new("Highlight")
 	highlight.FillTransparency = 1
 	highlight.OutlineTransparency = 1
@@ -59,8 +36,7 @@ function PromptSubjectHighlight:Start()
 	highlight.Parent = subject
 	self._cleaner:Add(highlight)
 
-	-- Left at Roblox's default when the attribute isn't set, so an instance that never asked for a
-	-- colour outlines the way it always has.
+	-- Left at Roblox's default when unset, so an instance that never asked for a colour is unchanged
 	local function applyColor()
 		local color = subject:GetAttribute("HighlightColor")
 		if color then
@@ -71,8 +47,7 @@ function PromptSubjectHighlight:Start()
 	applyColor()
 	self._cleaner:Connect(subject:GetAttributeChangedSignal("HighlightColor"), applyColor)
 
-	-- Only one fade may be active at a time. We cancel/disconnect the previous
-	-- one before starting the next so fade-in and fade-out can't fight.
+	-- Only one fade at a time, cancelled before the next, so fade-in and fade-out can't fight
 	local activeTween: Tween?
 	local activeConn: RBXScriptConnection?
 
@@ -96,8 +71,7 @@ function PromptSubjectHighlight:Start()
 		activeTween = tween
 
 		if disableAfter then
-			-- Disable once fully faded out so we don't sit in Roblox's limited
-			-- pool of active highlights while invisible.
+			-- Disabled once faded out, so it doesn't hold a slot in Roblox's limited highlight pool
 			activeConn = tween.Completed:Connect(function(state)
 				if state == Enum.PlaybackState.Completed then
 					highlight.Enabled = false

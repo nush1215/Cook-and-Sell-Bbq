@@ -33,43 +33,21 @@ local LEVER_ROTATION_AXIS = Vector3.zAxis
 
 local PROMPT_HOLD = 0.25
 
--- Past the 14 studs the tutorial's pull step treats as arrived (Sequence A/3, B/5), so the prompt is
--- already up when the beat points at it.
+-- Past the 14 studs the tutorial's pull step treats as arrived, so the prompt is up when it points
 local PROMPT_DISTANCE = 15
 
--- How close the local player is to this base, as a band rather than a distance: ordered so the checks
--- below can ask whether it's at least rendering. See the distances in the Rolling config for what each
--- one costs.
+-- How close the player is, as an ordered band so a check can ask whether it's at least rendering
 local BAND_NONE = 0
 local BAND_RENDER = 1
 local BAND_ANIMATE = 2
 
---[[
-    Class for one base's rolling setup -- its lever and the stands in front of it -- on every client,
-    so a pull is something visitors can watch rather than something only the puller sees.
-
-    The server mirrors each pull onto the stand models' attributes (RolledIngredient / RolledAt) and
-    the stands render themselves off those, which is what gets the roll to everyone: player data only
-    replicates to its owner, so it's the one channel a visitor's client can read. It also means a
-    stand doesn't care whether the roll it's picking up happened a moment ago or in a session that's
-    over -- a stamp inside the roll duration is still cycling, an older one already landed.
-
-    Only the owner gets the lever's prompt and its cue, and only their stands carry a buy prompt;
-    everyone else just watches. Their lever swings the instant they hit the prompt rather than waiting
-    on the server, so the pull reads as immediate -- a visitor's swings when the stands pick the roll
-    up, which is as soon as they could know about it anyway.
-
-    Rolling is by far the most expensive thing on the base -- a stand clones a model per cycle step --
-    so what this draws is banded on how near the local player is: the full roll up close, results
-    dropped straight onto the stands further out, and nothing at all past that.
-]]
+-- One base's rolling setup: its lever, its stands, and the distance band deciding how much of it is drawn.
 
 --
 local Base = {}
 Base.__index = Base
 
 function Base.new(model: Model)
-	--
 	local cleaner = Trove.new()
 
 	local rollingFolder = model.Rolling
@@ -83,11 +61,7 @@ function Base.new(model: Model)
 
 	local leverRestCFrame = leverHandle:GetPivot()
 
-	-- Every sound a roll makes comes off this one part rather than off the stands, so a pull reads as one
-	-- machine in one place. The stands slide as the grid reflows and whichever one reaches a step first is
-	-- the one that plays that step's tick, so emitting from them panned the roll somewhere new every pull
-	-- -- and the sting, which follows the rarest landing, jumped again on the reveal. The lever's rest
-	-- pose is the one point on the setup that doesn't move.
+	-- One emitter, since the stands slide as the grid reflows and would pan the roll somewhere new
 	local soundEmitter = Instance.new("Part")
 	soundEmitter.Name = "RollSoundEmitter"
 	soundEmitter.Anchored = true
@@ -99,33 +73,26 @@ function Base.new(model: Model)
 	soundEmitter.CFrame = leverRestCFrame
 	soundEmitter.Parent = rollingFolder
 
-	--
 	local self = setmetatable({
-		--
 		_model = model,
 		_id = model.Name,
 
-		--
 		_lever = lever,
 		_leverHandle = leverHandle,
 		_leverSpring = leverSpring,
 		_leverRestCFrame = leverRestCFrame,
 		_soundEmitter = soundEmitter,
 
-		-- The pull the lever last swung for, so a bank of stands all picking up the same roll swings it
-		-- once between them rather than once each.
+		-- The pull the lever last swung for, so a bank of stands swings it once between them
 		_leverPulledAt = nil,
 
-		--
 		_standsFolder = rollingFolder.Stands,
 		_stands = {}, -- [standId] = Stand
 
-		--
 		_band = BAND_NONE,
 		_prompt = nil,
 		_rolling = false,
 
-		--
 		_cleaner = cleaner,
 		_standCleaner = cleaner:Construct(Trove),
 		_promptCleaner = cleaner:Construct(Trove),
@@ -133,23 +100,13 @@ function Base.new(model: Model)
 
 	cleaner:Add(soundEmitter)
 
-	-- The lever breathes instead of carrying PromptSubjectHighlight: both would put a Highlight on the
-	-- same adornee, which renders one of them at random. The breathe covers what that tag did and reads
-	-- from further off, and the custom prompt UI still shows you're in range.
+	-- Breathes rather than carrying PromptSubjectHighlight, which would fight it for the same adornee
 	lever:SetAttribute("HighlightColor", Highlights.OPERATE)
 	cleaner:Add(function()
 		lever:RemoveTag(Highlights.TAG)
 	end)
 
-	-- The server parks a stand out of the world while it's locked and parents it back in when it's
-	-- bought, so the folder is what says which stands this base has -- not player data, which only ever
-	-- reaches one client and replicates on a different channel to the reparent anyway.
-	--
-	-- Filtered on the name being a number, because the stands aren't the only thing in here: a roll
-	-- lands its result alongside them rather than under one (see PlayRoll), named for the ingredient it
-	-- is. Without the filter that would be taken for a new stand and re-run the reconcile. Only the
-	-- landing arrives here -- the models the cycle spawns and drops on its way there go in the
-	-- silhouette container instead, so they never touch this folder.
+	-- The folder is what says which stands exist; the number filter keeps a landed result from reading as one
 	self:_reconcileStands()
 	cleaner:Connect(self._standsFolder.ChildAdded, function(child)
 		if tonumber(child.Name) then
@@ -172,20 +129,17 @@ function Base:GetId(): string
 	return self._id
 end
 
--- The fixed point this base's rolling sounds play from. See the emitter in Base.new for why they don't
--- come off the stands themselves.
+-- The fixed point this base's rolling sounds play from. See the emitter in Base.new.
 function Base:GetSoundEmitter(): BasePart
 	return self._soundEmitter
 end
 
--- Whether the local player is the one who owns this base, and so the one who gets its prompts.
+-- Whether the local player owns this base, and so gets its prompts.
 function Base:IsOwned(): boolean
 	return LocalPlayer:GetAttribute("BaseId") == self._id
 end
 
--- The player who owns this base, if anyone does. The server writes BaseId onto the player, so unlike
--- their data it's readable from any client -- which is what lets a visitor's purchase fly-in know who
--- to fly to.
+-- The base's owner, if any. BaseId is on the player, so a visitor's fly-in can read who to fly to.
 function Base:GetOwner(): Player?
 	for _, player in Players:GetPlayers() do
 		if player:GetAttribute("BaseId") == self._id then
@@ -217,12 +171,9 @@ function Base:AnyStandRolling(): boolean
 	return false
 end
 
--- Adds/removes Stand instances so they match the stands the server currently has in the folder,
--- leaving the stands that didn't change -- and their in-progress rolls -- untouched. The server only
--- ever adds one stand on an upgrade and never reparents the others, so a full rebuild here would
--- needlessly destroy a stand mid-roll and orphan whatever it had spawned.
+-- Reconciles Stand instances against the folder, leaving unchanged stands and their rolls untouched.
 function Base:_reconcileStands()
-	-- Drop stands whose model the server took away (a downgrade, or the base being cleared).
+	-- Drop stands whose model the server took away (a downgrade, or the base being cleared)
 	for id, stand in self._stands do
 		if not self._standsFolder:FindFirstChild(id) then
 			self._standCleaner:Remove(stand)
@@ -230,10 +181,7 @@ function Base:_reconcileStands()
 		end
 	end
 
-	-- Build a Stand for any model that doesn't have one yet. It reads its own attributes as it's
-	-- constructed, so one arriving with a roll already stamped on it puts that roll straight up. The
-	-- numbered children are the stands; the rest are ingredients a roll in progress has spawned beside
-	-- them.
+	-- A Stand reads its own attributes as it's built, so one arriving stamped puts its roll straight up
 	for _, standModel in self._standsFolder:GetChildren() do
 		if not tonumber(standModel.Name) or self._stands[standModel.Name] then
 			continue
@@ -245,21 +193,17 @@ function Base:_reconcileStands()
 	end
 end
 
--- Re-picks which band this base is in from the local player's position, widening whichever band it's
--- already in by DISTANCE_HYSTERESIS so a player stood on a boundary doesn't spawn and destroy the same
--- models on every sweep. Coming into range puts back whatever is sitting on the stands; dropping out
--- of it wipes them and parks the lever, so a base nobody is near costs nothing to keep around.
+-- Re-picks the distance band, widened by hysteresis so a player on a boundary doesn't thrash the models.
 function Base:RefreshProximity(position: Vector3?)
 	local band = BAND_NONE
 
-	-- No character is no viewpoint, so nothing is near anything.
+	-- No character is no viewpoint, so nothing is near anything
 	if position then
 		local margin = RollingConfig.DISTANCE_HYSTERESIS
 		local animateDistance = RollingConfig.ANIMATE_DISTANCE + (if self:IsAnimating() then margin else 0)
 		local renderDistance = RollingConfig.RENDER_DISTANCE + (if self:IsRendered() then margin else 0)
 
-		-- Measured to the lever's rest pose rather than its live pivot: it's the fixed point on the
-		-- setup, and the stands slide around it as the grid reflows.
+		-- Measured to the lever's rest pose, it being the fixed point the stands slide around
 		local distance = (position - self._leverRestCFrame.Position).Magnitude
 
 		if distance <= animateDistance then
@@ -285,8 +229,7 @@ function Base:RefreshProximity(position: Vector3?)
 			stand:Clear()
 		end
 
-		-- Park the lever rather than leaving it wherever its swing had got to, since Update stops
-		-- driving it from here -- otherwise it would still be halfway down when someone walks back.
+		-- Parked, since Update stops driving it -- otherwise it stays halfway down until someone walks back
 		self._leverSpring.Position = 0
 		self._leverSpring.Velocity = 0
 		self._leverHandle:PivotTo(self._leverRestCFrame)
@@ -299,9 +242,7 @@ function Base:RefreshProximity(position: Vector3?)
 	end
 end
 
--- Per-frame driver for the lever's spring and every stand's animation, skipped outright on a base too
--- far away to be drawing anything -- so the cost of this scales with the bases near the player rather
--- than the number in the place.
+-- Per-frame driver for the lever and stands, skipped on a far base so cost scales with what's near.
 function Base:Update(deltaTime: number)
 	if not self:IsRendered() then
 		return
@@ -322,9 +263,7 @@ function Base:SwingLever()
 	SoundController:PlaySound("LeverPull", self._soundEmitter)
 end
 
--- Swings the lever for a pull the stands have just been handed, once however many of them report it.
--- The owner's own lever already swung as they hit the prompt -- before the server had even answered,
--- which is what makes it feel instant -- so theirs is left alone here.
+-- Swings the lever for a pull the stands report. The owner's already swung on the press, so theirs is skipped.
 function Base:SwingLeverForPull(rolledAt: number)
 	if self:IsOwned() or self._leverPulledAt == rolledAt then
 		return
@@ -334,13 +273,11 @@ function Base:SwingLeverForPull(rolledAt: number)
 	self:SwingLever()
 end
 
--- Pulls the lever: swings it, asks the server for a roll, and holds the prompt down until the roll it
--- stamped has played out. Owner-only, since only their base carries the prompt this hangs off.
+-- Pulls the lever: swings, asks the server, and holds the prompt down until the roll plays out. Owner only.
 function Base:RollIngredients()
 	IngredientRollingController = IngredientRollingController or require(script.Parent)
 
-	-- The lock is checked here as well as on the prompt: the prompt goes down a frame after it's taken,
-	-- and a trigger already on its way in would otherwise still land a pull.
+	-- Checked here too -- the prompt goes down a frame after it's taken, and a trigger in flight would land
 	if self._rolling or IngredientRollingController:IsRollLocked() then
 		return
 	end
@@ -348,22 +285,14 @@ function Base:RollIngredients()
 	self._rolling = true
 	self:RefreshInteraction()
 
-	-- Swing up front so the pull reads as instant, then wait on the server. Nothing is cycled until the
-	-- stands are told what they landed on, so a rejected roll never animates.
+	-- Swing up front so it reads as instant; nothing cycles until the stands are told, so a rejection never animates
 	self:SwingLever()
 	CameraController:ShakeCustom(1, 5, 0.15, 0.3)
 
 	local rolledAt, duration = IngredientRollingController:RequestRoll()
 
 	if rolledAt then
-		-- Wait the roll out on the server's own clock before looking at the stands: what they landed on
-		-- arrives on their attributes, which can still be in flight here, and a stand that hasn't been
-		-- told yet reads as not rolling -- which would re-arm the lever a whole roll early. Past that,
-		-- wait on the stands themselves, since PlayRoll can take the roll duration *plus* its own
-		-- cloning overhead and a stand that's still cycling silently ignores the next roll.
-		--
-		-- The length is the server's own, sent back with the pull: how fast a roll runs is a level now,
-		-- and this has to be the window the claim is gated on rather than one worked out here.
+		-- Wait the server's own roll length first, since a stand not yet told reads as not rolling
 		local finishesAt = rolledAt + duration
 
 		repeat
@@ -379,15 +308,11 @@ function Base:RollIngredients()
 	self:RefreshInteraction()
 end
 
--- Breathes the lever only with empty hands, and never mid-roll. Rolling is free, so the lever is
--- almost always pullable and lighting it on that alone would leave it glowing permanently -- holding
--- something means the player's partway through the loop and has somewhere better to be, so the cue
--- waits until they're back to needing an ingredient.
+-- Breathes only with empty hands and never mid-roll, or a free pull would leave it lit permanently.
 function Base:_refreshLeverHighlight()
 	IngredientRollingController = IngredientRollingController or require(script.Parent)
 
-	-- The lock goes on the cue as well as the prompt: the glow is what says a lever is pullable, so a lit
-	-- one over a shut prompt only sends the player over to press nothing.
+	-- On the cue as well as the prompt -- a lit lever over a shut one sends the player to press nothing
 	if
 		self._rolling
 		or not self:IsOwned()
@@ -400,8 +325,7 @@ function Base:_refreshLeverHighlight()
 	end
 end
 
--- Puts the roll prompt and the lever's cue up on the local player's own base and takes them down
--- otherwise, so a visitor can watch a pull without being offered one the server would only reject.
+-- Puts the roll prompt and lever cue up on the owner's base only, so a visitor can watch without being offered one.
 function Base:RefreshInteraction()
 	IngredientRollingController = IngredientRollingController or require(script.Parent)
 

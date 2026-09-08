@@ -17,6 +17,7 @@ local Structures = require(Shared.Config.Structures)
 -- Managers
 local StickStandManager = require(script.Parent.StickStandManager)
 local GrillerManager = require(script.Parent.GrillerManager)
+local BoostManager = require(script.Parent.BoostManager)
 
 -- Modules
 local Base = require(script.Base)
@@ -28,10 +29,12 @@ local NotificationManager
 local ShopManager
 local BuildManager
 
--- Per category: the data key holding whatever sits on that kind of structure, and the manager that hands
--- it back. Both are keyed by the structure's uid, so taking one down must return its contents rather than
--- bin them. Delegating to the manager keeps this file from having to know what a stand or griller holds.
--- A category that can't hold anything simply isn't listed.
+-- The boost handed out when the sweep below has to take someone's builds back
+local RECLAIM_BOOST_ID = "Luck"
+local RECLAIM_BOOST_AMOUNT = 1.5
+local RECLAIM_BOOST_DURATION = 480 -- seconds
+
+-- Per category: the data key holding a structure's contents and the manager that hands them back on pickup
 local STRUCTURE_CONTENTS = {
 	Grillers = { Key = "Grillers", Manager = GrillerManager },
 	StickStands = { Key = "StickStands", Manager = StickStandManager },
@@ -43,20 +46,15 @@ local BaseManager = {
 	PurchasePlotEvent = Network.Event("PurchasePlot"),
 	RequestPlotProductEvent = Network.Event("RequestPlotProduct"),
 
-	--
 	OnBaseAssigned = Signal.new(),
-	-- (player, unlockId, newLevel, cost, method) when an unlock slot is bought. newLevel 1 is a first
-	-- unlock. method is "Currency" or "Robux"; cost is 0 on a Robux buy.
+	-- (player, unlockId, newLevel, cost, method) on an unlock buy; newLevel 1 is a first unlock
 	OnUnlockPurchased = Signal.new(),
-	-- (player, plotId, newCount, cost, method) when a plot is bought. newCount is what the next one is
-	-- priced off. method is "Currency" or "Robux"; cost is 0 on a Robux buy.
+	-- (player, plotId, newCount, cost, method) on a plot buy; newCount prices the next one
 	OnPlotPurchased = Signal.new(),
-	-- (player, structureType) when a structure is put down or taken back up. No level, count or price:
-	-- a build is a set of things in places, and a structure was paid for when it was bought.
+	-- (player, structureType) on a place or pickup. No price -- a structure was paid for when it was bought
 	OnStructurePlaced = Signal.new(),
 	OnStructureRemoved = Signal.new(),
 
-	--
 	_bases = {},
 	_listeners = {}, -- [player] = { the Unlocks, Plots and Structures data listeners }
 	_purchasing = {}, -- [player] = true, held across the data read -> DeductCurrency window
@@ -76,8 +74,7 @@ end
 
 -- Gives the player the first free base and spawns them on it.
 function BaseManager:AssignBaseToPlayer(player: Player)
-	-- Read before claiming anything: the base needs their unlocks before it goes up, and since this yields
-	-- the guard below has to sit after it or two calls each take a base.
+	-- Read first, since the base needs their unlocks; the guard sits after it because this yields
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
 		return nil
@@ -94,8 +91,7 @@ function BaseManager:AssignBaseToPlayer(player: Player)
 			continue
 		end
 
-		-- Before assigning, since AssignOwner yields on LoadCharacterAsync. Anything bought in that window
-		-- still lands: `data` is the live replica table AssignOwner reads below.
+		-- Before assigning, since AssignOwner yields; `data` is the live replica table it reads below
 		self._listeners[player] = {
 			PlayerDataManager:ListenForChanges(player, "Unlocks", function()
 				self:RefreshBaseUnlocksForPlayer(player)
@@ -108,8 +104,14 @@ function BaseManager:AssignBaseToPlayer(player: Player)
 			end),
 		}
 
+		-- Before the render, so a build saved under a different CELL_SIZE is never posed in the wrong place
+		self:RescaleStructureCells(player)
+
 		base:AssignOwner(player, data.Unlocks, data.Plots, data.Structures)
 		self.OnBaseAssigned:Fire(player, base)
+
+		-- After it: taking a griller back settles its cook, and GrillerManager restamps a paused one as it binds the grill
+		self:ReclaimStrandedStructures(player)
 
 		return base
 	end
@@ -118,8 +120,7 @@ function BaseManager:AssignBaseToPlayer(player: Player)
 	return nil
 end
 
--- Re-renders the owner's base at their current unlock levels. Only runs off an actual change, so it
--- animates -- unlike the instant render a base does on assignment.
+-- Re-renders at the owner's unlock levels. Only off an actual change, so it animates.
 function BaseManager:RefreshBaseUnlocksForPlayer(player: Player)
 	local base = self:GetBaseFromPlayer(player)
 	if not base then
@@ -134,8 +135,7 @@ function BaseManager:RefreshBaseUnlocksForPlayer(player: Player)
 	base:ApplyUnlocks(data.Unlocks, true)
 end
 
--- Re-renders the owner's plots. Like the unlocks above, only off an actual change, so it animates --
--- the plot bought here burns its overgrowth back.
+-- Re-renders the owner's plots. Only off an actual change, so the bought plot burns its overgrowth back.
 function BaseManager:RefreshBasePlotsForPlayer(player: Player)
 	local base = self:GetBaseFromPlayer(player)
 	if not base then
@@ -150,19 +150,14 @@ function BaseManager:RefreshBasePlotsForPlayer(player: Player)
 	base:ApplyPlots(data.Plots, true)
 end
 
--- Buys one plot, clearing its overgrowth. Nothing here moves anything: the data write re-renders the base
--- through the listener AssignBaseToPlayer set up. The price comes off how many they already own, so every
--- plot on offer costs the same and the only decision is where to expand.
--- @param skipCurrencyCost Grant without charging, for a plot already paid for in Robux. Everything else
--- -- the reachability check, the write, the signal, the toast -- is wanted on both paths.
+-- Buys one plot; the data write re-renders the base. Priced off how many they own, so the only choice is where.
 function BaseManager:PurchasePlot(player: Player, plotId: string, skipCurrencyCost: boolean?): boolean
 	-- The id comes off a remote, so it can be anything.
 	if not Plots.IsPlot(plotId) then
 		return false
 	end
 
-	-- Shared with the unlock purchase below: both read data then spend against it, so interleaving them
-	-- across their yields could double-spend one balance.
+	-- Shared with the unlock purchase: both read then spend, so interleaving could double-spend one balance
 	if self._purchasing[player] then
 		if not skipCurrencyCost then
 			return false
@@ -185,8 +180,7 @@ function BaseManager:PurchasePlot(player: Player, plotId: string, skipCurrencyCo
 		return false
 	end
 
-	-- Re-checked rather than trusted: the remote takes an id, so nothing stops a crafted call naming a
-	-- far corner at the opening price.
+	-- Re-checked, or a crafted call could name a far corner at the opening price
 	if not Plots.IsAvailable(plotId, data.Plots) then
 		self._purchasing[player] = nil
 		return false
@@ -205,9 +199,7 @@ function BaseManager:PurchasePlot(player: Player, plotId: string, skipCurrencyCo
 	end
 
 	if not skipCurrencyCost then
-		-- The tutorial spends against this same balance beat by beat, and a plot bought part-way through
-		-- can leave it short of the ingredient it's about to ask for. Read off the data already fetched
-		-- above rather than asked of TutorialManager, which is awaiting the same key.
+		-- Read off the data already fetched, since TutorialManager is awaiting the same key
 		if not data.TutorialCompleted then
 			self._purchasing[player] = nil
 			NotificationManager:NotifyNormal(player, {
@@ -236,8 +228,7 @@ function BaseManager:PurchasePlot(player: Player, plotId: string, skipCurrencyCo
 
 	PlayerDataManager:SetPlayerDataKey(player, { "Plots", plotId }, true)
 
-	-- Off the read above plus this one rather than re-counted, so it doesn't depend on when the write
-	-- lands in the replica table.
+	-- Off the two reads rather than re-counted, so it doesn't depend on when the write lands
 	self.OnPlotPurchased:Fire(
 		player,
 		plotId,
@@ -258,8 +249,7 @@ function BaseManager:PurchasePlot(player: Player, plotId: string, skipCurrencyCo
 	return true
 end
 
--- Raises the Robux prompt for one of the player's reachable plots. Which plot is remembered here rather
--- than carried on the product: it's priced by how many they own, and the receipt names only the buyer.
+-- Raises the Robux prompt for a reachable plot, remembering which here since the receipt names only the buyer.
 function BaseManager:PromptPlotProduct(player: Player, plotId: string)
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
@@ -284,10 +274,7 @@ function BaseManager:PromptPlotProduct(player: Player, plotId: string)
 	ShopManager:AttemptProductPurchase(player, Plots.GetProductStringId(count + 1))
 end
 
--- Grants a plot once a plot product clears (fired by ShopManager), to the plot the prompt was raised from.
--- An unanswered receipt is re-processed on a later join with no pending plot, and a reachable plot can be
--- bought before the answer lands -- either way it falls back to whatever is reachable now, rather than
--- dropping a purchase already charged for.
+-- Grants a plot once its product clears, falling back to whatever is reachable now rather than dropping a paid purchase.
 function BaseManager:GrantPlotFromProduct(player: Player)
 	local plotId = self._pendingPlot[player]
 	self._pendingPlot[player] = nil
@@ -300,7 +287,7 @@ function BaseManager:GrantPlotFromProduct(player: Player)
 	if not plotId or not Plots.IsAvailable(plotId, data.Plots) then
 		plotId = nil
 
-		-- Lowest-numbered first, so a fallback is at least predictable to a player watching it land.
+		-- Lowest-numbered first, so a fallback is at least predictable to a player watching it land
 		for _, row in Plots.Grid do
 			for _, candidateId in row do
 				if not Plots.IsAvailable(candidateId, data.Plots) then
@@ -322,8 +309,7 @@ function BaseManager:GrantPlotFromProduct(player: Player)
 	self:PurchasePlot(player, plotId, true)
 end
 
--- Re-renders the owner's build. Like the unlocks above, only off an actual change, so it animates --
--- a structure placed here drops into its spot rather than popping in.
+-- Re-renders the owner's build. Only off an actual change, so a placement drops in rather than popping.
 function BaseManager:RefreshBaseStructuresForPlayer(player: Player)
 	local base = self:GetBaseFromPlayer(player)
 	if not base then
@@ -338,12 +324,7 @@ function BaseManager:RefreshBaseStructuresForPlayer(player: Player)
 	base:RenderStructures(data.Structures, true)
 end
 
--- Puts one of the player's structures on the given cell. Nothing here touches the world: the data write
--- renders it through the listener AssignBaseToPlayer set up. Spends from their inventory rather than their
--- balance -- a structure is paid for once and moves freely after (see BuildManager).
---
--- Every argument comes off a remote, so none is trusted. Only the cells are stored, which is exactly what
--- was checked, so a build can never come back on a rejoin somewhere it wouldn't have been allowed.
+-- Places one of the player's structures on `cell`. Every argument comes off a remote; only the checked cells are stored.
 function BaseManager:PlaceStructureOnBase(
 	player: Player,
 	structureType: string,
@@ -361,9 +342,7 @@ function BaseManager:PlaceStructureOnBase(
 		return false
 	end
 
-	-- Shared with the plot and unlock purchases: all three read data then spend against it, so
-	-- interleaving could spend the same thing twice. A placement that loses the race is simply dropped --
-	-- unlike a Robux purchase there's nothing already paid for to wait its turn.
+	-- Shared with the purchases, since all three read then spend. A losing placement is simply dropped
 	if self._purchasing[player] then
 		return false
 	end
@@ -375,8 +354,7 @@ function BaseManager:PlaceStructureOnBase(
 		return false
 	end
 
-	-- What makes this a placement rather than a way to conjure structures: the tool only exists while the
-	-- count is above zero, so a client sending this without one is forging the request.
+	-- The tool only exists while the count is above zero, so a request without one is forged
 	if (data.OwnedStructures[structureType] or 0) <= 0 then
 		self._purchasing[player] = nil
 		return false
@@ -392,8 +370,7 @@ function BaseManager:PlaceStructureOnBase(
 
 	BuildManager:ConsumeStructure(player, structureType)
 
-	-- Minted once: it keys the structure and everything sitting on it, so it has to outlive the model
-	-- being rebuilt on a rejoin.
+	-- Minted once -- it keys the structure and its contents, so it must outlive a rejoin's rebuild
 	local uid = HttpService:GenerateGUID(false)
 
 	PlayerDataManager:SetPlayerDataKey(player, { "Structures", uid }, {
@@ -410,21 +387,14 @@ function BaseManager:PlaceStructureOnBase(
 	return true
 end
 
--- Takes a structure back off the base, returning both it and whatever sat on it to the inventory. Clearing
--- that second record is what stops a griller taken down with a BBQ on it stranding the record under a uid
--- nothing can reach; handing the contents back first is what stops that losing what they paid for.
---
--- A lit griller settles its cook where it had got to, so a pickup never dodges a burn nor loses a cook.
--- The owning manager can refuse (a cook already being stopped by hand), and it's asked before anything is
--- written -- otherwise the pickup would be left half done, structure gone and cook nowhere.
+-- Takes a structure back, returning it and its contents. The owning manager is asked first, since it can refuse.
 function BaseManager:RemoveStructureFromBase(player: Player, uid: string): boolean
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
 		return false
 	end
 
-	-- The uid comes off a remote. Reading it off their build rather than the world proves the structure
-	-- exists and is theirs in one.
+	-- Read off their build rather than the world, which proves the structure exists and is theirs in one
 	local structure = data.Structures[uid]
 	if not structure then
 		return false
@@ -433,14 +403,13 @@ function BaseManager:RemoveStructureFromBase(player: Player, uid: string): boole
 	local config = Structures.GetStructureFromId(structure.Type)
 	local contents = config and STRUCTURE_CONTENTS[config.Category]
 
-	-- Read before anything is written, since clearing the structure below tears its model down. A legacy
-	-- string-shaped entry (from before ingredients existed) reads as empty rather than erroring.
+	-- Read before the write, which tears the model down. A legacy string entry reads as empty
 	local record = contents and data[contents.Key][uid]
 	if type(record) ~= "table" then
 		record = nil
 	end
 
-	-- Handed back first because it's the one step that can turn the pickup down.
+	-- Handed back first, being the one step that can turn the pickup down
 	if record and not contents.Manager:ReturnContentsToPlayer(player, data, uid, record, true) then
 		return false
 	end
@@ -451,8 +420,7 @@ function BaseManager:RemoveStructureFromBase(player: Player, uid: string): boole
 		PlayerDataManager:SetPlayerDataKey(player, { contents.Key, uid }, nil)
 	end
 
-	-- Only for a structure the config still has: one whose model went missing can't be re-placed, so
-	-- handing it back would be an item that does nothing.
+	-- Only for a structure the config still has -- one that's gone would be an item that does nothing
 	if config then
 		BuildManager:GrantStructure(player, structure.Type)
 	end
@@ -462,10 +430,119 @@ function BaseManager:RemoveStructureFromBase(player: Player, uid: string): boole
 	return true
 end
 
--- Buys the next slot of one unlock group. Nothing here touches the world: the data write re-renders the
--- base through the listener AssignBaseToPlayer set up.
--- @param skipCurrencyCost Grant without charging, for a slot already paid for in Robux. Everything else
--- -- the limit check, the write, the signal, the toast -- is wanted on both paths.
+-- Rewrites saved cells after a CELL_SIZE change, a cell index meaning a distance only against the size it was saved at.
+function BaseManager:RescaleStructureCells(player: Player)
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		return
+	end
+
+	local savedCellSize = data.StructureCellSize
+	if savedCellSize == Structures.CELL_SIZE then
+		return
+	end
+
+	-- The anchor is a block's min corner and footprints rescale with it, so the build lands back on the same studs
+	local scale = savedCellSize / Structures.CELL_SIZE
+
+	for uid, placed in data.Structures do
+		PlayerDataManager:SetPlayerDataKey(player, { "Structures", uid }, {
+			Type = placed.Type,
+			-- Rounded, so coarsening the grid lands on whole cells too
+			CellX = math.round(placed.CellX * scale),
+			CellZ = math.round(placed.CellZ * scale),
+			Rotation = placed.Rotation,
+		})
+	end
+
+	PlayerDataManager:SetPlayerDataKey(player, "StructureCellSize", Structures.CELL_SIZE)
+end
+
+-- Hands back every build that no longer fits -- off the ground they own, or inside another -- with whatever was on it.
+function BaseManager:ReclaimStrandedStructures(player: Player)
+	local base = self:GetBaseFromPlayer(player)
+	if not base then
+		return
+	end
+
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		return
+	end
+
+	-- A base with no grid is a broken base rather than a stranded build, and sweeping one would empty it
+	local ground = base:GetGround(data.Plots)
+	if not ground or #ground.Rects == 0 then
+		warn(`[BaseManager] {player.Name}'s base has no buildable ground, so nothing is being reclaimed`)
+		return
+	end
+
+	local uids = {}
+	for uid in data.Structures do
+		table.insert(uids, uid)
+	end
+
+	-- Sorted, so which of two overlapping structures survives is the same on every load
+	table.sort(uids)
+
+	local kept = {}
+	local stranded = {}
+
+	for _, uid in uids do
+		local placed = data.Structures[uid]
+		local structure = Structures.GetStructureFromId(placed.Type)
+
+		-- One the config no longer has takes up no cells, and the pickup can't hand it back either
+		if not structure then
+			continue
+		end
+
+		local footprintX, footprintZ = Structures.GetFootprint(structure, placed.Rotation)
+
+		if base:IsBlockFree(placed.CellX, placed.CellZ, footprintX, footprintZ, kept, data.Plots) then
+			kept[uid] = placed
+		else
+			table.insert(stranded, uid)
+		end
+	end
+
+	local reclaimed = 0
+
+	for _, uid in stranded do
+		if self:RemoveStructureFromBase(player, uid) then
+			reclaimed += 1
+		end
+	end
+
+	-- Nothing actually came back, so there's nothing to apologise for
+	if reclaimed == 0 then
+		return
+	end
+
+	-- One for the sweep; anything sitting on a structure has already toasted its own way back
+	NotificationManager:NotifyNormal(player, {
+		Text = "Your plots shrank, so some builds went back to your backpack",
+		Duration = 5,
+		Sound = "Notify",
+	})
+
+	self:GrantReclaimCompensation(player)
+end
+
+-- What a player is given for builds the sweep above handed back: a flat luck boost, whatever came back.
+function BaseManager:GrantReclaimCompensation(player: Player)
+	-- Frames the boost's own toast as an apology, since that one only names the boost
+	NotificationManager:NotifyNormal(player, {
+		Text = "Here's a gift for the trouble!",
+		Duration = 4,
+		Sound = "Notify",
+		Effect = "Success",
+	})
+
+	BoostManager:GrantBoost(player, RECLAIM_BOOST_ID, RECLAIM_BOOST_AMOUNT, RECLAIM_BOOST_DURATION)
+end
+
+-- Buys the next slot of an unlock group; the data write re-renders the base through the listener.
 function BaseManager:PurchaseUnlockUpgrade(player: Player, unlockId: string, skipCurrencyCost: boolean?): boolean
 	-- The id comes off a remote, so it can be anything.
 	local unlock = BaseUnlocks.GetUnlockFromId(unlockId)
@@ -473,9 +550,7 @@ function BaseManager:PurchaseUnlockUpgrade(player: Player, unlockId: string, ski
 		return false
 	end
 
-	-- The reads below yield, so without this two purchases landing together would read the same level and
-	-- write the same next one. A currency buy that loses the race is dropped; a Robux one has already been
-	-- charged, so it waits its turn.
+	-- The reads yield, so two purchases could read the same level. A Robux one waits rather than dropping
 	if self._purchasing[player] then
 		if not skipCurrencyCost then
 			return false
@@ -498,7 +573,7 @@ function BaseManager:PurchaseUnlockUpgrade(player: Player, unlockId: string, ski
 		return false
 	end
 
-	-- Past the limit (or the last cost) is fully upgraded.
+	-- Past the limit, or the last cost, is fully upgraded
 	local nextLevel = (data.Unlocks[unlockId] or 0) + 1
 	local cost = unlock.Costs[nextLevel]
 	if nextLevel > unlock.Limit or not cost then
@@ -512,9 +587,7 @@ function BaseManager:PurchaseUnlockUpgrade(player: Player, unlockId: string, ski
 	end
 
 	if not skipCurrencyCost then
-		-- Held until the run is done: the tutorial's own beats are timed against these levels -- the settle
-		-- window step 6 waits out is read off the roll speed -- so upgrading mid-run moves the goalposts
-		-- under a beat that's already waiting on them.
+		-- Held through the tutorial, whose beats are timed against these levels
 		if unlock.TutorialLocked and not data.TutorialCompleted then
 			self._purchasing[player] = nil
 			NotificationManager:NotifyNormal(player, {
@@ -552,7 +625,7 @@ function BaseManager:PurchaseUnlockUpgrade(player: Player, unlockId: string, ski
 
 	self._purchasing[player] = nil
 
-	-- Only the Sauce Dispenser starts at level 0, so its first purchase is a genuine unlock.
+	-- Only the Sauce Dispenser starts at level 0, so its first purchase is a genuine unlock
 	NotificationManager:NotifyNormal(player, {
 		Text = if nextLevel == 1 then `{unlock.Name} Unlocked!` else `{unlock.Name} Upgraded!`,
 		Duration = 3,
@@ -570,7 +643,7 @@ function BaseManager:UnassignBaseFromPlayer(player: Player)
 		return
 	end
 
-	-- Owning a base is what registers the listeners, so there are always some to drop here.
+	-- Owning a base is what registers the listeners, so there are always some to drop here
 	for _, listener in self._listeners[player] do
 		listener:Disconnect()
 	end
@@ -584,8 +657,7 @@ function BaseManager:OnInit()
 	CurrencyManager = require(script.Parent.CurrencyManager)
 	NotificationManager = require(script.Parent.NotificationManager)
 	ShopManager = require(script.Parent.ShopManager)
-	-- Required here rather than at the top because BuildManager requires this manager back: it owns the
-	-- structures a player is carrying, and this owns where they go once they're put down.
+	-- Required here because BuildManager requires this manager back
 	BuildManager = require(script.Parent.BuildManager)
 
 	for _, model in workspace.Base:GetChildren() do
@@ -596,8 +668,7 @@ function BaseManager:OnInit()
 		self:AssignBaseToPlayer(player)
 	end)
 
-	-- Assigning yields on the player's data and on their character loading, so sweep existing
-	-- players off the main thread rather than stalling the rest of the loader behind them.
+	-- Assigning yields, so sweep existing players off the main thread rather than stalling the loader
 	for _, player in Players:GetPlayers() do
 		task.spawn(function()
 			self:AssignBaseToPlayer(player)

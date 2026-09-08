@@ -5,14 +5,11 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Managers = ServerScriptService.Server.Managers
 local TutorialCrateManager = require(Managers.TutorialCrateManager)
 
--- The same drop finishing the tutorial gets, crash and all -- only with the option of skipping the
--- countdown. Nothing hides the timer: with ShowTimer off the crate spawns already past its open time,
--- so the client's countdown goes straight to the Open prompt.
+-- The tutorial's own drop, crash and all, optionally spawned already past its open time.
 return function(context, showTimer: boolean, player: Player?)
 	local target = player or context.Executor
 
-	-- Cleared first so a repeat run replaces the crate rather than being turned away by the
-	-- one-at-a-time guard in SpawnFor
+	-- Cleared first, so a repeat run replaces the crate rather than hitting SpawnFor's one-at-a-time guard
 	TutorialCrateManager:RemoveFor(target)
 
 	if not TutorialCrateManager:SpawnFor(target, showTimer) then

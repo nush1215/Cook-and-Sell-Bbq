@@ -22,20 +22,11 @@ local PlayerGui = LocalPlayer.PlayerGui
 
 local ENABLED = false -- Flip to false to hide the debug panel entirely
 
--- Temp/debug: fires the real upgrade remotes so upgrades can be triggered before the polished UI
--- exists. Everything (UI, data reads, remote fires) lives in this one controller and it makes no
--- server changes, so it's safe to delete wholesale once the real upgrade UI lands.
+-- Debug panel firing the real upgrade remotes. Self-contained and server-free, so it's safe to delete wholesale.
 local DebugUpgradeController = {
 	PurchaseUnlockUpgradeEvent = Network.Event("PurchaseUnlockUpgrade"),
 
-	-- No stick remote here any more, and there shouldn't be one again. Granting a stick on the client's
-	-- say-so is a remote that hands out any stick in the game to anyone who finds it, panel disabled or
-	-- not -- the flag below only hides the buttons, it doesn't unpublish the identifier. Sticks are the
-	-- giveStick command now, which the CommandManager gates on staff rank.
-	--
-	-- The sauce remotes go with the dispenser system they fire at, postponed to a future update. A
-	-- client Network.Event waits on the server publishing that identifier and errors if it never
-	-- does, so declaring one with no handler left would stall this module's load and then fail it.
+	-- No stick remote, and there shouldn't be one: it would hand out any stick to anyone who found the identifier. The sauce remotes went with the dispenser system, since an unhandled Network.Event stalls the load
 	--[==[
 	FillSauceDispenserEvent = Network.Event("FillSauceDispenser"),
 	GiveSauceEvent = Network.Event("GiveSauce"),
@@ -48,22 +39,20 @@ local DebugUpgradeController = {
 	_rowCleaner = Trove.new(), -- holds each rebuild's rows and their button bindings
 }
 
--- Groups a number's digits with commas, e.g. 50000000 -> "50,000,000".
+-- Groups a number's digits with commas: 50000000 -> "50,000,000".
 local function formatNumber(n: number): string
 	local text = tostring(n)
 	local formatted = text:reverse():gsub("(%d%d%d)", "%1,"):reverse()
 	return (formatted:gsub("^,", ""))
 end
 
--- Refreshes just the currency line, so a steady income tick doesn't tear down the rows mid-hover.
+-- Refreshes just the currency line, so an income tick doesn't tear down the rows mid-hover.
 function DebugUpgradeController:_updateCurrency()
 	local currency = PlayerDataController:GetKey("Currency") or 0
 	self._currencyLabel.Text = `Currency: ${formatNumber(currency)}`
 end
 
--- Builds one row: a description on the left and an action button on the right. When enabled is
--- false the button reads "MAX" and does nothing, so a fully-upgraded thing can't be fired at.
--- enabledText overrides the button's label while enabled (defaults to "Upgrade").
+-- Builds one row. Disabled, the button reads "MAX" and does nothing; enabledText overrides its label.
 function DebugUpgradeController:_addRow(labelText: string, enabled: boolean, onClick: () -> (), enabledText: string?)
 	local row = Instance.new("Frame")
 	row.Size = UDim2.new(1, 0, 0, 44)
@@ -115,15 +104,14 @@ function DebugUpgradeController:_addRow(labelText: string, enabled: boolean, onC
 	end
 end
 
--- Regenerates every upgrade row from current player data. Cheap enough for a debug panel to just
--- throw the rows away and rebuild, so we never have to diff individual levels.
+-- Rebuilds every row from current player data -- cheap enough for a debug panel not to diff levels.
 function DebugUpgradeController:_rebuild()
 	self._rowCleaner:Clean()
 	self:_updateCurrency()
 
 	local unlocks = PlayerDataController:GetKey("Unlocks")
 
-	-- Base unlocks: each group buys its next slot. Past the last cost is fully upgraded.
+	-- Base unlocks: each group buys its next slot. Past the last cost is fully upgraded
 	for _, unlock in BaseUnlocks.Data do
 		local level = unlocks[unlock.Id] or 0
 		local maxLevel = #unlock.Costs
@@ -138,10 +126,7 @@ function DebugUpgradeController:_rebuild()
 		end)
 	end
 
-	-- Sauce dispensers: per owned slot, a fill row per sauce. The real way to load one is a sauce bottle
-	-- (the rows below), so this is the shortcut past it -- free, and it ignores what the dispenser
-	-- already holds. Applying the sauce is the dispenser's own place and pour prompts, and its size
-	-- upgrade its own sign, so neither needs a row here.
+	-- Dormant with the dispenser system: a free fill per sauce, past the bottle the real path uses
 	--[==[
 	local dispensers = PlayerDataController:GetKey("SauceDispensers")
 	local dispenserLevel = unlocks.SauceDispenser or 0
@@ -162,8 +147,7 @@ function DebugUpgradeController:_rebuild()
 	end
 	]==]
 
-	-- Sauce bottles: one row per flavor that grants that bottle, showing how many are currently owned.
-	-- Always enabled, since bottles stack. Equipping one and using it on a dispenser is what fills it.
+	-- Dormant with the dispenser system: one row per flavour, granting a bottle. Always enabled, since they stack
 	--[==[
 	local sauces = PlayerDataController:GetKey("Sauces")
 	for _, sauce in Sauces.GetAllSauces() do
@@ -186,7 +170,7 @@ function DebugUpgradeController:OnStart()
 		return
 	end
 
-	-- Static shell, built synchronously: a toggle button and the panel it opens.
+	-- Static shell, built synchronously: a toggle button and the panel it opens
 	local screenGui = Instance.new("ScreenGui")
 	screenGui.Name = "DebugUpgrades"
 	screenGui.ResetOnSpawn = false
@@ -269,7 +253,7 @@ function DebugUpgradeController:OnStart()
 		end
 	end, true)
 
-	-- Data reads await the replica, so keep the binding and first build off the loader thread.
+	-- Data reads await the replica, so keep the binding and first build off the loader thread
 	task.spawn(function()
 		self:_rebuild()
 

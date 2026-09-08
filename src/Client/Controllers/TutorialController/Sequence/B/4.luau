@@ -1,5 +1,4 @@
--- Step 4: Put the stick down on the stick stand, which is where a BBQ gets built. Ends by holding the
--- take off, which step 8 releases once it's the beat asking for the stick back -- see there.
+-- Step 4: put the stick on the stand, where a BBQ gets built. Ends holding the take off, which step 8 releases.
 local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 local StickStandController = require(script.Parent.Parent.Parent.Parent.StickStandController)
 
@@ -32,13 +31,7 @@ return function(self)
 				slot:GetAttributeChangedSignal("PlacedStickId"):Wait()
 			end
 
-			-- Taken here rather than after AwaitGoal returns, which is a frame later: the stand's prompt
-			-- turns into "Take Stick" on the same frame the place lands, and that frame is long enough to
-			-- press it back off in.
-			--
-			-- The next three beats -- the roll, the buy, the load -- all read the stand as holding a stick,
-			-- and the one prompt in reach through them offers to hand it back. Taking it would drop the
-			-- player behind a beat the tutorial has already passed, with no way to say so.
+			-- Taken here, not a frame later: the prompt turns to "Take Stick" immediately, and the next three beats all leave it the only prompt in reach
 			StickStandController:SetTakeLocked(true)
 		end,
 	})

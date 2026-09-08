@@ -13,24 +13,7 @@ local BaseUnlocks = require(Shared.Config.BaseUnlocks)
 -- Controllers
 local EffectController = require(script.Parent.Parent.Controllers.EffectController)
 
---[[
-	LayoutStand — springs a base's unlock model to the spot the server picked for it.
-
-	The server decides where the model goes and writes its target to a SlotCFrame attribute; this
-	just animates it there. A fresh Layout copy is authored below its slot and undersized, so it
-	rises up and pops to full scale on start; an upgrade that reshuffles the grid retargets the
-	attribute and the copy slides across (scale is left alone, so it doesn't re-pop).
-
-	A freshly-placed structure rides the same spring the other way up: the server authors it *above*
-	its slot and at full size, so it drops onto the spot rather than growing out of it -- buying an
-	upgrade and building something read differently on purpose. Nothing here tells the two apart;
-	where the model starts is the whole difference, and being already full size makes the scale
-	target below a no-op for them.
-
-	A model that came up on a purchase or a placement also carries PulseOnSpawn, and flashes gold as
-	it moves. The server only sets it on the render that follows an actual change, so a base building
-	itself out on join stays quiet.
-]]
+-- Springs a base model to the server's SlotCFrame. Where the model starts is the whole difference: an unlock rises small from below, a structure drops in full-size from above.
 local LayoutStand = Component.new({
 	Tag = script.Name,
 })
@@ -38,8 +21,7 @@ local LayoutStand = Component.new({
 function LayoutStand:Start()
 	local model: Model = self.Instance
 
-	-- Retarget rather than snap, so an attribute change mid-flight bends the same spring instead of
-	-- restarting it. Reflows only move the pivot; the scale pop is a one-time thing on start.
+	-- Retargeted, not snapped, so a mid-flight change bends the same spring. Only the pivot moves on a reflow
 	local function retarget()
 		Spr.target(model, BaseUnlocks.LAYOUT_DAMPING, BaseUnlocks.LAYOUT_FREQUENCY, {
 			Pivot = model:GetAttribute("SlotCFrame"),

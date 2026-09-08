@@ -2,24 +2,7 @@
 local PhysicsService = game:GetService("PhysicsService")
 local Players = game:GetService("Players")
 
---[[
-    Owns the game's collision groups and the rules between them.
-
-    Players and NPCs each get their own group so NPCs can be made to pass through players (and each other)
-    while everything still collides with the world (the built-in Default group, which the world stays in).
-    Player characters are assigned to the Player group as they spawn; callers assign their own models (e.g.
-    a spawned NPC) with SetModelGroup.
-
-    Structure is what every placed structure goes into (see Base:BuildStructure). It's solid to players
-    like the rest of the world -- a base you can walk through isn't a base -- and passable to the
-    customers coming for the stall, who are sent on a plain MoveTo with nothing routing them round
-    anything (see SellNpcManager:_walkTo). Without that, a griller left standing on the line between the
-    spawn and the stall stops the visit dead until it times out and the sale simply never happens.
-
-    RockDebris is the odd one out: nothing here assigns it, because the rocks a meteor crate throws are
-    spawned client-side by Modules/RockModule, which can't require a server manager. It names the group
-    as a string and this registers it -- so the name has to stay in step across the two.
-]]
+-- Owns the game's collision groups. Structure is solid to players and passable to customers, whose plain MoveTo would otherwise stall on a griller in the way. RockDebris is named as a string by the client's RockModule, so the name has to stay in step.
 
 --
 local CollisionManager = {
@@ -55,12 +38,10 @@ function CollisionManager:OnInit()
 	PhysicsService:CollisionGroupSetCollidable(self.NPC, self.NPC, false)
 	PhysicsService:CollisionGroupSetCollidable(self.NPC, self.PLAYER, false)
 
-	-- A customer walks through whatever the owner has built rather than getting stuck on it. Left
-	-- collidable with Player on purpose, since a structure is something you stand a base out of.
+	-- Customers walk through structures; left collidable with Player, since a base is something to stand on
 	PhysicsService:CollisionGroupSetCollidable(self.STRUCTURE, self.NPC, false)
 
-	-- Debris is scenery: it falls, rests on the ground and fades, but never shoves anyone around.
-	-- Left collidable with Default on purpose, or the rocks would drop through the floor.
+	-- Scenery only. Left collidable with Default, or the rocks would drop through the floor
 	PhysicsService:CollisionGroupSetCollidable(self.ROCK_DEBRIS, self.PLAYER, false)
 	PhysicsService:CollisionGroupSetCollidable(self.ROCK_DEBRIS, self.NPC, false)
 end

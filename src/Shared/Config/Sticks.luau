@@ -26,43 +26,10 @@ export type Stick = {
 --
 local Sticks = {}
 
--- What slice of a stick's own Price comes back in the sale of the skewer built on it, so the tier a
--- player skewered on shows up in the payout rather than only in how many slots they got. A sale
--- destroys the stick, so this is the stick being liquidated, never a refund.
--- Higher = expensive sticks pay more of themselves off per sale. Past the point where the slice comes
--- back bigger than the Price it's a slice of, the shop is a money loop.
--- This is the smaller of the two ways a tier reaches the payout: the other is ValueBoost below, which
--- scales the whole skewer rather than crediting back a flat slice, so raise them together with care.
---
--- Where that ceiling sits depends on the whole multiplier stack, because the slice sits inside it (see
--- StickModel.GetSellValue) -- so it's every multiplier a skewer can carry at once, on the luckiest
--- sale: ValueBoost, sauce, mutation, cook state, and a haggle run to CounterCap. As the game ships
--- today, with Sauces.Data empty, the worst case is the diamond on a golden grill cooked perfect and
--- haggled to the cap. Holding that case under 1 needs this at or below 0.105, and it sits above that
--- on purpose: an ordinary sale still cannot fund the stick -- a gold cooked perfect returns 0.61x its
--- price, 0.77x haggled to the cap -- and it takes a mutation stacked on a near-cap haggle to cross.
--- Gold on a Shocked cook reaches 1.16x, on a Golden 1.35x, and the diamond 1.43x. Golden Grill stamps
--- every cook rather than rolling for it, so that one is a standing edge rather than a tail case; it is
--- Robux-gated and capped by how fast its owner can cook and sell, which is why it is allowed to stand.
--- What this must never do is cross on a plain sale -- that is the loop the ceiling above is guarding.
--- Restoring Sauces.Data puts a 2.25x back into that stack and multiplies every figure here by it. So
--- re-enabling sauces means dropping this to ~0.045 in the same change, or the shop starts printing.
+-- The slice of a stick's Price that comes back on a sale -- the stick liquidated, never refunded. Cross the ceiling and the shop is a money loop; see docs/balance.md before moving it.
 Sticks.SALE_RETURN_FACTOR = 0.15
 
--- Ordered lowest to highest: array order is the tier, so wooden is the cheapest stick and diamond
--- the best. Id matches the model name under Assets.Sticks.
---
--- ValueBoost is set so every stick pays for itself on COMMON ingredients -- the tier near enough nine
--- rolls in ten land on. That's the rule the ladder is built to, and it's what stops an upgrade from
--- being a trap: buying up is never worse than the stick below it, whatever the player happens to have
--- to put on it. It's solved rather than picked -- the boost at which a stick's cost, its liquidated
--- slice and its share of the skewer's value cancel at a common's worth per slot -- which is why the
--- numbers aren't round. Reprice a stick and its boost has to be re-solved with it, or that tier
--- quietly goes back to losing money on the only ingredients most players have.
---
--- Above common the boost is pure profit, and that's where the tiers are meant to be told apart. Wooden
--- and bamboo carry none on purpose: at $3 and $17 a slot their price is already noise, and what they
--- sell is capacity.
+-- Lowest to highest; array order is the tier. ValueBoost is solved so every stick pays for itself on commons -- see docs/balance.md.
 Sticks.Data = {
 	{
 		Id = "WoodenStick",
@@ -155,9 +122,7 @@ Sticks.Data = {
 	},
 }
 
--- Each entry pulls its own model out of Assets.Sticks, matched on Id. An entry whose model is
--- missing gets dropped rather than left half-built, so a typo'd Id can't be welded onto a tool and
--- then error mid-build.
+-- Resolves each entry's model, dropping any that's missing so a typo can't error mid-build.
 for index = #Sticks.Data, 1, -1 do
 	local stick = Sticks.Data[index]
 	local model = SticksFolder:FindFirstChild(stick.Id)
@@ -183,8 +148,7 @@ function Sticks.GetStickFromId(id: string): Stick?
 	return nil
 end
 
--- What a skewer built on this stick sells for, as a multiple of its plain value. A stick the config
--- no longer has -- or one carrying no boost -- prices at 1, so callers can multiply unconditionally.
+-- A stick's sale multiple. A missing or boostless one prices at 1, so callers multiply unconditionally.
 function Sticks.GetValueMultiplier(id: string?): number
 	local stick = id and Sticks.GetStickFromId(id)
 	return if stick then 1 + stick.ValueBoost / 100 else 1
@@ -194,8 +158,7 @@ function Sticks.GetAllSticks(): { Stick }
 	return Sticks.Data
 end
 
--- The sticks the stick shop can stock and sell, in tier order. Filters out the ones flagged
--- Restockable = false (the diamond), so the shop roll and the client display share one source of truth.
+-- What the stick shop can stock, in tier order, so the roll and the display share one source of truth.
 function Sticks.GetRestockableSticks(): { Stick }
 	local restockable = {}
 

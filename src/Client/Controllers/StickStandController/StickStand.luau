@@ -36,15 +36,10 @@ local PROMPT_DISTANCE = 10
 local DROP_DAMPING = 0.6
 local DROP_FREQUENCY = 2.5
 
--- Seconds a drop is left to the spring before Update counts it as seated and takes the pivot back. The
--- spring is within a hair of rest by ~0.4s (4 / (damping * 2pi * frequency)); the rest is headroom for
--- the bounce. Timed rather than off Spr.completed: that callback only ever fires on a spring that
--- finishes on its own, and one stopped early (a stick taken back mid-drop) leaves it -- and the model
--- it closes over -- in spr for good.
+-- Seconds before Update takes the pivot back. Timed, since Spr.completed never fires on a spring stopped early
 local DROP_SETTLE_TIME = 1
 
--- The place sound is pitched off a fresh roll in this band each time, so filling a skewer doesn't read
--- as the same sample repeating.
+-- Pitched off a fresh roll each time, so filling a skewer doesn't read as one sample repeating
 local PLACE_PITCH_MIN = 0.9
 local PLACE_PITCH_MAX = 1.1
 
@@ -56,23 +51,13 @@ local function sourceModel(ingredient: Ingredients.Ingredient, cooked: boolean):
 	return if cooked then ingredient.CookedModel else ingredient.Model
 end
 
---[[
-    Class for a single placed stick stand on some base.
-
-    One instance per stand, on every client, so placed sticks and their ingredients show up for
-    visitors too. The server writes the stick + ingredient list to the stand's PlacedStickId /
-    PlacedIngredients attributes; this renders them onto the stand's StickAttachment and keeps them
-    there as the client animates the stand into place. A freshly-added ingredient drops in from above;
-    the rest render in place. The place/put/remove prompt only goes up on stands the local player owns,
-    which the OwnerUserId attribute the base stamped on it is what says.
-]]
+-- One placed stick stand: renders the stick and its ingredients off the stand's attributes, and owns the prompt and glow.
 
 --
 local StickStand = {}
 StickStand.__index = StickStand
 
 function StickStand.new(clone: Model)
-	--
 	local cleaner = Trove.new()
 
 	local stand = clone:FindFirstChild("Stand")
@@ -80,12 +65,9 @@ function StickStand.new(clone: Model)
 	local promptAttachment = stand and stand:FindFirstChild("StickPromptAttachment")
 
 	local self = setmetatable({
-		--
 		_clone = clone,
 
-		-- Which placed stand this is, and whose it is. Both are stamped on by the base before it tags
-		-- the model, so they're set by the time this class is ever built, and a stand only exists while
-		-- its owner does -- so ownership is fixed for the whole life of one of these.
+		-- Stamped by the base before it tags the model, and fixed for the whole life of this class
 		_uid = clone:GetAttribute(Structures.UID_ATTRIBUTE),
 		_ownerUserId = clone:GetAttribute(Structures.OWNER_ATTRIBUTE),
 
@@ -93,10 +75,7 @@ function StickStand.new(clone: Model)
 		_attachment = attachment,
 		_promptAttachment = promptAttachment,
 
-		-- The placed stick model, and the ingredients riding on it. _ingredientIds is the last list we
-		-- rendered, so a change that only appends one can be told apart (re-centre + drop it in) from a
-		-- bulk change (rebuild in place). Each _ingredients entry: { model, pivotToCenter, index, id,
-		-- localPivot, dropping, dropUntil }.
+		-- The stick and its ingredients; _ingredientIds is the last list rendered, so an append can be told from a rebuild
 		_stickId = nil,
 		_stickModel = nil,
 		_ingredientIds = {},
@@ -104,27 +83,22 @@ function StickStand.new(clone: Model)
 		_rendered = false, -- gates the place sound, so a stand that already holds a stick doesn't ring on join
 		_cooked = false, -- whether the placed skewer is cooked, so ingredients render from the cooked models
 
-		-- Where the attachment was on the last Update, and whether any ingredient was still dropping then --
-		-- together they let Update skip a stand that hasn't moved and has nothing in the air.
+		-- The last Update's pose and whether anything was mid-drop, so a still stand can be skipped
 		_lastBase = nil,
 		_dropping = false,
 
-		-- The placed stick's UI holder (StickUIAttachment, parented under the stand clone), the detached
-		-- ingredient-title template it clones from, and the live title clones. Dropped by hand in
-		-- _renderStick / Destroy since they don't hang off the stick model.
+		-- The billboard, its title template and the live clones. Dropped by hand -- they don't hang off the stick
 		_ui = nil,
 		_titleTemplate = nil,
 		_titleClones = {},
 
 		_prompt = nil,
 
-		--
 		_cleaner = cleaner,
 		_promptCleaner = cleaner:Construct(Trove),
 	}, StickStand)
 
-	-- The parts come off the structure's template in the place file, not this repo, so a missing
-	-- Stand/attachment is a real failure case rather than something the code guarantees.
+	-- The parts come off the place file, so a missing Stand or attachment is a real failure case
 	if not attachment then
 		warn(`[StickStand] {clone.Name} has no Stand.StickAttachment, it won't render`)
 		return self
@@ -150,8 +124,7 @@ function StickStand.new(clone: Model)
 	return self
 end
 
--- Brings the rendered stick + ingredients in line with the stand's attributes, then refreshes the
--- prompt text.
+-- Brings the rendered stick and ingredients in line with the stand's attributes, then refreshes the prompt.
 function StickStand:_render()
 	if not self._attachment then
 		return
@@ -162,15 +135,13 @@ function StickStand:_render()
 	local ingredientIds = if ingredientsCsv and ingredientsCsv ~= "" then string.split(ingredientsCsv, ",") else {}
 	local cooked = self._clone:GetAttribute("PlacedCooked") == true
 
-	-- A different stick (placed, removed, swapped) rebuilds the stick and drops all its ingredients so
-	-- they re-seat on the new one.
+	-- A different stick rebuilds it and re-seats every ingredient on the new one
 	if stickId ~= self._stickId then
 		self._stickId = stickId
 		self:_renderStick(stickId)
 		self:_clearIngredients()
 
-		-- A stick arriving on the stand is the player setting one down; the take that clears it isn't.
-		-- Rung off the model _renderStick just seated, so it comes from the stick itself.
+		-- Rung off the model _renderStick just seated, so it comes from the stick itself
 		if self._stickModel and self._rendered then
 			SoundController:PlaySound("Place", self._stickModel:GetPivot())
 		end
@@ -190,17 +161,14 @@ function StickStand:_render()
 	self._rendered = true
 end
 
--- Clears the current stick model and, if the stand holds one, seats it on the attachment. Parented as
--- a sibling of the clone rather than under it, so the client's entrance ScaleTo on the stand can't
--- blow the stick's size up; Update keeps it glued.
+-- Seats the stand's stick on the attachment, as a sibling of the clone so the entrance ScaleTo can't inflate it.
 function StickStand:_renderStick(stickId: string?)
 	if self._stickModel then
 		self._stickModel:Destroy()
 		self._stickModel = nil
 	end
 
-	-- The billboard sits under the stand clone (not the stick model), so drop it by hand -- its title
-	-- clones go with it, and the detached title template needs dropping too.
+	-- Dropped by hand, since the billboard sits under the stand clone rather than the stick model
 	if self._ui then
 		self._ui:Destroy()
 		self._ui = nil
@@ -233,10 +201,7 @@ function StickStand:_renderStick(stickId: string?)
 	model.Parent = self._clone.Parent
 	self._stickModel = model
 
-	-- Billboard: the stick's name plus a capacity/ingredient readout _updateIngredientUI fills in.
-	-- StickUIAttachment is an Attachment, so it goes on the Stand part (which the stand clone animates,
-	-- so it rides along); its authored offset + the billboard's StudsOffset place it. The teardown above
-	-- drops it since it doesn't hang off the stick model.
+	-- On the Stand part so it rides the stand's animation; the teardown above drops it by hand
 	local holder = UI.StickUIAttachment:Clone()
 	local billboard = holder.UI
 
@@ -247,7 +212,7 @@ function StickStand:_renderStick(stickId: string?)
 		nameStroke.Color = stick.StrokeColor
 	end
 
-	-- Pull the template out of the grid so it isn't rendered as an empty cell; clones come off it.
+	-- Pulled out of the grid so it isn't rendered as an empty cell; clones come off it
 	self._titleTemplate = billboard.Ingredients.IngredientTitleTemplate
 	self._titleTemplate.Parent = nil
 
@@ -266,8 +231,7 @@ function StickStand:_clearIngredients()
 	self._ingredientIds = {}
 end
 
--- Fills the billboard's capacity counter and ingredient titles from the current list, hiding the
--- ingredient section while the stick is empty. No-op when there's no stick (so no billboard).
+-- Fills the billboard's counter and titles, hiding the ingredient section while the stick is empty.
 function StickStand:_updateIngredientUI()
 	if not self._ui then
 		return
@@ -311,9 +275,7 @@ function StickStand:_updateIngredientUI()
 	end
 end
 
--- Matches the rendered ingredients to the new list. Exactly one appended (a fresh "Put") re-centres
--- the run -- shifting the ones already on the stick and dropping the new one in; anything else (initial
--- load, a removal, a swap) rebuilds in place.
+-- Reconciles to the new list: one appended re-centres the run and drops it in, anything else rebuilds in place.
 function StickStand:_reconcileIngredients(newIds: { string })
 	local oldIds = self._ingredientIds
 
@@ -327,8 +289,7 @@ function StickStand:_reconcileIngredients(newIds: { string })
 		end
 	end
 
-	-- The whole list's extents are needed to place any one ingredient (spacing accumulates by size),
-	-- and the run centres on the stick's middle, so appending one shifts every earlier slot too.
+	-- Spacing accumulates by size and the run centres on the stick, so appending one shifts every earlier slot
 	local extents = StickIngredients.ComputeExtents(newIds, self._cooked)
 	local middleOffset = if self._stickModel then StickIngredients.GetStickMiddleOffset(self._stickModel) else Vector3.zero
 	local stickLength = if self._stickModel then StickIngredients.GetStickLength(self._stickModel) else math.huge
@@ -336,8 +297,7 @@ function StickStand:_reconcileIngredients(newIds: { string })
 	if appended then
 		local base = self._attachment.WorldCFrame
 
-		-- The run re-centres, so the ones already on the stick slide to new slots. Spring them (not
-		-- snap) so it reads as the stack making room, like a stand sliding across a reflow.
+		-- Sprung rather than snapped, so it reads as the stack making room
 		for _, entry in self._ingredients do
 			entry.localPivot = StickIngredients.GetRestLocalCFrame(entry.index, entry.id, extents, middleOffset, stickLength)
 				* entry.pivotToCenter:Inverse()
@@ -350,10 +310,7 @@ function StickStand:_reconcileIngredients(newIds: { string })
 		self:_spawnIngredient(newIds[#newIds], #newIds, true, extents, middleOffset, stickLength)
 		self._ingredientIds = newIds
 
-		-- Rung off the stick's own pose so it's positional, and gated the same way the stick's place sound
-		-- is -- a stand loading a one-ingredient skewer on join takes this branch too, and shouldn't ring.
-		-- Every client renders this stand off the replicated list, so playing it locally is what makes it
-		-- heard by everyone rather than only the player who put it on.
+		-- Positional and gated like the place sound; played locally on every client, so everyone hears it
 		if self._rendered then
 			SoundController:PlaySound("IngredientPlace", base, {
 				PlaybackSpeed = RandomUtil.GetRandomFromMinMax(PLACE_PITCH_MIN, PLACE_PITCH_MAX),
@@ -370,8 +327,7 @@ function StickStand:_reconcileIngredients(newIds: { string })
 	self._ingredientIds = newIds
 end
 
--- Renders ingredient `index` onto the stick. When animate is true it spawns above and springs down;
--- otherwise it lands straight at its rest pose. Update keeps it seated after.
+-- Renders ingredient `index`, springing it down when `animate`. Update keeps it seated after.
 function StickStand:_spawnIngredient(id: string, index: number, animate: boolean, extents: { number }, middleOffset: Vector3, stickLength: number)
 	local ingredient = Ingredients.GetIngredientFromId(id)
 	if not ingredient then
@@ -386,9 +342,7 @@ function StickStand:_spawnIngredient(id: string, index: number, animate: boolean
 		end
 	end
 
-	-- Bake this model's pivot->centre once, before it moves, and keep it with the index so Update can
-	-- rebuild the slot pose against the live attachment each frame -- and _reconcileIngredients can
-	-- recompute it when a later add re-centres the run -- with no per-frame maths or RNG re-roll.
+	-- Baked once before it moves, so Update rebuilds the slot pose with no per-frame maths or RNG re-roll
 	local pivotToCenter = StickIngredients.GetPivotToCenter(model)
 	local localPivot = StickIngredients.GetRestLocalCFrame(index, id, extents, middleOffset, stickLength) * pivotToCenter:Inverse()
 	local base = self._attachment.WorldCFrame
@@ -411,16 +365,12 @@ function StickStand:_spawnIngredient(id: string, index: number, animate: boolean
 	table.insert(self._ingredients, entry)
 end
 
--- The stick model currently seated on this stand, or nil while it holds none. Built client side and
--- re-created from scratch on every change (see _renderStick), so callers have to re-resolve it rather
--- than hold onto what they get back.
+-- The stick model on this stand, or nil. Re-created on every change, so callers must re-resolve it.
 function StickStand:GetStickModel(): Model?
 	return self._stickModel
 end
 
--- Keeps the stick and its ingredients glued to the attachment, which the client slides around as it
--- springs the stand up into its slot and reflows the grid. A still-dropping ingredient keeps springing
--- toward its target (so it chases the stand mid-fall); settled ones snap straight to it.
+-- Keeps the stick and ingredients glued to the attachment as the stand springs and the grid reflows.
 function StickStand:Update(_deltaTime: number)
 	if not self._attachment then
 		return
@@ -428,9 +378,7 @@ function StickStand:Update(_deltaTime: number)
 
 	local base = self._attachment.WorldCFrame
 
-	-- Nothing has moved and nothing is in the air: everything is still seated where the last pass put it.
-	-- This runs for every stand on every base every frame, and nearly all of them are sat still nearly all
-	-- of the time, so a settled stand has to cost nothing here.
+	-- Runs for every stand on every base every frame, and nearly all are still, so a settled stand costs nothing
 	if base == self._lastBase and not self._dropping then
 		return
 	end
@@ -446,8 +394,7 @@ function StickStand:Update(_deltaTime: number)
 	for _, entry in self._ingredients do
 		local restTarget = base * entry.localPivot
 
-		-- A drop that has had its settle time is seated: take the pivot back from spr, and stop the spring
-		-- so it can't keep nudging a model this now places outright.
+		-- Take the pivot back and stop the spring, so it can't nudge a model this now places outright
 		if entry.dropping and now >= entry.dropUntil then
 			entry.dropping = false
 			Spr.stop(entry.model)
@@ -464,8 +411,7 @@ function StickStand:Update(_deltaTime: number)
 	self._dropping = dropping
 end
 
--- Puts the prompt up when the local player owns this base and takes it down when they don't, so only
--- the owner can place/put/remove, and visitors just see the result. Also keeps the text current.
+-- Puts the prompt up on the owner's own base only, and keeps its text current.
 function StickStand:RefreshPrompt()
 	if not self._promptAttachment then
 		return
@@ -496,17 +442,7 @@ function StickStand:RefreshPrompt()
 	self:RefreshHighlights()
 end
 
--- The prompt reads by state + what the local player holds: place a stick on an empty stand, add the
--- held ingredient to a placed one (or "Skewer Full" at capacity), else take it back off.
---
--- A bare stick is a "Stick" and one carrying ingredients is a "Skewer" -- the same two words every
--- other machine uses, so the noun on the prompt is what tells the player where it goes next: a stick
--- belongs on a stand, a skewer belongs on the grill.
---
--- One prompt covering three actions is also why the tutorial's holds land here rather than on the
--- instance: each branch reads its own lock, so shutting the take leaves the add it's about to ask for
--- alone. Enabled is written on every branch, never just the held one, so a lock that's been handed
--- back can't leave a prompt down.
+-- Reads by state and what's held: place a stick, add an ingredient, or take it back. Each branch reads its own tutorial lock, and Enabled is written on every branch.
 function StickStand:_updatePrompt()
 	if not self._prompt then
 		return
@@ -537,22 +473,19 @@ function StickStand:_updatePrompt()
 		return
 	end
 
-	-- Taking it back hands over whatever's on the stand, so the noun follows what it actually is.
+	-- The noun follows what's actually on the stand
 	self._prompt.ActionText = if #self._ingredientIds > 0 then "Take BBQ" else "Take Stick"
 	self._prompt.Enabled = not StickStandController:IsTakeLocked()
 end
 
--- Breathes whichever part of the stand the player could act on right now: the stand itself while
--- they hold a stick to put on it, or the placed stick while they hold an ingredient it has room for.
--- Reads the same state the prompt text does, so what glows and what the prompt says can't disagree.
+-- Breathes whatever can be acted on -- the stand for a held stick, the stick for a held ingredient.
 function StickStand:RefreshHighlights()
 	StickStandController = StickStandController or require(script.Parent)
 
 	local owned = self._ownerUserId == LocalPlayer.UserId
 	local stickId = self._clone:GetAttribute("PlacedStickId")
 
-	-- The lock goes on the glow as well as the prompt: the glow is what says a prompt is up, so holding
-	-- one without the other lights a stand that does nothing.
+	-- The glow says a prompt is up, so holding one without the other lights a stand that does nothing
 	local canPlaceStick = owned
 		and not stickId
 		and EquippedItem.GetStickId() ~= nil
@@ -565,9 +498,7 @@ function StickStand:RefreshHighlights()
 		self._clone:RemoveTag(Highlights.TAG)
 	end
 
-	-- Nothing placed, so there's no stick to light up -- _renderStick only builds one for a stand
-	-- that holds a stick, and rebuilds it from scratch on every swap (which is why this has to run
-	-- after _render, not before: the tag goes with the old model).
+	-- No stick to light. This must run after _render, since the tag goes with the old model
 	if not self._stickModel then
 		return
 	end
@@ -575,8 +506,7 @@ function StickStand:RefreshHighlights()
 	local stick = Sticks.GetStickFromId(stickId)
 	local capacity = if stick then stick.Capacity else 0
 
-	-- A cooked skewer is finished and a full one has nowhere to put anything, matching the prompt's
-	-- "Skewer Full".
+	-- A cooked skewer is finished and a full one has nowhere to put anything, matching the prompt
 	local canAddIngredient = owned
 		and not self._cooked
 		and #self._ingredientIds < capacity
@@ -593,13 +523,10 @@ end
 function StickStand:Destroy()
 	self:_clearIngredients()
 
-	-- The base destroys the stand itself, but the removed-tag signal that brings us here can land before
-	-- it does -- so the model can outlive this class for a frame with our tag still on it, breathing on
-	-- a stand that's on its way out. Take it off rather than leave that to timing.
+	-- The model can outlive this class for a frame with our tag on it, so take it off rather than trust timing
 	self._clone:RemoveTag(Highlights.TAG)
 
-	-- The billboard and its detached template live under the stand clone, not the stick model, so drop
-	-- them by hand.
+	-- Dropped by hand, living under the stand clone rather than the stick model
 	if self._ui then
 		self._ui:Destroy()
 		self._ui = nil

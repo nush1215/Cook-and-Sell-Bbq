@@ -21,11 +21,7 @@ local PlayerGui = LocalPlayer.PlayerGui
 -- Matches CodeManager's own cooldown, so a spammed Claim never round-trips just to be rejected.
 local CLAIM_COOLDOWN = 1
 
---[[
-	Drives the Codes screen. A topbar button toggles the panel; the player types a code and hits
-	Claim (or presses Enter) to send it to CodeManager. The server owns all validation and reports
-	every outcome through its own notifications, so this side only guards empty input and spam.
-]]
+-- Drives the Codes screen. The server owns validation and reports every outcome, so this only guards empty input and spam.
 local CodeController = {
 	ClaimCodeEvent = Network.Event("ClaimCode"),
 
@@ -67,10 +63,7 @@ function CodeController:OnStart()
 	local holder = self.UI.Holder
 	holder.Visible = false
 
-	-- Temporary entry point until a Codes button exists in HudUI. oneClick keeps the icon momentary,
-	-- so each press just re-runs OpenFrame, which closes the panel when it's already the open frame.
-	-- autoDeselect is off because TopbarPlus otherwise deselects every other icon when this one is
-	-- pressed, which would silently un-mute the game for anyone playing with the mute button on.
+	-- Temporary until HudUI has a Codes button. oneClick keeps it momentary; autoDeselect is off, or pressing it would un-mute the game
 	local codesButton = TopbarPlus.new()
 	codesButton:setLabel("Codes")
 	codesButton:autoDeselect(false)

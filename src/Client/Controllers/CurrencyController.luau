@@ -44,12 +44,10 @@ local CURRENCY_POP_UPS = {
 local CurrencyController = {}
 
 function CurrencyController:_updateCurrency(old, new)
-	--
 	local ui = self.UI
 	local currency = ui.BottomLeft.Currency
 	local amount = currency.Amount
 
-	--
 	self._animatedNumber:UpdateNumber(new)
 	local didLoseCurrency = old > new
 	self._spring:Impulse(didLoseCurrency and -3 or 3)
@@ -58,7 +56,6 @@ function CurrencyController:_updateCurrency(old, new)
 		return
 	end
 
-	--
 	local value = math.floor(math.abs(new - old))
 
 	local changeAmountTemplate = amount.ChangeAmountTemplate:Clone()
@@ -78,8 +75,7 @@ function CurrencyController:_updateCurrency(old, new)
 	end)
 end
 
--- Spawns a single floating "+value" popup at a random left/right screen band. Driven by cash
--- projectile arrivals (see CollectCash) so each projectile that lands pops one label.
+-- Spawns one floating "+value" popup, driven per arriving cash projectile (see CollectCash).
 function CurrencyController:SpawnCurrencyPopup(value: number)
 	local currencyUI = self.CurrencyUI
 	local currencyAddTemplate = currencyUI.CurrencyAddTemplate
@@ -108,7 +104,6 @@ function CurrencyController:SpawnCurrencyPopup(value: number)
 end
 
 function CurrencyController:_setupUI()
-	--
 	local ui = self.UI
 	local currency = ui.BottomLeft.Currency
 
@@ -122,7 +117,6 @@ function CurrencyController:_setupUI()
 		currency.UIScale.Scale = 1 + spring.Position
 	end)
 
-	--
 	local animatedNumber = AnimatedNumber.new(0, 0.5)
 	animatedNumber.OnChangedValue:Connect(function(value)
 		value = math.floor(value)
