@@ -455,7 +455,8 @@ end
 
 -- Reconciles against the slot's attributes: starts or stops the cook on a Cooking edge, refreshes prompts.
 function Grill:_sync()
-	local cooking = self._slot:GetAttribute("Cooking") == true
+	-- Gated on the cook time too: the stamps land one at a time, and the bar's bands divide by it
+	local cooking = self._slot:GetAttribute("Cooking") == true and self._slot:GetAttribute("CookTime") ~= nil
 
 	-- Read before the lines below overwrite them, so the wind-down uses the ramp that cook spun up along
 	local exitAngle, exitRamp

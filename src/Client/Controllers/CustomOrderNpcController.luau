@@ -123,8 +123,8 @@ function CustomOrderNpcController:_attach(npc: Model)
 	local state = NpcBillboard.Attach(npc, "CustomOrderNPCUIAttachment", nil, "CustomNPC")
 	self._attaching[npc] = nil
 
+	-- Only empty once the rig has left the world, so there's nothing left to draw on
 	if not state then
-		warn(`[CustomOrderNpcController] {npc:GetFullName()} never got a head, so no billboards were built`)
 		return
 	end
 

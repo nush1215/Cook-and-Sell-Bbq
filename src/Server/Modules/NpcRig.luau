@@ -116,24 +116,25 @@ function NpcRig.BuildPool()
 	end
 
 	for _ = 1, SellNpc.NPC_POOL_SIZE do
-		local npc = NpcTemplate:Clone()
-		CollisionManager:SetModelGroup(npc, CollisionManager.NPC)
-		npc.Parent = PoolFolder
-		table.insert(NpcRig._pool, npc)
+		table.insert(NpcRig._pool, NpcRig.CloneRig())
 	end
+end
+
+-- Clones a fresh rig into the pool folder, stamped for the NPC collision group and atomic streaming.
+function NpcRig.CloneRig(): Model
+	local npc = NpcTemplate:Clone()
+	CollisionManager:SetModelGroup(npc, CollisionManager.NPC)
+
+	-- Whole or not at all: under default mode the tag lands on the client long before the head the billboards hang off
+	npc.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
+
+	npc.Parent = PoolFolder
+	return npc
 end
 
 -- Hands out a parked rig, cloning only if the pool is empty. Stays in the pool folder; the caller places it.
 function NpcRig.Acquire(): Model
-	local npc = table.remove(NpcRig._pool)
-	if npc then
-		return npc
-	end
-
-	npc = NpcTemplate:Clone()
-	CollisionManager:SetModelGroup(npc, CollisionManager.NPC)
-	npc.Parent = PoolFolder
-	return npc
+	return table.remove(NpcRig._pool) or NpcRig.CloneRig()
 end
 
 -- Parks a rig back in the pool and resets its look, so the next customer doesn't inherit it.

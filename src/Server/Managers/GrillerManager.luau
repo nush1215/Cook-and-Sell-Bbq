@@ -259,7 +259,8 @@ function GrillerManager:ToggleGrillStick(player: Player, uid: string)
 	end
 
 	-- Read before anything yields, since a take is the stop and subtracting ping is the whole minigame
-	local stoppedAt = workspace:GetServerTimeNow() - math.min(player:GetNetworkPing(), MAX_STOP_COMPENSATION)
+	local arrivedAt = workspace:GetServerTimeNow()
+	local stoppedAt = arrivedAt - math.min(player:GetNetworkPing(), MAX_STOP_COMPENSATION)
 
 	if self._toggling[player] then
 		return
@@ -280,6 +281,23 @@ function GrillerManager:ToggleGrillStick(player: Player, uid: string)
 	local record = data.Grillers[uid]
 
 	if record then
+		-- The correction keeps the state they saw; it mustn't invent a raw pull from a press that arrived past the edge
+		if record.Cooking then
+			local rawEndsAt = record.CookStartedAt
+				+ CookStates.GetElapsedForBar(
+					CookStates.RAW_END * record.CookTime,
+					record.CookTime,
+					record.CookWindowStretch,
+					record.CookProgress,
+					record.CookInstability,
+					record.CookInstabilityPhase
+				)
+
+			if arrivedAt >= rawEndsAt then
+				stoppedAt = math.max(stoppedAt, rawEndsAt)
+			end
+		end
+
 		-- Occupied: settle, hand back and clear. The return only refuses a cook already settling elsewhere
 		if not self:ReturnContentsToPlayer(player, data, uid, record, nil, stoppedAt) then
 			self._toggling[player] = nil
