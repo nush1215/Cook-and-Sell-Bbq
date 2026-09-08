@@ -14,6 +14,7 @@ local StickModel = require(Shared.StickModel)
 local RandomUtil = require(Shared.RandomUtil)
 local Animations = require(Shared.Animations)
 local SellNpc = require(Shared.Config.SellNpc)
+local CustomOrderNpc = require(Shared.Config.CustomOrderNpc)
 
 -- Assets
 local NpcTemplate = ServerStorage.Assets.NPCTemplate
@@ -138,6 +139,10 @@ end
 -- Parks a rig back in the pool and resets its look, so the next customer doesn't inherit it.
 function NpcRig.Release(npc: Model)
 	npc.Parent = PoolFolder
+
+	-- The pool is shared, so a stale order would draw a recipe card over the next customer to wear this rig
+	npc:RemoveTag(CustomOrderNpc.TAG)
+	npc:SetAttribute(CustomOrderNpc.ORDER_ATTRIBUTE, nil)
 
 	local humanoid = npc:FindFirstChildOfClass("Humanoid")
 	humanoid:ApplyDescriptionReset(NpcRig._defaultDescription)

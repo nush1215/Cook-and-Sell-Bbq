@@ -20,6 +20,18 @@ CustomOrderNpc.VARIATIONS = {
 	Direct = "Direct",
 }
 
+-- How far a saved order had got, and what the rig publishes. Shared, so the profile and the attribute can't drift
+CustomOrderNpc.PHASES = {
+	Pending = "Pending",
+	Accepted = "Accepted",
+}
+
+-- The tag a live custom-order customer wears, so a client that streams one in finds it without a remote
+CustomOrderNpc.TAG = "CustomOrderCustomer"
+
+-- The whole live order as one JSON blob. On the rig, since data only reaches its owner
+CustomOrderNpc.ORDER_ATTRIBUTE = "CustomOrder"
+
 -- Share of visits out of 100 that open on Inspect, rather than asking on arrival
 CustomOrderNpc.INSPECT_CHANCE = 50
 

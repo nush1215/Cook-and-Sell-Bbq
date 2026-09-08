@@ -22,6 +22,7 @@ local RandomUtil = require(Shared.RandomUtil)
 local Sticks = require(Shared.Config.Sticks)
 local SellNpc = require(Shared.Config.SellNpc)
 local CookStates = require(Shared.Config.CookStates)
+local Structures = require(Shared.Config.Structures)
 local Ingredients = require(Shared.Config.Ingredients)
 local CustomOrderNpc = require(Shared.Config.CustomOrderNpc)
 
@@ -34,10 +35,6 @@ local ROLLING_STANDS_UNLOCK = "RollingStands"
 
 -- The state a quote is priced against, so anything else is a deduction the toast has to explain
 local PERFECT_COOK_STATE = "Perfect"
-
--- How far a saved order had got, which is what decides where a restored visit re-enters the flow
-local PHASE_PENDING = "Pending"
-local PHASE_ACCEPTED = "Accepted"
 
 --
 local PlayerDataManager
@@ -55,13 +52,9 @@ local BaseManager
 
 -- Sends the customer who asks for a named recipe against a clock. Its rig, walk and fade are the sell stand's; what is its own is the order, the timer and the hand-over.
 local CustomOrderNpcManager = {
-	CustomOrderArriveEvent = Network.Event("CustomOrderArrive"),
 	CustomOrderInspectEvent = Network.Event("CustomOrderInspect"),
-	CustomOrderShowEvent = Network.Event("CustomOrderShow"),
 	CustomOrderResponseEvent = Network.Event("CustomOrderResponse"),
-	CustomOrderAcceptedEvent = Network.Event("CustomOrderAccepted"),
 	CustomOrderDeliverEvent = Network.Event("CustomOrderDeliver"),
-	CustomOrderEndEvent = Network.Event("CustomOrderEnd"),
 	CustomOrderSayEvent = Network.Event("CustomOrderSay"),
 
 	-- (player, order, payout, variation, firstVisit, funnelId) once an order is put to the player
@@ -311,7 +304,7 @@ local function buildSavedOrder(record, phase: string)
 		Value = order.Value,
 		Quote = order.Quote,
 		Seconds = order.Seconds,
-		SecondsLeft = if phase == PHASE_ACCEPTED
+		SecondsLeft = if phase == CustomOrderNpc.PHASES.Accepted
 			then math.max(record.deadline - workspace:GetServerTimeNow(), 0)
 			else nil,
 		TierIndex = order.TierIndex,
@@ -327,6 +320,24 @@ function CustomOrderNpcManager:SaveActiveOrder(player: Player, record, phase: st
 	PlayerDataManager:SetPlayerDataKey(player, "ActiveCustomOrder", buildSavedOrder(record, phase))
 end
 
+-- Mirrors the live order onto the rig, so every client draws the card rather than just its owner. A nil phase takes it down.
+function CustomOrderNpcManager:_publishOrder(record, phase: string?, payout: number?, bonus: number?)
+	local order = record.order
+
+	record.npc:SetAttribute(
+		CustomOrderNpc.ORDER_ATTRIBUTE,
+		if phase
+			then HttpService:JSONEncode({
+				Phase = phase,
+				Ingredients = order.Ingredients,
+				Payout = payout,
+				Bonus = bonus,
+				Deadline = record.deadline,
+			})
+			else nil
+	)
+end
+
 -- Restamps the banked clock against the outgoing profile, so an order carries the time it actually had
 -- left rather than the time it had when it was struck. Runs against the final save, so it must not
 -- yield -- it mutates `data` in place instead of going through SetPlayerDataKey.
@@ -335,8 +346,8 @@ function CustomOrderNpcManager:SaveActiveOrderOnLastSave(player: Player, data)
 		-- Only a visit still owed something comes back. One that's eating or walking off is finished,
 		-- and one whose offer was already answered either way has had its outcome recorded
 		local phase = if record.awaitingDelivery
-			then PHASE_ACCEPTED
-			elseif record.offerPending then PHASE_PENDING
+			then CustomOrderNpc.PHASES.Accepted
+			elseif record.offerPending then CustomOrderNpc.PHASES.Pending
 			else nil
 		if not phase then
 			continue
@@ -613,11 +624,11 @@ function CustomOrderNpcManager:_offerOrder(player: Player, npc: Model, record)
 	record.offerResponse = nil
 
 	-- Banked as the card goes up, so an unanswered offer is still theirs to answer on the next join
-	self:SaveActiveOrder(player, record, PHASE_PENDING)
+	self:SaveActiveOrder(player, record, CustomOrderNpc.PHASES.Pending)
 
 	StatsManager:RecordCustomOrderOffered(player)
 	self.OnCustomOrderOffered:Fire(player, order, payout, record.variation, record.firstVisit, record.funnelId)
-	self.CustomOrderShowEvent:FireClient(player, npc, order.Ingredients, payout, bonus)
+	self:_publishOrder(record, CustomOrderNpc.PHASES.Pending, payout, bonus)
 
 	-- The rest of the introduction, tied to the offer so it lands with the card and clock it describes
 	if record.firstVisit then
@@ -736,7 +747,13 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 
 	local point = NpcRig.RandomPointOn(spawnPart, self._rng)
 	npc:PivotTo(CFrame.lookAt(point + Vector3.new(0, 3, 0), standPosition))
+
+	-- Stamped before it lands, so it arrives with the rig rather than a frame behind it
+	npc:SetAttribute(Structures.OWNER_ATTRIBUTE, player.UserId)
 	npc.Parent = workspace
+
+	-- Tagged after, so a client's tag hook can trust the owner stamp is already on
+	npc:AddTag(CustomOrderNpc.TAG)
 
 	-- Server-driven movement, so hand the root to the server rather than a nearby client.
 	local rootPart = npc:FindFirstChild("HumanoidRootPart")
@@ -744,10 +761,9 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 		rootPart:SetNetworkOwner(nil)
 	end
 
-	-- A frame between parenting the rig and naming it over a remote. Fired in the same frame the two
-	-- go out together, and a client the model hasn't reached yet decodes the argument as nil and
-	-- silently never builds the billboards. The sell customer never hits this only because it fires
-	-- nothing until after its walk
+	-- A frame between parenting the rig and naming it over a remote. Fired in the same frame the two go
+	-- out together, and a client the model hasn't reached yet decodes the argument as nil and silently
+	-- drops the opening line. The billboards ride the tag, so only the bubble is at stake
 	task.wait()
 
 	if npc.Parent == nil then
@@ -773,17 +789,17 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 		self:_notifyArrived(player, firstVisit, saved ~= nil)
 	end
 
-	-- The opening line rides along, so the client doesn't have to work out which of the three this is
+	-- Picked here, so the client doesn't have to work out which of the three openings this is
 	local greeting = if saved
 		then "CustomNPCReturned"
 		elseif inspecting then "CustomNPCInspecting"
 		else "CustomNPCArrived"
 
-	self.CustomOrderArriveEvent:FireAllClients(npc, inspecting, greeting)
+	self.CustomOrderSayEvent:FireAllClients(npc, greeting)
 
 	-- An accepted restore has already been to the stand, so it walks straight to where it waits rather
 	-- than queueing up to be served again. _runAcceptedOrder below is what takes it there
-	if not (saved and saved.Phase == PHASE_ACCEPTED) then
+	if not (saved and saved.Phase == CustomOrderNpc.PHASES.Accepted) then
 		NpcRig.WalkTo(humanoid, standPosition)
 	end
 
@@ -813,7 +829,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 
 	-- An accepted order re-enters at the deal. Re-asking would double-count CustomOrdersOffered and
 	-- re-fire the funnel for a question they have already answered
-	if saved and saved.Phase == PHASE_ACCEPTED then
+	if saved and saved.Phase == CustomOrderNpc.PHASES.Accepted then
 		-- Restamped off what was banked rather than off the old deadline, so time offline never ran it down
 		record.deadline = workspace:GetServerTimeNow() + (saved.SecondsLeft or 0)
 		return self:_runAcceptedOrder(player, npc, record, humanoid, spawnPart, standPart)
@@ -824,7 +840,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 			return
 		end
 
-		self.CustomOrderEndEvent:FireAllClients(npc)
+		self:_publishOrder(record, nil)
 
 		-- Ignored and turned down are different things, so they leave on different lines
 		local ignored = record.offerResponse == nil
@@ -865,14 +881,12 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 	record.awaitingDelivery = true
 
 	-- Rebanked over the pending one, now that there is a clock on it worth coming back to
-	self:SaveActiveOrder(player, record, PHASE_ACCEPTED)
+	self:SaveActiveOrder(player, record, CustomOrderNpc.PHASES.Accepted)
+	self:_publishOrder(record, CustomOrderNpc.PHASES.Accepted)
 
 	-- It has stepped aside, so holding a lane would block the sell customers behind it
 	NpcRig.ReleaseSlot(player, record.slot)
 	record.slot = nil
-
-	-- Owner only, as the offer frame was. The recipe rides along, since a restored order re-enters past the offer
-	self.CustomOrderAcceptedEvent:FireClient(player, npc, record.deadline, order.Ingredients)
 
 	NpcRig.WalkTo(humanoid, self:_getWaitPosition(spawnPart, standPart))
 
@@ -891,7 +905,7 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 		return
 	end
 
-	self.CustomOrderEndEvent:FireAllClients(npc)
+	self:_publishOrder(record, nil)
 
 	if not delivered then
 		self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCExpired")
