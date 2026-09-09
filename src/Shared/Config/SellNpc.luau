@@ -97,4 +97,18 @@ SellNpc.NPC_POOL_SIZE = 30
 SellNpc.FADE_IN_DURATION = 0.4
 SellNpc.FADE_OUT_DURATION = 0.4
 
+-- The tag a live customer wears, so a client that streams one in finds it without a remote
+SellNpc.TAG = "SellCustomer"
+
+-- The whole live visit as one JSON blob. On the rig, so a client that reaches it part-way through redraws it
+SellNpc.VISIT_ATTRIBUTE = "SellVisit"
+
+-- How far a visit has got, and what the rig publishes. Shared, so the manager and the controller can't drift
+SellNpc.PHASES = {
+	Arrived = "Arrived",
+	Deciding = "Deciding",
+	Offering = "Offering",
+	Settled = "Settled",
+}
+
 return SellNpc

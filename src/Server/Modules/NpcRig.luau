@@ -145,6 +145,9 @@ function NpcRig.Release(npc: Model)
 	npc:RemoveTag(CustomOrderNpc.TAG)
 	npc:SetAttribute(CustomOrderNpc.ORDER_ATTRIBUTE, nil)
 
+	npc:RemoveTag(SellNpc.TAG)
+	npc:SetAttribute(SellNpc.VISIT_ATTRIBUTE, nil)
+
 	local humanoid = npc:FindFirstChildOfClass("Humanoid")
 	humanoid:ApplyDescriptionReset(NpcRig._defaultDescription)
 

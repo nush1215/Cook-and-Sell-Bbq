@@ -2,6 +2,7 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 
 -- Packages
@@ -19,6 +20,7 @@ local Network = require(Shared.Network)
 local Colors = require(Shared.Colors)
 local StickModel = require(Shared.StickModel)
 local RandomUtil = require(Shared.RandomUtil)
+local Structures = require(Shared.Config.Structures)
 local SellNpc = require(Shared.Config.SellNpc)
 local RichNpc = require(Shared.Config.RichNpc)
 local CheckingNpc = require(Shared.Config.CheckingNpc)
@@ -67,11 +69,6 @@ local SoundManager
 
 -- Sends customer NPCs to a base's sell stand: one visit thread per placed skewer, retrying until it sells
 local SellNpcManager = {
-	NpcDecideEvent = Network.Event("NpcDecide"),
-	NpcRichArriveEvent = Network.Event("NpcRichArrive"),
-	NpcCheckingArriveEvent = Network.Event("NpcCheckingArrive"),
-	NpcOfferEvent = Network.Event("NpcOffer"),
-	NpcOfferEndEvent = Network.Event("NpcOfferEnd"),
 	NpcOfferResponseEvent = Network.Event("NpcOfferResponse"),
 	NpcSayEvent = Network.Event("NpcSay"),
 
@@ -102,6 +99,9 @@ end
 function SellNpcManager:_acquireRichNpc(): Model
 	local npc = RandomUtil.GetRandomFromArray(RichNpcFolder:GetChildren(), nil, self._rng):Clone()
 	CollisionManager:SetModelGroup(npc, CollisionManager.NPC)
+
+	-- Whole or not at all: under default mode the tag lands on the client long before the head the billboards hang off
+	npc.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
 
 	RichUiTemplate:Clone().Parent = npc.Head
 	RichParticlesTemplate:Clone().Parent = npc.Torso
@@ -153,6 +153,9 @@ function SellNpcManager:_spawnCustomer(player: Player): boolean
 
 	local point = NpcRig.RandomPointOn(spawnPart, self._rng)
 	npc:PivotTo(CFrame.lookAt(point + Vector3.new(0, 3, 0), standPosition))
+
+	-- Stamped before it lands, so it arrives with the rig rather than a frame behind it
+	npc:SetAttribute(Structures.OWNER_ATTRIBUTE, player.UserId)
 	npc.Parent = workspace
 
 	-- Server-driven movement, so hand the root to the server rather than a nearby client.
@@ -204,13 +207,14 @@ function SellNpcManager:_serveStandSkewer(
 	local duration = self._rng:NextNumber(SellNpc.DECIDE_DURATION_MIN, SellNpc.DECIDE_DURATION_MAX)
 	record.interested = interested
 
-	-- Sent once -- the client holds the variant per-NPC and later beats fire NpcSay with a bare category
-	self.NpcDecideEvent:FireAllClients(
-		npc,
-		interested,
-		workspace:GetServerTimeNow() + duration,
-		StickModel.GetDialogueVariant(taken)
-	)
+	-- Held on the record, since every later beat's lines are picked off the skewer this customer was shown
+	record.dialogueVariant = StickModel.GetDialogueVariant(taken)
+
+	-- Clients pace their own flip off the landing, so one that arrives late still settles on the same verdict
+	self:_publishVisit(record, SellNpc.PHASES.Deciding, {
+		Interested = interested,
+		DecideAt = workspace:GetServerTimeNow() + duration,
+	})
 	task.wait(duration)
 
 	-- The player may have left during the decide pause.
@@ -244,6 +248,20 @@ function SellNpcManager:_serveStandSkewer(
 	NpcRig.WalkTo(humanoid, spawnPart.Position)
 	self:_despawnNpc(player, record)
 	return false
+end
+
+-- Mirrors the live visit onto the rig, so a client that reaches the customer part-way through draws it
+-- rather than waiting on a beat it already missed. NpcRig.Release is what takes it back down.
+function SellNpcManager:_publishVisit(record, phase: string, fields)
+	local visit = fields or {}
+	visit.Phase = phase
+	visit.Prefix = if record.isRich then "RichNPC" else "NPC"
+	visit.Variant = record.dialogueVariant
+
+	record.npc:SetAttribute(SellNpc.VISIT_ATTRIBUTE, HttpService:JSONEncode(visit))
+
+	-- Tagged after the stamp, so a client's tag hook finds the visit already on the rig
+	record.npc:AddTag(SellNpc.TAG)
 end
 
 -- Removes one spawned customer: clears its skewer and tool, fades the rig out, pools or destroys it.
@@ -478,7 +496,7 @@ function SellNpcManager:_negotiateSale(
 		-- The boosted figure, since that's what lands in their balance. Re-derived, so a counter moves it
 		local payout = CurrencyManager:GetBoostedAmount(player, offer)
 		local bonus = math.round((payout / value - 1) * 100)
-		self.NpcOfferEvent:FireClient(player, npc, payout, count, bonus)
+		self:_publishVisit(record, SellNpc.PHASES.Offering, { Payout = payout, Count = count, Bonus = bonus })
 
 		-- Never waits forever -- an ignored offer would stall every later customer
 		local deadline = os.clock() + config.OFFER_TIMEOUT
@@ -567,7 +585,7 @@ function SellNpcManager:_negotiateSale(
 		})
 	end
 
-	self.NpcOfferEndEvent:FireClient(player, npc)
+	self:_publishVisit(record, SellNpc.PHASES.Settled)
 
 	if not accepted then
 		-- No deal: the skewers go back on the stand and the customer leaves, so another comes for them.
@@ -793,6 +811,9 @@ function SellNpcManager:_spawnRichCustomer(player: Player, firstVisit: boolean?)
 
 	local point = NpcRig.RandomPointOn(spawnPart, self._rng)
 	npc:PivotTo(CFrame.lookAt(point + Vector3.new(0, 3, 0), standPosition))
+
+	-- Stamped before it lands, so it arrives with the rig rather than a frame behind it
+	npc:SetAttribute(Structures.OWNER_ATTRIBUTE, player.UserId)
 	npc.Parent = workspace
 
 	-- Server-driven movement, so hand the root to the server rather than a nearby client.
@@ -838,8 +859,10 @@ function SellNpcManager:_spawnRichCustomer(player: Player, firstVisit: boolean?)
 
 	NpcRig.PlayAnimation(record, "Inspect", self._rng)
 
-	-- No decide beat -- a walk-off would burn a long roll. The client is still told, since that builds its UI
-	self.NpcRichArriveEvent:FireAllClients(npc)
+	-- No decide beat -- a walk-off would burn a long roll. The visit is still published, since that is what
+	-- builds the billboards its offer goes up on
+	self:_publishVisit(record, SellNpc.PHASES.Arrived)
+	self.NpcSayEvent:FireAllClients(npc, "RichNPCArrived")
 	task.wait(self._rng:NextNumber(RichNpc.APPRAISE_DURATION_MIN, RichNpc.APPRAISE_DURATION_MAX))
 
 	if npc.Parent == nil then
@@ -1010,6 +1033,9 @@ function SellNpcManager:_spawnCheckingCustomer(player: Player)
 
 	local point = NpcRig.RandomPointOn(spawnPart, self._rng)
 	npc:PivotTo(CFrame.lookAt(point + Vector3.new(0, 3, 0), standPosition))
+
+	-- Stamped before it lands, so it arrives with the rig rather than a frame behind it
+	npc:SetAttribute(Structures.OWNER_ATTRIBUTE, player.UserId)
 	npc.Parent = workspace
 
 	-- Server-driven movement, so hand the root to the server rather than a nearby client.
@@ -1018,14 +1044,24 @@ function SellNpcManager:_spawnCheckingCustomer(player: Player)
 		rootPart:SetNetworkOwner(nil)
 	end
 
+	-- Published as it lands, so a client that reaches it later builds its billboards off the rig
+	self:_publishVisit(record, SellNpc.PHASES.Arrived)
+
+	-- A frame between parenting the rig and naming it over a remote. Fired in the same frame the two go
+	-- out together, and a client the model hasn't reached yet decodes the argument as nil and drops the line
+	task.wait()
+
+	if npc.Parent == nil then
+		return
+	end
+
 	-- The whole point of the visit: they're at the grill or away from the stand, so the bubble alone would miss
 	NotificationManager:NotifyNormal(player, {
 		Text = "A customer is asking if you have any BBQ for sale",
 		Duration = 3,
 	})
 
-	-- The client builds its billboards and speaks the arrival line, as a rich customer's arrival does
-	self.NpcCheckingArriveEvent:FireAllClients(npc)
+	self.NpcSayEvent:FireAllClients(npc, "NPCCheckingArrived")
 
 	-- Emitted off the rig rather than through the toast, so it lands with the bubble and carries a direction
 	SoundManager:PlaySound("All", "CustomerChecking", npc:GetPivot())

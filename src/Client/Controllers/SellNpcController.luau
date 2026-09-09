@@ -1,7 +1,10 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local CollectionService = game:GetService("CollectionService")
 local TweenService = game:GetService("TweenService")
 local ContentProvider = game:GetService("ContentProvider")
+local HttpService = game:GetService("HttpService")
+local Players = game:GetService("Players")
 
 -- Packages
 local Packages = ReplicatedStorage.Packages
@@ -13,6 +16,8 @@ local Network = require(Shared.Network)
 local GuiUtil = require(Shared.GuiUtil)
 local RandomUtil = require(Shared.RandomUtil)
 local Animations = require(Shared.Animations)
+local Structures = require(Shared.Config.Structures)
+local SellNpc = require(Shared.Config.SellNpc)
 local NpcDialogue = require(Shared.Config.NpcDialogue)
 
 -- Modules
@@ -22,22 +27,23 @@ local NpcBillboard = require(Modules.NpcBillboard)
 -- Controllers
 local UIController
 
+--
+local LocalPlayer = Players.LocalPlayer
+
 -- The colour the offered amount is shown in on the offer frame, and the bonus badge beside it.
 local OFFER_AMOUNT_COLOR = "#55ff00"
 local OFFER_BONUS_COLOR = "#ffd400"
 
+-- Seconds the landed verdict is left up before it fades, so it reads before the bubble takes over.
+local INTERESTED_FADE_DELAY = 2
+
 -- Once a customer is interested the chat bubble carries the message, so the decide frame fades itself out.
 local INTERESTED_FADE_TWEEN_INFO = TweenInfo.new(1, Enum.EasingStyle.Sine)
 
--- Draws a sell-stand customer's billboards: the decide flip, its dialogue bubbles, and the offer frame the owner answers on.
+-- Draws a sell-stand customer's billboards: the decide flip, its dialogue bubbles, and the offer frame the owner answers on. The rig publishes its own visit, so a client that reaches a customer part-way through draws it rather than waiting on a beat it already missed.
 
 --
 local SellNpcController = {
-	NpcDecideEvent = Network.Event("NpcDecide"),
-	NpcRichArriveEvent = Network.Event("NpcRichArrive"),
-	NpcCheckingArriveEvent = Network.Event("NpcCheckingArrive"),
-	NpcOfferEvent = Network.Event("NpcOffer"),
-	NpcOfferEndEvent = Network.Event("NpcOfferEnd"),
 	NpcOfferResponseEvent = Network.Event("NpcOfferResponse"),
 	NpcSayEvent = Network.Event("NpcSay"),
 
@@ -47,10 +53,15 @@ local SellNpcController = {
 	OnOfferEnded = Signal.new(),
 
 	_active = {}, -- [npc] = { trove, running, decideFrame, offerFrame, speak, ... } -- one live set of billboards per NPC
+	-- [npc] = true while its billboards are being built. Attach waits on the rig's Head, so a beat sent
+	-- behind the visit can reach this client before the state does
+	_attaching = {},
 }
 
 -- Tears down the NPC's billboards, springs and flip loop.
 function SellNpcController:_cleanup(npc: Model)
+	self._attaching[npc] = nil
+
 	local state = self._active[npc]
 	if not state then
 		return
@@ -58,19 +69,56 @@ function SellNpcController:_cleanup(npc: Model)
 
 	self._active[npc] = nil
 	state.running = false
+
+	-- A customer torn down mid-haggle still owes the beat: whoever is watching the offer needs it ended
+	if state.offerShown then
+		self:_hideOffer(state, npc)
+	end
+
 	state.trove:Destroy()
 end
 
--- Builds a customer's billboards and dialogue state. Split from _playDecide, which a rich customer skips.
-function SellNpcController:_attachNpcBillboards(npc: Model, dialogueVariant: string?, dialoguePrefix: string)
-	local state = NpcBillboard.Attach(npc, "NPCUIAttachment", dialogueVariant, dialoguePrefix)
-	if not state then
-		return nil
+-- Builds a customer's billboards and dialogue state, then draws whatever visit the rig is already carrying.
+function SellNpcController:_attach(npc: Model)
+	if self._active[npc] or self._attaching[npc] then
+		return
 	end
 
-	local decideUI, offerUI = state.billboards.DecideUI, state.billboards.OfferUI
-	state.decideFrame = decideUI.DecideFrame
-	state.offerFrame = offerUI.OfferFrame
+	-- Latched before the waits below, so the beats behind them know there's an attach coming
+	self._attaching[npc] = true
+
+	-- The rig is stamped before it is tagged, but its client copy can carry the tag ahead of the stamp
+	local encoded = npc:GetAttribute(SellNpc.VISIT_ATTRIBUTE)
+	while encoded == nil and npc.Parent do
+		task.wait()
+		encoded = npc:GetAttribute(SellNpc.VISIT_ATTRIBUTE)
+	end
+
+	-- Only empty once the rig has left the world, so there's nothing left to draw on
+	if not encoded then
+		self._attaching[npc] = nil
+		return
+	end
+
+	-- The prefix and the variant pick every line this customer speaks, so its lines need them up front
+	local visit = HttpService:JSONDecode(encoded)
+
+	local state = NpcBillboard.Attach(npc, "NPCUIAttachment", visit.Variant, visit.Prefix)
+	self._attaching[npc] = nil
+
+	if not state then
+		return
+	end
+
+	-- The rig can be pooled or destroyed while Attach waits on its Head, and the hooks below are
+	-- connected too late to have caught it -- so these billboards would sit in PlayerGui for good
+	if npc.Parent == nil then
+		state.trove:Destroy()
+		return
+	end
+
+	state.decideFrame = state.billboards.DecideUI.DecideFrame
+	state.offerFrame = state.billboards.OfferUI.OfferFrame
 
 	-- Enabled for life, their frames carrying visibility; both start hidden until their beat raises them
 	state.decideFrame.Visible = false
@@ -86,41 +134,55 @@ function SellNpcController:_attachNpcBillboards(npc: Model, dialogueVariant: str
 		self:_cleanup(npc)
 	end)
 
+	-- Read once, since a rig only ever serves the one customer it was stamped for
+	state.ownerUserId = npc:GetAttribute(Structures.OWNER_ATTRIBUTE)
+
 	self._active[npc] = state
-	return state
+
+	state.trove:Connect(npc:GetAttributeChangedSignal(SellNpc.VISIT_ATTRIBUTE), function()
+		self:_render(npc)
+	end)
+
+	-- Seeded as well as connected, so a customer already mid-visit when this client reached it draws now
+	self:_render(npc)
 end
 
--- Runs the decide flip, pacing off the time left so it decelerates onto `decideAt`.
-function SellNpcController:_playDecide(npc: Model, interested: boolean, decideAt: number, dialogueVariant: string)
-	if not npc then
-		return
+-- The customer's live set, waiting out an attach still in flight -- see _attaching.
+function SellNpcController:_awaitState(npc: Model)
+	while self._attaching[npc] do
+		task.wait()
 	end
 
-	-- A checking customer already has its billboards up, having arrived before there was a skewer to attach them for
-	local state = self._active[npc] or self:_attachNpcBillboards(npc, dialogueVariant, "NPC")
-	if not state then
-		return
-	end
+	return self._active[npc]
+end
 
-	-- The variant it couldn't be given on arrival, read live by speak on every beat from here
-	state.dialogueVariant = dialogueVariant
-
-	local trove = state.trove
+-- Runs the decide flip, pacing off the time left so it decelerates onto the published landing.
+function SellNpcController:_playDecide(state, visit)
 	local decideFrame = state.decideFrame
 
+	-- A client that reached this customer after the verdict landed gets the result without the flip. An
+	-- interested one has faded its frame out by then, so a refusal is all that's left standing
+	if workspace:GetServerTimeNow() >= visit.DecideAt then
+		if not visit.Interested then
+			NpcBillboard.ShowVerdict(decideFrame, false)
+		end
+		return
+	end
+
+	local trove = state.trove
 	state.speak("NPCDeciding")
 
 	task.spawn(function()
-		NpcBillboard.PlayDecide(state, decideFrame, interested, decideAt)
+		NpcBillboard.PlayDecide(state, decideFrame, visit.Interested, visit.DecideAt)
 		if not state.running then
 			return
 		end
 
-		state.speak(if interested then "NPCInterested" else "NPCNotInterested")
+		state.speak(if visit.Interested then "NPCInterested" else "NPCNotInterested")
 
 		-- The bubble carries the message from here, and the offer frame owns the billboard
-		if interested then
-			task.delay(2, function()
+		if visit.Interested then
+			task.delay(INTERESTED_FADE_DELAY, function()
 				if not state.running then
 					return
 				end
@@ -135,51 +197,21 @@ function SellNpcController:_playDecide(npc: Model, interested: boolean, decideAt
 	end)
 end
 
--- Sets a rich customer up on arrival: it runs no decide beat, so this only builds its billboards and entrance line.
-function SellNpcController:_showRichArrival(npc: Model)
-	if not npc or self._active[npc] then
-		return
-	end
-
-	-- No cook state: its haul mixes them, so its lines come from the plain RichNPC categories
-	local state = self:_attachNpcBillboards(npc, nil, "RichNPC")
-	if not state then
-		return
-	end
-
-	state.speak("RichNPCArrived")
-end
-
--- Sets a checking customer up on arrival: no skewer yet, so its billboards go up on the plain NPC lines.
-function SellNpcController:_showCheckingArrival(npc: Model)
-	if not npc or self._active[npc] then
-		return
-	end
-
-	-- No cook state to name: it's asking whether there's anything at all, so the variant lands on the decide beat
-	local state = self:_attachNpcBillboards(npc, nil, "NPC")
-	if not state then
-		return
-	end
-
-	state.speak("NPCCheckingArrived")
-end
-
--- Opens or updates the offer frame. Owner only, and `payout` is the boosted figure the sale actually banks.
-function SellNpcController:_showOffer(npc: Model, payout: number, count: number, bonus: number)
-	local state = self._active[npc]
-	if not state or not state.running then
+-- Opens or updates the offer frame. `Payout` is the boosted figure the sale actually banks; only its owner can answer it.
+function SellNpcController:_showOffer(state, npc: Model, visit)
+	-- Someone else's customer haggles in the background: the sale is theirs to answer, not this client's
+	if state.ownerUserId ~= LocalPlayer.UserId then
 		return
 	end
 
 	local offerFrame = state.offerFrame
 
 	-- From the cook state's own set, so a lowball on a burnt skewer says why; the last line is skipped
-	local amount = `<font color="{OFFER_AMOUNT_COLOR}">${GuiUtil.ConvertNumberWithSuffix(payout)}</font>`
+	local amount = `<font color="{OFFER_AMOUNT_COLOR}">${GuiUtil.ConvertNumberWithSuffix(visit.Payout)}</font>`
 
 	-- Only shown when there's something to show -- "[+0%]" says less than no badge at all
-	if bonus > 0 then
-		amount ..= ` <font color="{OFFER_BONUS_COLOR}">[+{bonus}%]</font>`
+	if visit.Bonus > 0 then
+		amount ..= ` <font color="{OFFER_BONUS_COLOR}">[+{visit.Bonus}%]</font>`
 	end
 
 	local category = `{state.dialoguePrefix}Offer`
@@ -191,7 +223,7 @@ function SellNpcController:_showOffer(npc: Model, payout: number, count: number,
 	title.RichText = true
 	title.Text = (line:gsub("{amount}", function()
 		return amount
-	end):gsub("{count}", tostring(count)))
+	end):gsub("{count}", tostring(visit.Count)))
 
 	local buttons = offerFrame.Buttons
 	local accept, decline = buttons.Accept, buttons.Decline
@@ -220,6 +252,7 @@ function SellNpcController:_showOffer(npc: Model, payout: number, count: number,
 	end
 
 	state.answered = false
+	state.offerShown = true
 	accept.Active, decline.Active = true, true
 	offerFrame.Visible = true
 
@@ -227,16 +260,48 @@ function SellNpcController:_showOffer(npc: Model, payout: number, count: number,
 end
 
 -- Takes the offer frame down once the haggle is over, however it ended.
-function SellNpcController:_hideOffer(npc: Model)
-	local state = self._active[npc]
-	if not state then
-		return
-	end
-
+function SellNpcController:_hideOffer(state, npc: Model)
 	state.answered = true
+	state.offerShown = false
 	state.offerFrame.Visible = false
 
 	self.OnOfferEnded:Fire(npc)
+end
+
+-- Draws the customer against the visit it publishes, so every client sees the same exchange it does.
+function SellNpcController:_render(npc: Model)
+	local state = self._active[npc]
+
+	local encoded = npc:GetAttribute(SellNpc.VISIT_ATTRIBUTE)
+
+	-- On the blob, not the phase: a counter republishes the same phase at a new price, and that has to land
+	if encoded == state.encoded then
+		return
+	end
+	state.encoded = encoded
+
+	-- Empty once the rig is pooled, which takes the offer down with the customer it belonged to
+	local visit = if encoded then HttpService:JSONDecode(encoded) else nil
+	local phase = visit and visit.Phase
+
+	local previousPhase = state.phase
+	state.phase = phase
+
+	-- Read live: the variant only lands with the skewer the customer is shown, part-way into the visit
+	if visit then
+		state.dialogueVariant = visit.Variant
+	end
+
+	if phase == SellNpc.PHASES.Deciding then
+		-- On the edge, not the state: a re-render mustn't start a second flip over the one already running
+		if previousPhase ~= SellNpc.PHASES.Deciding then
+			self:_playDecide(state, visit)
+		end
+	elseif phase == SellNpc.PHASES.Offering then
+		self:_showOffer(state, npc, visit)
+	elseif state.offerShown then
+		self:_hideOffer(state, npc)
+	end
 end
 
 -- Preloads every customer animation so the first eat or inspect doesn't hitch. Yields, so it's spawned.
@@ -267,30 +332,23 @@ function SellNpcController:OnStart()
 		self:_preloadAnimations()
 	end)
 
-	self.NpcDecideEvent:OnClientEvent(function(npc: Model, interested: boolean, decideAt: number, dialogueVariant: string)
-		self:_playDecide(npc, interested, decideAt, dialogueVariant)
+	-- A customer on any base wires itself up here, whether it landed before this client or streams in later
+	CollectionService:GetInstanceAddedSignal(SellNpc.TAG):Connect(function(npc: Model)
+		self:_attach(npc)
 	end)
 
-	self.NpcRichArriveEvent:OnClientEvent(function(npc: Model)
-		self:_showRichArrival(npc)
-	end)
+	-- _attach waits on the rig's visit stamp, so the sweep is kept off this thread
+	for _, npc in CollectionService:GetTagged(SellNpc.TAG) do
+		task.spawn(function()
+			self:_attach(npc)
+		end)
+	end
 
-	self.NpcCheckingArriveEvent:OnClientEvent(function(npc: Model)
-		self:_showCheckingArrival(npc)
-	end)
-
-	self.NpcOfferEvent:OnClientEvent(function(npc: Model, payout: number, count: number, bonus: number)
-		self:_showOffer(npc, payout, count, bonus)
-	end)
-
-	self.NpcOfferEndEvent:OnClientEvent(function(npc: Model)
-		self:_hideOffer(npc)
-	end)
-
-	-- The server drives the later dialogue beats, since it owns their timing
+	-- The server drives the dialogue beats, since it owns their timing
 	self.NpcSayEvent:OnClientEvent(function(npc: Model, category: string)
-		local state = self._active[npc]
-		if state and state.running and state.speak then
+		-- The arrival lines ride this too, and they go out a frame after the rig lands -- so one can beat the attach
+		local state = self:_awaitState(npc)
+		if state and state.running then
 			state.speak(category)
 		end
 	end)

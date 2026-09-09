@@ -121,6 +121,15 @@ function CustomOrderNpcController:_attach(npc: Model)
 
 	-- No variant: it arrives holding nothing, so its lines have no cook state to react to until the hand-over
 	local state = NpcBillboard.Attach(npc, "CustomOrderNPCUIAttachment", nil, "CustomNPC")
+
+	-- The rig is stamped before it lands, but its client copy can carry the tag before the stamp -- and
+	-- an atomic rig arrives with its head, so Attach no longer yields long enough to cover that gap
+	local ownerUserId = npc:GetAttribute(Structures.OWNER_ATTRIBUTE)
+	while ownerUserId == nil and npc.Parent do
+		task.wait()
+		ownerUserId = npc:GetAttribute(Structures.OWNER_ATTRIBUTE)
+	end
+
 	self._attaching[npc] = nil
 
 	-- Only empty once the rig has left the world, so there's nothing left to draw on
@@ -158,8 +167,8 @@ function CustomOrderNpcController:_attach(npc: Model)
 		self:_cleanup(npc)
 	end)
 
-	-- Read once, since a rig is stamped before it lands and only ever serves the one customer
-	state.ownerUserId = npc:GetAttribute(Structures.OWNER_ATTRIBUTE)
+	-- Read once, since a rig only ever serves the one customer it was stamped for
+	state.ownerUserId = ownerUserId
 
 	self._active[npc] = state
 
@@ -264,6 +273,12 @@ function CustomOrderNpcController:_playInspect(npc: Model, decideAt: number)
 	end
 
 	state.trove:Add(decideState.trove)
+
+	-- The flip loop reads this set, not the customer's, so a teardown mid-inspect has to stop it here or
+	-- it spins on destroyed billboards until the verdict it was pacing onto comes round
+	decideState.trove:Add(function()
+		decideState.running = false
+	end)
 
 	-- Only the flip is wanted off this template, so its offer frame never comes up
 	decideState.billboards.OfferUI.OfferFrame.Visible = false

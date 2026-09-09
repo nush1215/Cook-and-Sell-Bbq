@@ -164,6 +164,13 @@ function NpcBillboard.Attach(npc: Model, templateName: string, dialogueVariant: 
 	return state
 end
 
+-- Paints `decideFrame` with a verdict that has already landed and raises it, for a client that reached the customer after its flip was over.
+function NpcBillboard.ShowVerdict(decideFrame: GuiObject, interested: boolean)
+	local title = decideFrame.Title
+	applyVerdict(title, title.UIStroke, if interested then INTERESTED else NOT_INTERESTED)
+	decideFrame.Visible = true
+end
+
 -- Runs the Interested/Not Interested flip on `decideFrame`, pacing off the time left so it decelerates onto `decideAt` and lands on the real verdict. Yields.
 function NpcBillboard.PlayDecide(state, decideFrame: GuiObject, interested: boolean, decideAt: number)
 	local title = decideFrame.Title
