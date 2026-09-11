@@ -201,6 +201,21 @@ Structures.Data = {
 		RestockAmount = NumberRange.new(3, 5),
 		RobuxProductId = 3710074872,
 	},
+
+	--------------------- [[[ HUTS ]]] ---------------------
+	{
+		Id = "RepairedHut",
+		Name = "Worker Hut",
+		Category = "Huts",
+		-- Never sold -- it's handed over by the repair, and Restockable = false keeps it out of the shop
+		Cost = 0,
+		Description = "Home to your Workers! Repair it once and it moves like anything else you build",
+		Icon = "",
+		TextColor = Color3.fromRGB(200, 150, 90),
+		StrokeColor = Color3.fromRGB(58, 43, 25),
+		Rarity = "Common",
+		Restockable = false,
+	},
 }
 
 -- Made by the base rather than authored, so adding a base needs nothing done to it

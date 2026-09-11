@@ -41,6 +41,9 @@ local HeldItem = Component.new({
 	Ancestors = { workspace },
 })
 
+-- On the carried model rather than the tool, since the model lives in workspace and not under the character
+HeldItem.MODEL_TAG = "HeldItemModel"
+
 -- Resolves a held tool's display model from its attributes, so every client draws the same visual.
 local function buildModel(tool: Tool): Model?
 	if tool:GetAttribute("FilledStickUid") then
@@ -111,6 +114,8 @@ function HeldItem:Start()
 		end
 	end
 
+	-- Tagged so anything hiding the player carrying it can find it too
+	model:AddTag(HeldItem.MODEL_TAG)
 	model.Parent = workspace
 
 	-- Only a cooked skewer gets a value readout; a raw pull carries no flag and reads as never lit. Seeded by uid, so every watcher lands on the same figure

@@ -11,6 +11,7 @@ local StarterPack = require(script.Parent.StarterPack)
 local BuxPacks = require(script.Parent.BuxPacks)
 local Ingredients = require(script.Parent.Ingredients)
 local Structures = require(script.Parent.Structures)
+local EmployeeHut = require(script.Parent.EmployeeHut)
 
 --
 export type Product = {
@@ -88,6 +89,26 @@ for index, productId in Plots.RobuxProductIds do
 			-- Lazy require to avoid pulling BaseManager's dependency graph at module load.
 			local BaseManager = require(ServerScriptService.Server.Managers.BaseManager)
 			BaseManager:GrantPlotFromProduct(player)
+		end,
+	})
+end
+
+-- One per hut slot sold for Robux. The slot only sets the price -- every one buys the player's next slot, so a receipt can't skip or repeat one.
+for slot, productId in EmployeeHut.SLOT_PRODUCT_IDS do
+	table.insert(Products.Data, {
+		Id = EmployeeHut.GetSlotProductStringId(slot),
+		Name = `Worker Slot {slot}`,
+		Type = "Core",
+		PurchaseOnce = false,
+		ProductId = productId,
+		Callback = function(player: Player)
+			if RunService:IsClient() then
+				return
+			end
+
+			-- Lazy require, to avoid pulling EmployeeHutManager's dependency graph at module load
+			local EmployeeHutManager = require(ServerScriptService.Server.Managers.EmployeeHutManager)
+			EmployeeHutManager:PurchaseHutSlot(player, slot, true)
 		end,
 	})
 end

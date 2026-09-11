@@ -24,6 +24,7 @@ local Structures = require(Shared.Config.Structures)
 local SellNpc = require(Shared.Config.SellNpc)
 local RichNpc = require(Shared.Config.RichNpc)
 local CheckingNpc = require(Shared.Config.CheckingNpc)
+local Employees = require(Shared.Config.Employees)
 local CookStates = require(Shared.Config.CookStates)
 local EarlyBoost = require(Shared.Config.EarlyBoost)
 
@@ -333,8 +334,36 @@ function SellNpcManager:_eatSkewerIngredients(skewer: Model, duration: number)
 	end
 end
 
--- Records the owner's answer; finding the NPC among their own customers is the authority check.
-function SellNpcManager:AnswerOffer(player: Player, npc: Model, accepted: boolean)
+-- A customer waiting on an answer that no employee has taken on, for a seller looking for work. Carries the live negotiation state, so the caller can weigh a push without recomputing the price.
+function SellNpcManager:GetPendingOffer(player: Player, employeeUid: string?)
+	for _, record in self._npcs[player] or {} do
+		if not record.offerPending then
+			continue
+		end
+
+		-- Another seller is already on this one; a second would race it to the answer
+		local servedBy = record.npc:GetAttribute(Employees.SERVED_BY_ATTRIBUTE)
+		if servedBy == nil or servedBy == employeeUid then
+			return record
+		end
+	end
+
+	return nil
+end
+
+-- One customer's live record, or nil once they've settled and left. How a seller notices the exchange ended.
+function SellNpcManager:GetCustomerRecord(player: Player, npc: Model)
+	for _, record in self._npcs[player] or {} do
+		if record.npc == npc then
+			return record
+		end
+	end
+
+	return nil
+end
+
+-- Records the owner's answer; finding the NPC among their own customers is the authority check. `employeeUid` marks an answer their seller gave for them, which is judged differently from one they gave themselves.
+function SellNpcManager:AnswerOffer(player: Player, npc: Model, accepted: boolean, employeeUid: string?)
 	local tracked = self._npcs[player]
 	if not tracked then
 		return
@@ -344,6 +373,7 @@ function SellNpcManager:AnswerOffer(player: Player, npc: Model, accepted: boolea
 		if record.npc == npc and record.offerPending then
 			record.offerPending = false
 			record.offerResponse = accepted == true
+			record.answeredByEmployee = employeeUid ~= nil
 			return
 		end
 	end
@@ -491,7 +521,19 @@ function SellNpcManager:_negotiateSale(
 
 	while true do
 		record.offerResponse = nil
+		record.answeredByEmployee = nil
 		record.offerPending = true
+
+		-- Mirrored onto the record, since these are locals and a seller employee can't weigh a push without
+		-- them. The published attribute carries only what a client draws, which isn't enough to decide on
+		record.offer = offer
+		record.value = value
+		record.counterChance = counterChance
+		record.counterCap = counterCap
+		record.counterRounds = counterRounds
+		record.maxCounterRounds = config.MAX_COUNTER_ROUNDS
+		record.counterIncreaseMin = config.COUNTER_INCREASE_MIN
+		record.counterIncreaseMax = config.COUNTER_INCREASE_MAX
 
 		-- The boosted figure, since that's what lands in their balance. Re-derived, so a counter moves it
 		local payout = CurrencyManager:GetBoostedAmount(player, offer)
@@ -599,8 +641,10 @@ function SellNpcManager:_negotiateSale(
 			if timedOut then "TimedOut" else "Declined"
 		)
 
-		-- Only a deliberate refusal counts: a lapse already cost them OFFER_TIMEOUT and wasn't a choice.
-		if not timedOut then
+		-- Only a deliberate refusal of their own counts. A lapse already cost them OFFER_TIMEOUT and wasn't a
+		-- choice; a seller pushing for a better price is doing the job it was hired for, and holding that
+		-- against them would price down every later offer and mark down their rating for someone else's call
+		if not timedOut and not record.answeredByEmployee then
 			self:RecordSaleRefusal(player)
 		end
 
@@ -667,13 +711,7 @@ function SellNpcManager:_negotiateSale(
 	})
 	self.NpcSayEvent:FireAllClients(npc, `{prefix}PlayerAccepted`)
 
-	-- A randomized spot, so finished customers scatter rather than lining up behind the stand
-	local backDir = (spawnPart.Position - standPosition).Unit
-	local sideDir = Vector3.new(-backDir.Z, 0, backDir.X) -- perpendicular, on the ground plane
-	local eatPosition = standPosition
-		+ backDir * self._rng:NextNumber(SellNpc.EAT_BACK_DISTANCE_MIN, SellNpc.EAT_BACK_DISTANCE_MAX)
-		+ sideDir * self._rng:NextNumber(-SellNpc.EAT_SPREAD, SellNpc.EAT_SPREAD)
-	NpcRig.WalkTo(humanoid, eatPosition)
+	NpcRig.WalkTo(humanoid, NpcRig.GetEatPosition(spawnPart, standPosition, self._rng))
 	if npc.Parent == nil then
 		return true
 	end
@@ -1309,7 +1347,12 @@ function SellNpcManager:OnStart()
 	NpcRig.BuildPool()
 
 	-- One skewer, one customer. The placement that first stocks the stand hands its visit to a rich one
-	SkewerStandManager.OnSkewerPlaced:Connect(function(player: Player, _record, count: number)
+	SkewerStandManager.OnSkewerPlaced:Connect(function(player: Player, _record, count: number, heldForOrder: boolean)
+		-- Held for the custom order customer walking over for it, so nobody else is sent to take it
+		if heldForOrder then
+			return
+		end
+
 		task.spawn(function()
 			if self:TrySendFirstRichVisit(player, count) then
 				return

@@ -34,7 +34,7 @@ return function(self)
 
 			-- Shut here rather than after AwaitGoal: the lever re-arms as the cycle settles, and a second pull would rewrite the roll the next beat points at
 			self.LeverLock = self:DisablePrompts({
-				leverHandle:FindFirstChildWhichIsA("ProximityPrompt"),
+				lever.RollAttachment:FindFirstChildWhichIsA("ProximityPrompt"),
 			}, function()
 				IngredientRollingController:RefreshInteractions()
 			end, { lever })

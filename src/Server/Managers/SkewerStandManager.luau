@@ -16,6 +16,7 @@ local PlayerDataManager
 local NotificationManager
 local BaseManager
 local StickManager
+local CustomOrderNpcManager
 
 -- The sell stand: what cooked skewers are on display, and the reads customers take them off it with.
 
@@ -27,7 +28,7 @@ local SkewerStandManager = {
 	PlaceSkewerEvent = Network.Event("PlaceSkewerOnStand"),
 	RemoveSkewerEvent = Network.Event("RemoveSkewerFromStand"),
 
-	-- (player, record, placedCount) on a place; the sell NPC system listens to send a customer
+	-- (player, record, placedCount, heldForOrder) on a place; the sell NPC system listens to send a customer for one not held for a custom order
 	OnSkewerPlaced = Signal.new(),
 
 	_listeners = {}, -- [player] = the SkewerStand data listener
@@ -98,6 +99,19 @@ function SkewerStandManager:PlaceSkewer(player: Player)
 		return
 	end
 
+	if not self:PlaceSkewerRecord(player, data, filled) then
+		self._toggling[player] = nil
+		return
+	end
+
+	-- The skewer moves onto the stand, so it leaves the inventory and the held visual with it
+	PlayerDataManager:SetPlayerDataKey(player, { "FilledSticks", filled.Uid }, nil)
+
+	self._toggling[player] = nil
+end
+
+-- Puts a skewer record on display and calls the customer. Takes the caller's already-awaited `data`, so an employee delivering one reaches the same checks as a player placing one.
+function SkewerStandManager:PlaceSkewerRecord(player: Player, data, filled): boolean
 	local skewers = data.SkewerStand
 	if #skewers >= self.MAX_SKEWERS then
 		NotificationManager:NotifyNormal(player, {
@@ -106,8 +120,7 @@ function SkewerStandManager:PlaceSkewer(player: Player)
 			Sound = "Reject",
 			Effect = "Error",
 		})
-		self._toggling[player] = nil
-		return
+		return false
 	end
 
 	-- Carried as-is, not stamped cooked -- laundering a raw skewer on the way to the stand is the thing to avoid
@@ -126,13 +139,13 @@ function SkewerStandManager:PlaceSkewer(player: Player)
 	table.insert(placed, record)
 	PlayerDataManager:SetPlayerDataKey(player, { "SkewerStand" }, placed)
 
-	-- The skewer moves onto the stand, so it leaves the inventory and the held visual with it
-	PlayerDataManager:SetPlayerDataKey(player, { "FilledSticks", filled.Uid }, nil)
+	-- Claimed in the frame it lands, so no customer can reach a BBQ a waiting custom order wants before its own customer does
+	local heldForOrder = CustomOrderNpcManager:ClaimStandSkewerForOrder(player, { record })
 
 	-- A skewer is now on display, so a customer should come for it
-	self.OnSkewerPlaced:Fire(player, record, #placed)
+	self.OnSkewerPlaced:Fire(player, record, #placed, heldForOrder)
 
-	self._toggling[player] = nil
+	return true
 end
 
 -- Takes the skewer at `index` back and hands it over. The index comes off a remote, so it's validated live.
@@ -184,7 +197,7 @@ function SkewerStandManager:RemoveSkewer(player: Player, index: number)
 	self._toggling[player] = nil
 end
 
--- How many skewers are on the player's stand, read without taking anything off it.
+-- How many skewers on the player's stand are up for sale, read without taking anything off it. One held for a custom order isn't.
 function SkewerStandManager:GetPlacedSkewerCount(player: Player): number
 	if not validatePlayer(player) then
 		return 0
@@ -195,11 +208,20 @@ function SkewerStandManager:GetPlacedSkewerCount(player: Player): number
 		return 0
 	end
 
-	return #data.SkewerStand
+	local heldUid = CustomOrderNpcManager:GetHeldStandSkewerUid(player)
+	local count = 0
+
+	for _, record in data.SkewerStand do
+		if heldUid == nil or record.Uid ~= heldUid then
+			count += 1
+		end
+	end
+
+	return count
 end
 
--- Takes the top skewer off for a customer, returning a copy. Hands nothing back to the player.
-function SkewerStandManager:TakeSkewer(player: Player)
+-- Takes a skewer off for a customer, returning a copy: the one with `uid` when named, else the top one not held for a custom order. Hands nothing back to the player.
+function SkewerStandManager:TakeSkewer(player: Player, uid: string?)
 	if not validatePlayer(player) then
 		return nil
 	end
@@ -210,12 +232,26 @@ function SkewerStandManager:TakeSkewer(player: Player)
 	end
 
 	local skewers = data.SkewerStand
-	if #skewers == 0 then
+	local heldUid = CustomOrderNpcManager:GetHeldStandSkewerUid(player)
+
+	-- Top down, so an ordinary customer still takes the newest one it's allowed to
+	local index = nil
+	for candidate = #skewers, 1, -1 do
+		local candidateUid = skewers[candidate].Uid
+		local takeable = if uid then candidateUid == uid else (heldUid == nil or candidateUid ~= heldUid)
+
+		if takeable then
+			index = candidate
+			break
+		end
+	end
+
+	if not index then
 		return nil
 	end
 
 	local placed = table.clone(skewers)
-	local record = table.remove(placed)
+	local record = table.remove(placed, index)
 	PlayerDataManager:SetPlayerDataKey(player, { "SkewerStand" }, placed)
 
 	return {
@@ -231,7 +267,7 @@ function SkewerStandManager:TakeSkewer(player: Player)
 	}
 end
 
--- Clears the whole stand for a rich customer, in one read and write so it can't be half-emptied.
+-- Clears the stand for a rich customer, in one read and write so it can't be half-emptied. One held for a custom order stays put.
 function SkewerStandManager:TakeAllSkewers(player: Player)
 	if not validatePlayer(player) then
 		return {}
@@ -242,8 +278,15 @@ function SkewerStandManager:TakeAllSkewers(player: Player)
 		return {}
 	end
 
-	local taken = {}
+	local heldUid = CustomOrderNpcManager:GetHeldStandSkewerUid(player)
+	local taken, kept = {}, {}
+
 	for _, record in data.SkewerStand do
+		if heldUid and record.Uid == heldUid then
+			table.insert(kept, record)
+			continue
+		end
+
 		table.insert(taken, {
 			Uid = record.Uid,
 			StickId = record.StickId,
@@ -256,7 +299,7 @@ function SkewerStandManager:TakeAllSkewers(player: Player)
 		})
 	end
 
-	PlayerDataManager:SetPlayerDataKey(player, { "SkewerStand" }, {})
+	PlayerDataManager:SetPlayerDataKey(player, { "SkewerStand" }, kept)
 
 	return taken
 end
@@ -277,6 +320,9 @@ function SkewerStandManager:ReturnSkewers(player: Player, records)
 		table.insert(placed, record)
 	end
 	PlayerDataManager:SetPlayerDataKey(player, { "SkewerStand" }, placed)
+
+	-- Locked the moment it's back, as a freshly placed one is, so the customer sent next can't walk off with it
+	CustomOrderNpcManager:ClaimStandSkewerForOrder(player, records)
 end
 
 -- Registers the player's data listener and renders, guarded against a double setup.
@@ -308,6 +354,7 @@ function SkewerStandManager:OnInit()
 	NotificationManager = require(script.Parent.NotificationManager)
 	BaseManager = require(script.Parent.BaseManager)
 	StickManager = require(script.Parent.StickManager)
+	CustomOrderNpcManager = require(script.Parent.CustomOrderNpcManager)
 end
 
 function SkewerStandManager:OnStart()

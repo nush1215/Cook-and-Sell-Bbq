@@ -13,11 +13,20 @@ local LocalPlayer = Players.LocalPlayer
 local DefaultPosInfluence = Vector3.new(0.15, 0.15, 0.15)
 local DefaultRotInfluence = Vector3.new(1, 1, 1)
 
+-- How a taken camera travels. Tweened rather than sprung: the hand-back has to know exactly when it has
+-- landed, and a tween says so where a spring only ever settles quietly
+local CAMERA_TWEEN = TweenInfo.new(0.45, Enum.EasingStyle.Quad, Enum.EasingDirection.Out)
+
 --
 local CameraController = {
 	Camera = Camera,
 	_cameraShaker = nil,
+	-- Where the camera sits before shake. The shaker below is the only thing that writes Camera.CFrame, so
+	-- anything wanting to move the camera moves this instead
 	_lockedCFrame = nil,
+	_cameraProxy = nil, -- what the tween drives, since the Camera itself is already spoken for
+	_cameraTween = nil, -- the one in flight, cancelled by whatever takes the camera next
+	_cameraToken = 0, -- bumped per take-over, so a restore still in flight can't release a camera taken again
 }
 
 --
@@ -45,34 +54,52 @@ function CameraController:ShakeCustom(
 	self._cameraShaker:ShakeOnce(magnitude, roughness, fadeInTime, fadeOutTime, posInfluence, rotInfluence)
 end
 
--- Locks the camera to a CFrame or BasePart, optionally tweened. Shake is then applied relative to it.
-function CameraController:SetCameraCFrameTo(cframe: CFrame | BasePart, animate: boolean, tweenInfo: TweenInfo?)
-	if typeof(cframe) == "Instance" then
-		cframe = cframe.CFrame
-	end
+-- Where the camera is right now, for a caller that means to hand it back there afterwards.
+function CameraController:GetCameraState(): { Type: Enum.CameraType, CFrame: CFrame }
+	return { Type = Camera.CameraType, CFrame = Camera.CFrame }
+end
 
-	tweenInfo = tweenInfo or TweenInfo.new(0.4, Enum.EasingStyle.Sine)
-	Camera.CameraType = Enum.CameraType.Scriptable
-
-	if animate then
-		TweenService:Create(Camera, tweenInfo, { CFrame = cframe }):Play()
-		task.delay(tweenInfo.Time, function()
-			if not (Camera.CameraType == Enum.CameraType.Scriptable) then
-				return
-			end
-
-			self._lockedCFrame = cframe
-		end)
-	else
-		Camera.CFrame = cframe
-		self._lockedCFrame = cframe
+-- Stops whatever the camera was doing, so two take-overs never drive it at once.
+function CameraController:_cancelCameraTween()
+	if self._cameraTween then
+		self._cameraTween:Cancel()
+		self._cameraTween = nil
 	end
 end
 
--- Unlocks the camera and returns it to Custom, so it follows the character again.
-function CameraController:SetBackToDefault()
+-- Takes the camera and moves it to `cframe`. Shake keeps working on top: this drives the offset the shaker reads rather than fighting it for Camera.CFrame, which the shaker rewrites every frame.
+function CameraController:TweenCameraCFrameTo(cframe: CFrame, tweenInfo: TweenInfo?)
+	self._cameraToken += 1
+	self:_cancelCameraTween()
+
+	-- Seeded from where the camera is, and locked before the type flips. A frame of Scriptable with no lock
+	-- lets a running shake compound onto its own output and walk the camera off into space
+	if Camera.CameraType ~= Enum.CameraType.Scriptable then
+		self._cameraProxy.Value = Camera.CFrame
+		self._lockedCFrame = Camera.CFrame
+		Camera.CameraType = Enum.CameraType.Scriptable
+	end
+
+	local tween = TweenService:Create(self._cameraProxy, tweenInfo or CAMERA_TWEEN, { Value = cframe })
+	self._cameraTween = tween
+	tween:Play()
+end
+
+-- Unlocks the camera and returns it to Custom, so it follows the character again. `cframe` is where to put it on the way out -- handed the one it was taken from, the cut back is to exactly where they were looking.
+function CameraController:SetBackToDefault(cframe: CFrame?)
+	self._cameraToken += 1
+	self:_cancelCameraTween()
+
 	self._lockedCFrame = nil
+
+	if cframe then
+		Camera.CFrame = cframe
+	end
+
+	-- Straight back rather than travelled: the default camera re-derives its own look from the live CFrame,
+	-- so it picks up from here, and nothing is left holding the camera if this is reached mid-flight
 	Camera.CameraType = Enum.CameraType.Custom
+	self:SetSubject()
 end
 
 -- Turns the camera along a horizontal direction, keeping its pitch. Doesn't take control -- the default camera re-derives from the live CFrame.
@@ -154,6 +181,21 @@ function CameraController:SetSubject(subject: Instance?)
 end
 
 function CameraController:OnInit()
+	-- A stand-in for where the camera sits before shake. Tweening the Camera itself would just be overwritten
+	-- by the bind below, which is the one place in the client allowed to write Camera.CFrame
+	local proxy = Instance.new("CFrameValue")
+	proxy.Name = "CameraCFrame"
+	proxy.Parent = Camera
+	self._cameraProxy = proxy
+
+	-- Only while the camera is actually taken: the tween writes this every frame, and a stale write landing
+	-- after the hand-back would lock the camera again a frame after it was let go
+	proxy.Changed:Connect(function(value: CFrame)
+		if Camera.CameraType == Enum.CameraType.Scriptable then
+			self._lockedCFrame = value
+		end
+	end)
+
 	local camShake = CameraShaker.new(Enum.RenderPriority.Camera.Value, function(shakeCFrame: CFrame)
 		local offset = self._lockedCFrame or Camera.CFrame
 		Camera.CFrame = offset * shakeCFrame

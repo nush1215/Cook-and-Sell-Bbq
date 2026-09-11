@@ -27,10 +27,15 @@ default is `4` because that's what every profile written before the key existed 
 an empty table and gets stamped, which costs nothing.
 
 Cells are re-checked on every handover too, not only at placement. `BaseManager:ReclaimStrandedStructures`
-tests each one against `Base:IsBlockFree` and hands back anything now off the ground its owner holds or
-overlapping something already kept — the same path the pickup hammer takes, so the structure returns to
-`OwnedStructures` and its contents to the player. That's what a resized plot leaves behind. It bails out
-entirely on a base with no buildable ground, since that's a broken base rather than a stranded build.
+tests each one against `Base:IsBlockFree` and hands back anything now off the ground its owner holds,
+overlapping something already kept, or standing on the cells held for an unrepaired employee hut — the same
+path the pickup hammer takes, so the structure returns to `OwnedStructures` and its contents to the player.
+That's what a resized plot leaves behind. It bails out entirely on a base with no buildable ground, since
+that's a broken base rather than a stranded build.
+
+The hut is worth telling apart from the other two, since it takes cells on a base that was fine yesterday:
+the sweep re-tests each stranded build against `Base:GetHutBlock` and names the hut in its notification
+whenever it took any, rather than blaming the plots for it.
 
 **`OwnedStructures`** — structures owned but not yet placed. A structure is only ever in one of the two
 places, and picking one back up returns it here, so nothing is lost to a bad spot.
@@ -78,7 +83,10 @@ owner left is simply frozen where it stood, since the alternative would be rewin
 dropped by the write that resumes the cook, so a record only ever carries them while its owner is away.
 
 **`SkewerStand`** — the sell stall's display: an array (max 6) of cooked skewers in placement order. One
-stand per base, so a plain list rather than slot-keyed.
+stand per base, so a plain list rather than slot-keyed. A record a waiting custom order wants is held for
+that customer by `Uid` while it walks over, and every other customer skips it. The hold itself is never
+saved: it is read off the live order (`CustomOrderNpcManager:GetHeldStandSkewerUid`), so it can't outlive
+the customer it was held for.
 
 ## Ingredient rolling
 
@@ -113,6 +121,17 @@ claimed; a past value is one sitting ready. Absolute rather than a countdown, so
 `Bought` to the window it was counted in; a stale `Seed` means the window rolled over, so `Bought` reads as
 empty and resets on the next buy. Each shop has its **own** `Seed` rather than a shared one: the two run
 separate clocks and either can be re-rolled on its own by its restock product.
+
+**`HiringBoard`** — the same shape for the worker board: `{ Seed, Hired }`, where `Hired` marks which of the
+window's four slots this player has already taken. It rotates on its own clock at twelve and a half
+minutes, and a stale `Seed` reads as nothing hired, so it self-cleans on every rotation rather than growing
+forever.
+
+`Hired` is a **dense array of booleans**, not a `{ [slot] = true }` map, and that is deliberate. Player data
+round-trips through a DataStore, which hands integer keys back as strings — a sparse table saved as
+`{ [2] = true }` returns as `{ ["2"] = true }`, and `Hired[2]` would silently read nil for a returning player.
+The board is per-player rather than server-wide: the four candidates are shared, but hiring one doesn't take
+them off anybody else's board.
 
 ## Sell stall
 
@@ -163,7 +182,9 @@ with nothing in it" indistinguishable. Written by `SaveActiveOrder` the moment t
 offer card goes up, and again as the deal is struck — so it rides the ordinary auto-save rather than
 depending on a last save that a crash or a shutdown can skip. `SaveActiveOrderOnLastSave` only restamps
 the clock on the way out, so an order carries the time it actually had left rather than the time it had
-when it was struck; miss that and you come back with a more generous clock, not with nothing. Cleared in
+when it was struck; miss that and you come back with a more generous clock, not with nothing. A customer
+walking over to collect a BBQ held for it on the stand is still owed its order, so it banks as `Accepted`
+too; the BBQ saves with the stand, and the restored customer claims it again before it steps aside. Cleared in
 `_recordOutcome`, which every outcome funnels through — so a new outcome added later cannot forget to
 clear it and leave a ghost customer returning forever. `_runGuardedVisit` clears it too when a restore
 never gets its customer up, since a saved order both the roll and the next restore step over would
@@ -227,6 +248,118 @@ longest boost rather than the sum (see docs/balance.md).
 Swept every `Boosts.SWEEP_INTERVAL` by one pass over the players rather than a timer per boost, and capped at
 `Boosts.MAX_ACTIVE`, which drops the weakest first. Every reader re-checks `ExpiresAt` itself rather than
 trusting the sweep, since a roll can land in the gap between two of them.
+
+## Employee hut
+
+**`HutRepaired`** — whether the hut has been repaired, as a plain top-level boolean rather than an `Unlocks`
+entry. It isn't an unlock because no `LockStyle` swaps one model for another, and because the repaired hut
+isn't rendered from a level at all: repairing hands the player a `RepairedHut` **structure**, so from that
+moment it lives in `Structures`/`OwnedStructures` like any other build and moves with the hammer. The flag is
+only what stops it being bought twice.
+
+**`HutRepairEndsAt`** — when a running repair lands, absolute on `workspace:GetServerTimeNow()` so it
+finishes while the player is offline, with `-1` as the resting value. The two keys together make three states:
+
+| `HutRepaired` | `HutRepairEndsAt` | State |
+|---|---|---|
+| `false` | `-1` | broken, buyable |
+| `false` | a stamp | repairing |
+| `true` | `-1` | repaired, and the hut is a placed structure |
+
+Nothing sweeps it. `EmployeeHutManager` arms a `task.delay` for convenience, but `CompleteRepair` re-reads
+the stamp and is the only authority, so a missed or doubled timer costs nothing — and a stamp already in the
+past on handover simply completes there, which is the whole offline case. The deadline is republished onto the
+base model as an attribute because player data only reaches its owner and a *visitor* has to see the countdown
+too, the same reason griller cook stamps are mirrored onto their slot.
+
+The broken hut is base furniture rather than a structure, posed by `Base:ApplyHut` onto the cell
+`Base:_cacheHutBlock` works out from `EmployeeHut.CELL_X`/`CELL_Z`/`CELL_ROTATION` in the base's own lattice —
+there is no marker part, so both hut states measure off the same cell and the repair swaps the model without
+moving it. It reserves the cells the repaired one will land on (`Base:IsBlockFree` takes `HutRepaired` so
+nothing can be built there first), and the reservation lifts the instant the flag is written — which is why
+`EmployeeHutManager:CompleteRepair` writes it *before* placing the hut.
+
+It's in `TutorialManager`'s `PROGRESS_RESET_KEYS` alongside `Plots`, which is less obvious than it looks:
+`PurchasePlot` blocks unfinished players, but `GrantPlotFromProduct` calls it with `skipCurrencyCost`, which
+skips the tutorial check — so a Robux plot buyer can own plot 1 mid-tutorial and repair the hut. Keeping it
+would leave a repaired hut with no plot under it.
+
+**`Employees`** — the hired staff, keyed by a uid minted at hire. Each entry is
+`{ Role, Skill, Body, Name, Cosmetics, Slot?, Carrying?, Load?, HiredAt }`.
+
+`Skill` is stored **0-1, not as stars**. `Rating.ToStars` is what turns it into the 4.25 the player reads, so
+the star scale lives in exactly one place and retuning `Rating.MAX_STARS` moves everyone already hired rather
+than stranding them on an old scale. Every behaviour number is derived from it and none are stored — a
+`Config.Employees` curve is a worst value at 0 stars, a best at 5 and a gamma bending between them, so
+rebalancing employees is a config edit and never a migration.
+
+`Role` is one of `Config.Employees.ROLES` and never changes. An employee works one station, so its star means
+one thing; a base is staffed by hiring three of them, not by assigning three jobs to one.
+
+**`Slot`** is the hut slot that worker is equipped in, `1` upward, and absent while unequipped. Only an
+equipped worker is on `EmployeeManager`'s roster with a rig in the world; an unequipped one is nothing but its
+record, so equipping it later is an ordinary add. Owning is uncapped — a worker hired is kept for good, and
+every hire starts unequipped — while how many can be out is how many slots are unlocked. Which worker sits in
+a slot is **scanned for rather than stored a second time** on the slot side, since a second copy would only be
+something to fall out of step. Unequipping leaves `Carrying` and `Load` on the record, so a worker put back
+to work picks straight back up what it was holding.
+
+**`HutSlotsUnlocked`** — how many hut slots are unlocked, counted from slot 1, so `3` means slots 1 to 3. A
+**count rather than a set** because slots are bought strictly in order: `EmployeeHutManager:PurchaseHutSlot`
+only ever sells the next one, and the price of each slot is `Config.EmployeeHut.SLOT_PRICES[slot]`. The
+default is `1` because slot 1 comes with the repair; equipping into any slot still requires `HutRepaired`.
+
+Slots 2 and 3 are also sold for Robux (`Config.EmployeeHut.SLOT_PRODUCT_IDS`), and a receipt grants **whichever
+slot is next when it lands**, not the slot its button showed — the same doctrine as the `BaseUnlocks` products.
+A paid receipt can't be refused, so it must never name a slot that a currency buy or a second receipt has
+already unlocked; the product only sets the price.
+
+It belongs to the **player, not a hut**. `HutStorage` is keyed by structure uid, but picking a hut up and
+placing it again mints a new uid, and slots paid for with currency can't be allowed to vanish on a move. It's
+in `TutorialManager`'s `PROGRESS_RESET_KEYS` beside `Employees`.
+
+Portraits are **not** saved. `EmployeeManager:BakeEmployeePortrait` dresses one per worker on handover and at
+hire, into a disabled `EmployeePortraits` ScreenGui in the owner's `PlayerGui` — which only that player is
+sent — and the hut panel clones them into its viewports.
+
+**`Cosmetics`** is `{ Hair?, Hat?, Face? }`, asset ids grouped by the `HumanoidDescription` field each is
+written to rather than by what it looks like — a fair few classic hairs are catalogued as hats, and one
+applied as hair is silently dropped. It is copied off the board's roll at hire, so a worker keeps the face it
+was advertised with long after that board has rotated away.
+
+**`Carrying`** is the non-obvious one: the skewer in that employee's hands between stations, in
+`StickModel.StickRecord` shape. It is deliberately **not** written into `FilledSticks` — that key materialises
+a Tool in the owner's backpack and force-equips it, which is not what a skewer being carried across the base
+by someone else should do. Keeping it here instead means a rejoin or a server restart mid-pipeline resumes
+rather than destroying the skewer, and it is what makes the state machine's `Idle` state a pure router: an
+employee always boots into `Idle`, and what it is carrying decides where it goes. Firing one hands whatever it
+holds back through `StickManager:AddFilledStick`, so nothing goes off the books.
+
+**`Load`** is the maker's equivalent: the stick and loose ingredients it drew out of a hut store and is
+carrying to a stand, as `{ HutUid, StickId?, Ingredients }`. It exists for the same reason as `Carrying` —
+stock that has left a hut but not yet reached a stand is in flight and would otherwise vanish on a crash or a
+rejoin. Firing a maker returns it to the player's inventory rather than to the hut, since the hut it came from
+may since have been picked up.
+
+Nothing about where an employee *is* — its state, the station it has claimed, when its cook is due — is saved.
+That is all re-derived on load, which is why a state id is only ever mirrored onto the rig as an attribute.
+
+**`HutStorage`** — what each placed hut holds for the staff, `[structureUid] = { Ingredients, Sticks }`, both
+halves shaped `[id] = amount` exactly as the player's own `Ingredients` and `Sticks` are.
+
+**Keyed per hut, not per player.** A base can carry several huts, and each fills its own store, so they can be
+stocked differently for different jobs. That also puts it in the same family as `Grillers` and `StickStands`:
+a structure that holds something keys it by uid, and `BaseManager.STRUCTURE_CONTENTS` hands it back when the
+structure is picked up. The entry is written on the **first deposit**, so an untouched hut has no entry at all
+and that pickup path skips it outright.
+
+It is deliberately **not** the player's own inventory. Employees only ever spend what was put in a hut, which
+is what stops a maker helping itself to a Mythic the player was saving. The prompt takes loose ingredients and
+empty sticks only — a filled skewer is the cooker's to carry, and carries a whole record besides.
+
+Returning a hut's stock on pickup writes the counts back **directly** rather than through
+`IngredientManager:GrantIngredient`. That method records an obtain against `IngredientIndex`, so routing a
+player's own stored stock through it would count everything as newly discovered and inflate their index.
 
 ## Tutorial
 

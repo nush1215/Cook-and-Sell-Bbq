@@ -5,6 +5,7 @@ local HudController = require(script.Parent.Parent.Parent.Parent.HudController)
 local PlayerDataController = require(script.Parent.Parent.Parent.Parent.PlayerDataController)
 local SellNpcController = require(script.Parent.Parent.Parent.Parent.SellNpcController)
 local SkewerStandController = require(script.Parent.Parent.Parent.Parent.SkewerStandController)
+local InputController = require(script.Parent.Parent.Parent.Parent.InputController)
 
 -- Pixels of breathing room left around the lit button
 local SPOTLIGHT_PADDING = 14
@@ -113,7 +114,10 @@ return function(self)
 			end,
 		},
 	}, {
-		Description = `Click {self:Emphasize("Accept")} to sell it`,
+		-- A function, so a device switch mid-beat re-words it
+		Description = function()
+			return `{InputController:GetActivationVerb()} {self:Emphasize("Accept")} to sell it`
+		end,
 		Wait = function()
 			repeat
 				task.wait()

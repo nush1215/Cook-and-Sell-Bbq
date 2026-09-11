@@ -37,6 +37,7 @@ local IngredientRollingManager = {
 	RequestRollFunction = Network.Function("RequestRoll"),
 	PurchaseIngredientEvent = Network.Event("PurchaseIngredient"),
 	OnPurchasedEvent = Network.Event("OnIngredientPurchased"),
+	PurchaseAllIngredientsFunction = Network.Function("PurchaseAllIngredients"),
 
 	-- (player, standId, ingredientId) once per stand on every pull.
 	OnIngredientRolled = Signal.new(),
@@ -381,6 +382,91 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 	return true, discovered
 end
 
+-- Claims every finished pending roll under one charge. Returns the bought ingredient ids and whether any was new, or nil.
+function IngredientRollingManager:PurchaseAllIngredientsFromStands(player: Player): ({ string }?, boolean?)
+	if not validatePlayer(player) then
+		return nil
+	end
+
+	-- Shared with single buys, so a bulk and a stand purchase can't both pass the affordability check
+	if self._purchasing[player] then
+		return nil
+	end
+	self._purchasing[player] = true
+
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		self._purchasing[player] = nil
+		return nil
+	end
+
+	local claimable = {}
+	local total = 0
+
+	for standId, roll in data.PendingRolls do
+		local ingredient = Ingredients.GetIngredientFromId(roll.IngredientId)
+		if
+			not ingredient
+			or (workspace:GetServerTimeNow() - roll.RolledAt) < RollingConfig.GetRollDuration(roll.SpeedLevel)
+		then
+			continue
+		end
+
+		table.insert(claimable, { StandId = standId, Ingredient = ingredient })
+		total += ingredient.Price
+	end
+
+	if #claimable == 0 then
+		self._purchasing[player] = nil
+		NotificationManager:NotifyNormal(player, {
+			Text = if next(data.PendingRolls) then "Wait for the roll to finish!" else "Roll for an ingredient first!",
+			Duration = 3,
+			Sound = "Reject",
+			Effect = "Error",
+		})
+		return nil
+	end
+
+	-- All or nothing, and no Robux fallback -- the products are priced per band, not per bundle
+	if not CurrencyManager:CanAfford(player, total) then
+		self._purchasing[player] = nil
+		NotificationManager:NotifyNormal(player, {
+			Text = "You can't afford all ingredients",
+			Duration = 3,
+			Sound = "Reject",
+			Effect = "Error",
+		})
+		return nil
+	end
+
+	CurrencyManager:DeductCurrency(player, total, "IngredientPurchase")
+
+	-- Cheapest first, since every grant auto-equips and the last one is what stays in hand
+	table.sort(claimable, function(a, b)
+		return a.Ingredient.Price < b.Ingredient.Price
+	end)
+
+	local bought = {}
+	local anyDiscovered = false
+
+	for _, claim in claimable do
+		local ingredient = claim.Ingredient
+		local discovered = IngredientManager:GrantIngredient(player, ingredient.Id)
+		anyDiscovered = anyDiscovered or discovered
+
+		self.OnIngredientPurchased:Fire(player, ingredient.Id, ingredient.Price, discovered, "Currency")
+		PlayerDataManager:SetPlayerDataKey(player, { "PendingRolls", claim.StandId }, nil)
+		table.insert(bought, ingredient.Id)
+	end
+
+	StatsManager:RecordIngredientsBought(player, #bought)
+
+	-- Written once for the whole bank; clearing the attributes is what empties the stands on every client
+	self:WritePendingRollsToBase(player, data.PendingRolls)
+	self._purchasing[player] = nil
+	return bought, anyDiscovered
+end
+
 -- Grants an ingredient once its band product clears, only while the stand still holds what it held then.
 function IngredientRollingManager:GrantIngredientFromProduct(player: Player, tier: number)
 	local pending = self._pendingRobuxStand[player]
@@ -449,6 +535,10 @@ function IngredientRollingManager:OnStart()
 	self.PurchaseIngredientEvent:OnServerEvent(function(player: Player, standId: string)
 		local success, discovered = self:PurchaseIngredientFromStand(player, standId)
 		self.OnPurchasedEvent:FireClient(player, success, standId, discovered)
+	end)
+
+	self.PurchaseAllIngredientsFunction:OnInvoke(function(player: Player)
+		return self:PurchaseAllIngredientsFromStands(player)
 	end)
 
 	-- The base rebuilds its stands on assignment, so last session's rolls have to be stamped back on.

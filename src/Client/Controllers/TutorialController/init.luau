@@ -109,6 +109,8 @@ function TutorialController:Start(variant: string)
 
 	self.TutorialUI = tutorialUI
 	self.TutorialUI.Holder.Description.RichText = true
+	-- Nothing on it to press, so a pad gets no cursor for it and B can't close it
+	self.TutorialUI.Holder:AddTag(UIController.PASSIVE_FRAME_TAG)
 	UIController:OpenFrame(self.TutorialUI.Holder, true)
 
 	-- The whole HUD, bar included -- a teleport mid-beat strands the player. A claim, since HideHud looks pressable

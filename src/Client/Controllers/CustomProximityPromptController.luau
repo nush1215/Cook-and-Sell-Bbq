@@ -22,7 +22,7 @@ local UIAssets = Assets.UI
 --
 local SoundController
 
---
+-- Fallback glyphs for pad keys the engine has no image for; GetImageForKeyCode is tried first, since it matches the pad in hand
 local GamepadButtonImage = {
 	[Enum.KeyCode.ButtonX] = "rbxasset://textures/ui/Controls/xboxX.png",
 	[Enum.KeyCode.ButtonY] = "rbxasset://textures/ui/Controls/xboxY.png",
@@ -117,6 +117,10 @@ function CustomProximityPromptController:_createPrompt(prompt, inputType, gui)
 	local inputFrame = frame.InputFrame
 	local actionText = frame.ActionText
 	local objectText = frame.ObjectText
+
+	-- The template's own colours, for prompts that don't set the ActionTextColor/ObjectTextColor attributes
+	local defaultActionTextColor = actionText.TextColor3
+	local defaultObjectTextColor = objectText.TextColor3
 
 	-- Tweens for Frame and children
 	local backgroundTransparency = frame.BackgroundTransparency
@@ -390,9 +394,15 @@ function CustomProximityPromptController:_createPrompt(prompt, inputType, gui)
 	end
 
 	if inputType == Enum.ProximityPromptInputType.Gamepad then
-		if GamepadButtonImage[prompt.GamepadKeyCode] then
+		-- Empty for a key the engine can't draw, which is what the table is for
+		local image = UserInputService:GetImageForKeyCode(prompt.GamepadKeyCode)
+		if image == "" then
+			image = GamepadButtonImage[prompt.GamepadKeyCode]
+		end
+
+		if image then
 			setupIconTweens()
-			icon.Image = GamepadButtonImage[prompt.GamepadKeyCode]
+			icon.Image = image
 
 			-- Hide ButtonText and ButtonImage, show ButtonTextImage
 			buttonText.Visible = false
@@ -588,6 +598,8 @@ function CustomProximityPromptController:_createPrompt(prompt, inputType, gui)
 
 		actionText.Text = prompt.ActionText
 		objectText.Text = prompt.ObjectText
+		actionText.TextColor3 = prompt:GetAttribute("ActionTextColor") or defaultActionTextColor
+		objectText.TextColor3 = prompt:GetAttribute("ObjectTextColor") or defaultObjectTextColor
 		actionText.AutoLocalize = prompt.AutoLocalize
 		actionText.RootLocalizationTable = prompt.RootLocalizationTable
 

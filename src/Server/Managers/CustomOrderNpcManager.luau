@@ -345,7 +345,7 @@ function CustomOrderNpcManager:SaveActiveOrderOnLastSave(player: Player, data)
 	for _, record in self._npcs[player] or {} do
 		-- Only a visit still owed something comes back. One that's eating or walking off is finished,
 		-- and one whose offer was already answered either way has had its outcome recorded
-		local phase = if record.awaitingDelivery
+		local phase = if record.awaitingDelivery or record.standSkewerUid
 			then CustomOrderNpc.PHASES.Accepted
 			elseif record.offerPending then CustomOrderNpc.PHASES.Pending
 			else nil
@@ -503,6 +503,63 @@ function CustomOrderNpcManager:DeliverOrder(player: Player, npc: Model)
 	self._delivering[player] = nil
 end
 
+-- Locks the best BBQ in `skewers` for the waiting custom order customer to walk over and collect: cooked, with every ingredient it asked for, fewest extras first. True if it took one.
+function CustomOrderNpcManager:ClaimStandSkewerForOrder(player: Player, skewers): boolean
+	-- The tutorial's customers are waiting on the skewers it places, so an order restored or forced into it leaves them be
+	if SellNpcManager:AreCustomersGuaranteed(player) then
+		return false
+	end
+
+	for _, record in self._npcs[player] or {} do
+		if not record.awaitingDelivery then
+			continue
+		end
+
+		local order = record.order
+		local best, bestExtras, bestPaid = nil, math.huge, 0
+
+		for _, skewer in skewers do
+			-- Raw isn't theirs to take, and a BBQ with no uid couldn't be held against the other customers
+			if not skewer.Cooked or not skewer.Uid then
+				continue
+			end
+
+			local matched, extras = measureDelivery(order, skewer)
+			if matched < #order.Ingredients or extras > bestExtras then
+				continue
+			end
+
+			local paid = self:_gradeDelivery(order, skewer)
+			if extras < bestExtras or paid > bestPaid then
+				best, bestExtras, bestPaid = skewer, extras, paid
+			end
+		end
+
+		if not best then
+			return false
+		end
+
+		-- Dropping out of the wait is what sends it over, and what stops a hand-over paying for the same order mid-walk
+		record.standSkewerUid = best.Uid
+		record.awaitingDelivery = false
+
+		return true
+	end
+
+	return false
+end
+
+-- The uid of the BBQ on the stand held for the player's custom order customer, which no other customer may take.
+function CustomOrderNpcManager:GetHeldStandSkewerUid(player: Player): string?
+	for _, record in self._npcs[player] or {} do
+		if record.standSkewerUid then
+			return record.standSkewerUid
+		end
+	end
+
+	return nil
+end
+
 -- The payout toast. Graded, so the number is explained by whatever cost them the most -- flat, it read
 -- the same for a perfect fill and for a bag of the wrong thing.
 function CustomOrderNpcManager:_notifyDelivered(player: Player, order, delivered, banked: number)
@@ -520,7 +577,8 @@ function CustomOrderNpcManager:_notifyDelivered(player: Player, order, delivered
 	elseif missing > 0 then
 		text, effect = "Missing ingredients, so they paid less: {value}", "Error"
 	elseif extras > 0 then
-		text, effect = "You added what they didn't ask for, so they paid less: {value}", "Error"
+		-- Not put on the player: a worker filling the stick out is the usual way extras end up on one
+		text, effect = "Extra ingredients on that one, so they paid less: {value}", "Error"
 	elseif cookState.Id ~= PERFECT_COOK_STATE then
 		-- Not an error: they made the right thing, and the cook is what the ordinary sale ladder prices
 		text = "Their order, but " .. GuiUtil.Colorize(cookState.Name, cookState.Color) .. " - they paid {value}"
@@ -547,7 +605,10 @@ function CustomOrderNpcManager:_sayDeliveryReaction(npc: Model, order, delivered
 
 	-- An exact fill gets one clean reaction; anything else is remarked on before the cook is
 	if matched < #order.Ingredients or extras > 0 then
-		local category = if matched == 0 then "CustomNPCDeliveredWrong" else "CustomNPCDeliveredPartial"
+		local category = if matched == 0
+			then "CustomNPCDeliveredWrong"
+			elseif matched == #order.Ingredients then "CustomNPCDeliveredExtras"
+			else "CustomNPCDeliveredPartial"
 		self.CustomOrderSayEvent:FireAllClients(npc, category)
 		task.wait(1)
 	end
@@ -556,7 +617,7 @@ function CustomOrderNpcManager:_sayDeliveryReaction(npc: Model, order, delivered
 	self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCDelivered", StickModel.GetDialogueVariant(delivered))
 end
 
--- Waits out the deadline, flagging the customer as it runs down. Returns the delivered skewer, or nil on an expiry.
+-- Waits out the deadline, flagging the customer as it runs down. Returns the delivered skewer, or nil on an expiry or a BBQ held for it on the stand.
 function CustomOrderNpcManager:_awaitDelivery(player: Player, npc: Model, record)
 	local nextHurry = record.deadline - CustomOrderNpc.HURRY_THRESHOLD
 
@@ -719,6 +780,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	local record = {
 		npc = npc,
 		slot = slot,
+		standPosition = standPosition,
 		order = order,
 		-- Both come off the save on a restore, so an interrupted introduction still reads as one and the
 		-- funnel follows the same order across the rejoin rather than starting a second one
@@ -860,7 +922,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	return self:_runAcceptedOrder(player, npc, record, humanoid, spawnPart, standPart)
 end
 
--- The accepted half: step aside with the clock running, then take whatever gets handed over. Split out
+-- The accepted half: step aside with the clock running, then take whatever gets handed over or put out for it. Split out
 -- so an order restored from a rejoin can re-enter here without replaying the ask it already answered.
 function CustomOrderNpcManager:_runAcceptedOrder(
 	player: Player,
@@ -884,21 +946,63 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 	self:SaveActiveOrder(player, record, CustomOrderNpc.PHASES.Accepted)
 	self:_publishOrder(record, CustomOrderNpc.PHASES.Accepted)
 
-	-- It has stepped aside, so holding a lane would block the sell customers behind it
-	NpcRig.ReleaseSlot(player, record.slot)
-	record.slot = nil
+	local delivered = nil
+	local waitPosition = nil
+	local collected = false
 
-	NpcRig.WalkTo(humanoid, self:_getWaitPosition(spawnPart, standPart))
+	while not delivered do
+		-- Looked over before it steps aside, so a BBQ of theirs already out is collected from the lane it's stood in
+		local data = PlayerDataManager:GetLoadedPlayerData(player)
+		if data then
+			self:ClaimStandSkewerForOrder(player, data.SkewerStand)
+		end
 
-	if npc.Parent == nil then
-		return
+		if record.standSkewerUid then
+			-- Claimed before the walk yields, so a teardown mid-walk still hands the lane back
+			if not record.slot then
+				record.slot, record.standPosition = NpcRig.ClaimStandPosition(player, spawnPart, standPart)
+			end
+
+			self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCCollecting")
+			NpcRig.WalkTo(humanoid, record.standPosition)
+
+			if npc.Parent == nil then
+				return
+			end
+
+			delivered = SkewerStandManager:TakeSkewer(player, record.standSkewerUid)
+			record.standSkewerUid = nil
+			collected = delivered ~= nil
+
+			-- The player took it back before it got there, so it looks the stand over again from its lane
+			if not collected then
+				record.awaitingDelivery = true
+			end
+		else
+			-- It has stepped aside, so holding a lane would block the sell customers behind it
+			NpcRig.ReleaseSlot(player, record.slot)
+			record.slot = nil
+
+			waitPosition = waitPosition or self:_getWaitPosition(spawnPart, standPart)
+			NpcRig.WalkTo(humanoid, waitPosition)
+
+			if npc.Parent == nil then
+				return
+			end
+
+			-- Turned back toward the stand, so it waits watching the player rather than facing off the base
+			npc:PivotTo(CFrame.lookAt(npc:GetPivot().Position, standPart.Position))
+			self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCWaiting")
+
+			delivered = self:_awaitDelivery(player, npc, record)
+
+			-- Out of time, rather than sent over for a BBQ held for it on the stand
+			if not delivered and not record.standSkewerUid then
+				break
+			end
+		end
 	end
 
-	-- Turned back toward the stand, so it waits watching the player rather than facing off the base
-	npc:PivotTo(CFrame.lookAt(npc:GetPivot().Position, standPart.Position))
-	self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCWaiting")
-
-	local delivered = self:_awaitDelivery(player, npc, record)
 	self._orders[player] = nil
 
 	if npc.Parent == nil then
@@ -940,6 +1044,18 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 	self:_notifyDelivered(player, order, delivered, banked)
 
 	self:_sayDeliveryReaction(npc, order, delivered)
+
+	-- Bought off the stand, so it moves out of the lane to eat among the other buyers
+	if collected and npc.Parent ~= nil then
+		NpcRig.WalkTo(humanoid, NpcRig.GetEatPosition(spawnPart, record.standPosition, self._rng))
+
+		if npc.Parent == nil then
+			return
+		end
+
+		-- Faced a random way, so it doesn't eat staring the same way as the buyers around it
+		npc:PivotTo(CFrame.new(npc:GetPivot().Position) * CFrame.Angles(0, self._rng:NextNumber(0, math.pi * 2), 0))
+	end
 
 	NpcRig.PlayAnimation(record, "Eat", self._rng)
 	self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCEating")

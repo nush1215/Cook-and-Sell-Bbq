@@ -1,7 +1,11 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local Players = game:GetService("Players")
+local ContextActionService = game:GetService("ContextActionService")
 local UserInputService = game:GetService("UserInputService")
+local GamepadService = game:GetService("GamepadService")
+local StarterGui = game:GetService("StarterGui")
+local GuiService = game:GetService("GuiService")
+local Players = game:GetService("Players")
 
 -- Packages
 local Packages = ReplicatedStorage.Packages
@@ -16,15 +20,31 @@ local PlayerGui = LPlayer.PlayerGui
 -- Camera
 local Camera = workspace.CurrentCamera
 
+-- Controllers
+local InputController = require(script.Parent.InputController)
+
+-- Frames with nothing to press, like the tutorial banner: no pad cursor comes up for them and B leaves them alone
+local PASSIVE_FRAME_TAG = "PassiveFrame"
+
+-- B closes the top menu. Bound above default, so it beats the backpack's own B while its inventory is open
+local CLOSE_FRAME_ACTION = "UICloseFrame"
+local CLOSE_FRAME_KEY = Enum.KeyCode.ButtonB
+local CLOSE_FRAME_PRIORITY = Enum.ContextActionPriority.High.Value
+
 --
 local SoundController
 
 --
 local UIController = {
+	PASSIVE_FRAME_TAG = PASSIVE_FRAME_TAG,
+
 	OnFrameOpened = Signal.new(),
 	OnFrameClosed = Signal.new(),
 
 	_currentOpenedFrame = nil,
+	_openFrames = {}, -- every frame up through OpenFrame, oldest first; the last is what B closes and the cursor sits on
+	_cursorOwned = false, -- whether the pad cursor up now is one this put up, rather than the player's own
+	_closeBound = false,
 }
 
 -- Opens `frame`, closing any other open frame unless `independent`.
@@ -56,6 +76,15 @@ function UIController:OpenFrame(frame: Frame, independent: boolean?)
 	Spr.target(frame, 0.5, 3.5, { Position = frame:GetAttribute("OrigPosition") })
 	frame.Visible = true
 
+	-- To the top, not pushed twice (an independent frame can reopen over itself); ahead of the swap, so the cursor never blinks
+	if not frame:HasTag(PASSIVE_FRAME_TAG) then
+		local index = table.find(self._openFrames, frame)
+		if index then
+			table.remove(self._openFrames, index)
+		end
+		table.insert(self._openFrames, frame)
+	end
+
 	if not independent then
 		if self._currentOpenedFrame and self._currentOpenedFrame ~= frame then
 			self:CloseFrame(self._currentOpenedFrame)
@@ -66,6 +95,8 @@ function UIController:OpenFrame(frame: Frame, independent: boolean?)
 	else
 		frame:AddTag("IndependentFrame")
 	end
+
+	self:_refreshGamepadMenu(frame)
 
 	self.OnFrameOpened:Fire(frame)
 end
@@ -78,11 +109,19 @@ function UIController:CloseFrame(frame: Frame)
 		self._currentOpenedFrame = nil
 	end
 
+	-- Absent is normal: zone exits and passive frames close through here without ever having been on the stack
+	local index = table.find(self._openFrames, frame)
+	if index then
+		table.remove(self._openFrames, index)
+	end
+
 	if not frame:HasTag("IndependentFrame") then
 		Spr.target(Camera, 0.7, 2.5, { FieldOfView = 70 })
 	end
 
 	frame:RemoveTag("IndependentFrame")
+
+	self:_refreshGamepadMenu()
 
 	self.OnFrameClosed:Fire(frame)
 end
@@ -92,6 +131,44 @@ function UIController:CloseOpenFrame()
 	if self._currentOpenedFrame then
 		self:CloseFrame(self._currentOpenedFrame)
 	end
+end
+
+-- Puts the pad's cursor and B on the menus while any is up, and takes both off when none is. `openedFrame` is where the cursor lands.
+function UIController:_refreshGamepadMenu(openedFrame: Frame?)
+	local topFrame = self._openFrames[#self._openFrames]
+
+	if topFrame and InputController:IsGamepad() then
+		-- A cursor the player summoned themselves is left alone, so closing a menu doesn't take it away
+		if self._cursorOwned or not GamepadService.GamepadCursorEnabled then
+			-- Cleared first: a topbar icon left selected has the stick navigating instead of moving the cursor
+			GuiService.SelectedObject = nil
+			self._cursorOwned = true
+			GamepadService:EnableGamepadCursor(openedFrame or topFrame)
+		end
+	elseif self._cursorOwned then
+		self._cursorOwned = false
+		GamepadService:DisableGamepadCursor()
+	end
+
+	local menuOpen = topFrame ~= nil
+	if menuOpen == self._closeBound then
+		return
+	end
+	self._closeBound = menuOpen
+
+	if not menuOpen then
+		ContextActionService:UnbindAction(CLOSE_FRAME_ACTION)
+		return
+	end
+
+	ContextActionService:BindActionAtPriority(CLOSE_FRAME_ACTION, function(_, inputState: Enum.UserInputState)
+		if inputState ~= Enum.UserInputState.Begin then
+			return Enum.ContextActionResult.Pass
+		end
+
+		self:CloseFrame(self._openFrames[#self._openFrames])
+		return Enum.ContextActionResult.Sink
+	end, false, CLOSE_FRAME_PRIORITY, CLOSE_FRAME_KEY)
 end
 
 -- `activateOnPress` answers on the press, for buttons that move under the finger -- a billboard on an animated NPC loses every touch otherwise.
@@ -206,10 +283,12 @@ function UIController:BindButtonEffect(
 		SoundController:PlaySound(clickSoundName or "ButtonClick")
 	end))
 
+	-- ButtonA too: the pad cursor's click presses like a mouse, but its release arrives as a pad input
 	cleaner:Add(UserInputService.InputEnded:Connect(function(input: InputObject)
 		if
 			input.UserInputType ~= Enum.UserInputType.MouseButton1
 			and input.UserInputType ~= Enum.UserInputType.Touch
+			and input.KeyCode ~= Enum.KeyCode.ButtonA
 		then
 			return
 		end
@@ -258,6 +337,19 @@ end
 
 function UIController:OnInit()
 	SoundController = require(script.Parent.SoundController)
+
+	-- A pad picked up mid-menu gets the cursor; a mouse touched mid-menu loses it
+	InputController.OnPreferredInputChanged:Connect(function()
+		self:_refreshGamepadMenu()
+	end)
+
+	-- TopbarPlus drops the cursor a beat after an icon is pressed, which would leave the Codes panel without one
+	GamepadService:GetPropertyChangedSignal("GamepadCursorEnabled"):Connect(function()
+		if self._cursorOwned and not GamepadService.GamepadCursorEnabled then
+			self._cursorOwned = false
+			self:_refreshGamepadMenu()
+		end
+	end)
 
 	for _, v in PlayerGui:GetDescendants() do
 		if not v:IsA("UIStroke") then

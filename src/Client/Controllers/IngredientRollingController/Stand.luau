@@ -441,6 +441,7 @@ function Stand:_showResult(ingredient: Ingredients.Ingredient, model: Model)
 	info.Parent = model
 
 	self:RefreshInteraction()
+	self._owningBase:RefreshBulkPurchasePrompt()
 end
 
 -- Puts the buy prompt on the result, owner only. Re-runnable, so a late BaseId still moves it.
@@ -499,6 +500,7 @@ function Stand:Sync()
 			self:Clear()
 		end
 
+		self._owningBase:RefreshBulkPurchasePrompt()
 		return
 	end
 
@@ -539,6 +541,15 @@ end
 -- Whether the stand is still cycling towards its result.
 function Stand:IsRolling(): boolean
 	return self._rolling
+end
+
+-- The ingredient landed on the stand, or nil while it's empty or still cycling. Up exactly when its Buy prompt is.
+function Stand:GetLandedIngredient(): Ingredients.Ingredient?
+	if not self._currentModel then
+		return nil
+	end
+
+	return Ingredients.GetIngredientFromId(self._model:GetAttribute("RolledIngredient"))
 end
 
 -- Hands the landed ingredient to the purchase fly-in, which owns and destroys the model from there.

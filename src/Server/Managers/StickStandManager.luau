@@ -17,7 +17,6 @@ local IngredientManager
 
 --
 local STICK_TOOL_TAG = "StickTool"
-local INGREDIENT_TOOL_TAG = "IngredientTool"
 
 -- The category, not one model's id, so a second kind of stand is picked up here unchanged
 local STAND_CATEGORY = "StickStands"
@@ -31,27 +30,14 @@ local StickStandManager = {
 	_stands = {}, -- [player] = { [uid] = Model }, every placed stand they own
 	_listeners = {}, -- [player] = the StickStands data listener
 	_toggling = {}, -- [player] = true across the read -> write window, so a spammed prompt can't double up
+	-- [player] = { [uid] = os.clock() they last worked that stand }, so staff leave a build in progress alone.
+	-- Session-only: coming back from a rejoin means they aren't mid-build, so there's nothing to persist
+	_touchedAt = {},
 }
 
 --
 local function validatePlayer(player: Player?): boolean
 	return player ~= nil and player:IsDescendantOf(Players)
-end
-
--- The equipped ingredient tool's id, or nil. An equipped tool sits in the character, not the backpack.
-local function getEquippedIngredientId(player: Player): string?
-	local character = player.Character
-	if not character then
-		return nil
-	end
-
-	for _, child in character:GetChildren() do
-		if child:IsA("Tool") and child:HasTag(INGREDIENT_TOOL_TAG) then
-			return child:GetAttribute("IngredientId")
-		end
-	end
-
-	return nil
 end
 
 -- What the equipped stick would put on a stand, or nil. A filled one brings its ingredients and is consumed.
@@ -164,6 +150,14 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 		return
 	end
 
+	-- Stamped here, past the ownership check and before every branch, so any hand touch defers the staff
+	local touched = self._touchedAt[player]
+	if not touched then
+		touched = {}
+		self._touchedAt[player] = touched
+	end
+	touched[uid] = os.clock()
+
 	-- A valid record is a table; a legacy string-shaped entry is treated as empty and overwritten
 	local record = data.StickStands[uid]
 	if type(record) ~= "table" then
@@ -175,7 +169,7 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 		local placement = getEquippedStickPlacement(player, data)
 		if not placement then
 			-- They skipped the stick, so point them at that rather than the generic empty-handed advice
-			local holdingIngredient = getEquippedIngredientId(player) ~= nil
+			local holdingIngredient = IngredientManager:GetEquippedIngredientId(player) ~= nil
 			NotificationManager:NotifyNormal(player, {
 				Text = if holdingIngredient then "Place a stick first!" else "Equip a stick first!",
 				Duration = 3,
@@ -217,7 +211,7 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 	end
 
 	-- Stick on the stand: holding an ingredient loads it, holding nothing takes the stick off
-	local ingredientId = getEquippedIngredientId(player)
+	local ingredientId = IngredientManager:GetEquippedIngredientId(player)
 	if ingredientId then
 		local stick = Sticks.GetStickFromId(record.StickId)
 		local capacity = if stick then stick.Capacity else 0
@@ -249,6 +243,117 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 	self._toggling[player] = nil
 end
 
+-- Lifts a stand's stick and hands the record straight back, for an employee carrying it rather than a player pocketing it. Nil if the stand is empty or not theirs.
+function StickStandManager:TakeStickFromStand(player: Player, uid: string)
+	if self._toggling[player] then
+		return nil
+	end
+	self._toggling[player] = true
+
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		self._toggling[player] = nil
+		return nil
+	end
+
+	local structure = data.Structures[uid]
+	if not structure or not Structures.IsCategory(structure.Type, STAND_CATEGORY) then
+		self._toggling[player] = nil
+		return nil
+	end
+
+	-- Re-read after the yield, so a stand the player emptied in the meantime hands nothing over twice
+	local record = data.StickStands[uid]
+	if type(record) ~= "table" then
+		self._toggling[player] = nil
+		return nil
+	end
+
+	PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid }, nil)
+
+	self._toggling[player] = nil
+
+	return {
+		StickId = record.StickId,
+		Ingredients = table.clone(record.Ingredients),
+		Cooked = record.Cooked,
+		CookState = record.CookState,
+	}
+end
+
+-- Puts a stick on an empty stand for an employee carrying one, with no inventory to debit. False if the stand isn't theirs, isn't empty, or the owner is mid-toggle -- all of which the caller retries.
+function StickStandManager:PlaceStickOnStand(player: Player, uid: string, stickId: string): boolean
+	if self._toggling[player] then
+		return false
+	end
+	self._toggling[player] = true
+
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		self._toggling[player] = nil
+		return false
+	end
+
+	local structure = data.Structures[uid]
+	if not structure or not Structures.IsCategory(structure.Type, STAND_CATEGORY) then
+		self._toggling[player] = nil
+		return false
+	end
+
+	-- Re-read after the yield, so a stand the player filled in the meantime isn't written over
+	if type(data.StickStands[uid]) == "table" then
+		self._toggling[player] = nil
+		return false
+	end
+
+	PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid }, { StickId = stickId, Ingredients = {} })
+
+	self._toggling[player] = nil
+
+	return true
+end
+
+-- Threads one ingredient onto a stand's stick for an employee carrying it. One per call on purpose: the client only springs and sounds an append of exactly one, so a whole load written at once would pop in silently.
+function StickStandManager:AddIngredientToStand(player: Player, uid: string, ingredientId: string): boolean
+	if self._toggling[player] then
+		return false
+	end
+	self._toggling[player] = true
+
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		self._toggling[player] = nil
+		return false
+	end
+
+	local structure = data.Structures[uid]
+	if not structure or not Structures.IsCategory(structure.Type, STAND_CATEGORY) then
+		self._toggling[player] = nil
+		return false
+	end
+
+	-- Re-read after the yield: the stick can have been taken, cooked or filled while this was waiting
+	local record = data.StickStands[uid]
+	if type(record) ~= "table" or record.Cooked then
+		self._toggling[player] = nil
+		return false
+	end
+
+	local stick = Sticks.GetStickFromId(record.StickId)
+	if not stick or #record.Ingredients >= stick.Capacity then
+		self._toggling[player] = nil
+		return false
+	end
+
+	local ingredients = table.clone(record.Ingredients)
+	table.insert(ingredients, ingredientId)
+	PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid, "Ingredients" }, ingredients)
+
+	self._toggling[player] = nil
+
+	return true
+end
+
 -- Hands a stand's stick back: a distinct filled tool with ingredients, or stacked back if empty. Always returns true -- a stand has nothing to interrupt.
 function StickStandManager:ReturnContentsToPlayer(player: Player, _data, _uid: string, record, fromPickup: boolean?): boolean
 	local isFilled = #record.Ingredients > 0
@@ -278,6 +383,12 @@ function StickStandManager:ReturnContentsToPlayer(player: Player, _data, _uid: s
 	return true
 end
 
+-- When the player themselves last worked this stand, or 0. What a maker reads to keep off a build in progress.
+function StickStandManager:GetPlayerTouchedAt(player: Player, uid: string): number
+	local touched = self._touchedAt[player]
+	return (touched and touched[uid]) or 0
+end
+
 -- Registers the player's data listener, guarded against two stands binding in one frame.
 function StickStandManager:_setupPlayer(player: Player)
 	if self._listeners[player] then
@@ -300,6 +411,7 @@ function StickStandManager:_cleanupPlayer(player: Player)
 
 	self._stands[player] = nil
 	self._toggling[player] = nil
+	self._touchedAt[player] = nil
 end
 
 function StickStandManager:OnInit()
