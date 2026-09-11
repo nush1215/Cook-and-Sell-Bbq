@@ -30,6 +30,7 @@ local CameraController
 local InventoryController
 local PlayerDataController
 local SoundController
+local WorkerGuideController = require(script.Parent.WorkerGuideController)
 
 -- Assets
 local UI = ReplicatedStorage.Assets.UI
@@ -73,6 +74,7 @@ end
 local HiringBoardController = {
 	HireWorkerEvent = Network.Event("HireWorker"),
 	HireWorkerResultEvent = Network.Event("HireWorkerResult"),
+	HiringBoardOpenedEvent = Network.Event("HiringBoardOpened"), -- client -> server (no args)
 
 	_entries = {}, -- [slotIndex] = { Part, Home, Holder, Viewport, PortraitCleaner, StampTransparency, PendingStamp }
 	_featured = 1, -- which slot is out in front of the camera
@@ -443,6 +445,25 @@ function HiringBoardController:_mountEntries(entries: Instance)
 		end, true)
 		self._cleaner:Add(binding.Disconnect)
 
+		-- Read at the press, since the window rotating puts a different candidate on this panel
+		local infoBinding = UIController:BindButtonClick(holder.Info, function()
+			local worker = self:GetWorkers()[index]
+			if not worker then
+				return
+			end
+
+			-- The featured entry hangs right where the guide opens, so it goes back on the board until the guide shuts
+			self:_returnEntries()
+
+			WorkerGuideController:OpenRoleGuide(worker.Role, function()
+				-- The guide also shuts when the board is closed out from under it, and then there's nothing to fly out
+				if self._open then
+					self:_feature(self._featured)
+				end
+			end)
+		end, true)
+		self._cleaner:Add(infoBinding.Disconnect)
+
 		local entry = {
 			Part = part,
 			-- Cached before anything moves it, and as the pivot rather than the CFrame: a spring's Pivot goal
@@ -570,6 +591,7 @@ function HiringBoardController:OnStart()
 	UIController.OnFrameOpened:Connect(function(frame)
 		if frame == holder then
 			self:_beginSession()
+			self.HiringBoardOpenedEvent:FireServer()
 		end
 	end)
 

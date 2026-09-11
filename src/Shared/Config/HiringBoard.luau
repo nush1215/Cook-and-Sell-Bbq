@@ -49,8 +49,8 @@ HiringBoard.TIMER_LABEL = "Timer"
 
 -- Held rather than tapped, so brushing past the board doesn't throw the panel up
 HiringBoard.PROMPT_ACTION_TEXT = "View Workers"
-HiringBoard.PROMPT_HOLD_DURATION = 0.3
-HiringBoard.PROMPT_MAX_DISTANCE = 10
+HiringBoard.PROMPT_HOLD_DURATION = 0.1
+HiringBoard.PROMPT_MAX_DISTANCE = 13
 
 -- The per-entry panel under Assets.UI, and the screen panel holding the arrows
 HiringBoard.INFO_UI = "WorkerInfo"
@@ -101,10 +101,13 @@ HiringBoard.PRICE_ROUNDING = 100
 function HiringBoard.GetPrice(stars: number): number
 	local raw = HiringBoard.PRICE_BASE * stars ^ HiringBoard.PRICE_EXPONENT
 
-	return math.max(math.round(raw / HiringBoard.PRICE_ROUNDING) * HiringBoard.PRICE_ROUNDING, HiringBoard.PRICE_ROUNDING)
+	return math.max(
+		math.round(raw / HiringBoard.PRICE_ROUNDING) * HiringBoard.PRICE_ROUNDING,
+		HiringBoard.PRICE_ROUNDING
+	)
 end
 
--- The tier a star rating fell in, for the label colour. Falls back to the first, so a retune can't return nil.
+-- The tier with this id, for the label colour. Falls back to the first, so a retune can't return nil.
 function HiringBoard.GetTierFromId(tierId: string): Tier
 	for _, tier in HiringBoard.TIERS do
 		if tier.Id == tierId then
@@ -113,6 +116,17 @@ function HiringBoard.GetTierFromId(tierId: string): Tier
 	end
 
 	return HiringBoard.TIERS[1]
+end
+
+-- The tier a star rating falls in, an edge between two bands going to the lower and likelier one. Falls back to the top, so a retune can't return nil.
+function HiringBoard.GetTierFromStars(stars: number): Tier
+	for _, tier in HiringBoard.TIERS do
+		if stars <= tier.MaxStars then
+			return tier
+		end
+	end
+
+	return HiringBoard.TIERS[#HiringBoard.TIERS]
 end
 
 -- The countdown as the board reads it, e.g. "New Workers in 5m 3s". Minutes always shown, so the last stretch reads "0m 9s".

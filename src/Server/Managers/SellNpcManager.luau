@@ -73,9 +73,9 @@ local SellNpcManager = {
 	NpcOfferResponseEvent = Network.Event("NpcOfferResponse"),
 	NpcSayEvent = Network.Event("NpcSay"),
 
-	-- (player, offer, skewerRecords, customerType) once a customer's offer is taken and paid out.
+	-- (player, offer, skewerRecords, customerType, byEmployee) once a customer's offer is taken and paid out; byEmployee is whether their seller gave the final answer
 	OnSaleCompleted = Signal.new(),
-	-- (player, offer, skewerRecords, customerType, reason) on a leave; reason is "Declined" or "TimedOut"
+	-- (player, offer, skewerRecords, customerType, reason, byEmployee) on a leave; reason is "Declined" or "TimedOut"
 	OnSaleDeclined = Signal.new(),
 	-- (player, converted, waited) when a checking customer's wait ends, either way
 	OnCheckingVisitEnded = Signal.new(),
@@ -638,7 +638,8 @@ function SellNpcManager:_negotiateSale(
 			offer,
 			record.skewerRecords,
 			customerType,
-			if timedOut then "TimedOut" else "Declined"
+			if timedOut then "TimedOut" else "Declined",
+			record.answeredByEmployee == true
 		)
 
 		-- Only a deliberate refusal of their own counts. A lapse already cost them OFFER_TIMEOUT and wasn't a
@@ -691,7 +692,7 @@ function SellNpcManager:_negotiateSale(
 	record.skewerRecords = nil
 
 	StatsManager:RecordSaleCompleted(player, soldRecords)
-	self.OnSaleCompleted:Fire(player, offer, soldRecords, customerType)
+	self.OnSaleCompleted:Fire(player, offer, soldRecords, customerType, record.answeredByEmployee == true)
 
 	-- Down here because it yields, which is only safe once the record's skewers are cleared
 	self:ForgiveSaleRefusal(player)

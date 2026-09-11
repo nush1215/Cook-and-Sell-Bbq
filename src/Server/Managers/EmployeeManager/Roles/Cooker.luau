@@ -430,7 +430,7 @@ Cooker.Deliver = function(employee, _now: number): string?
 		return nil
 	end
 
-	if SkewerStandManager:PlaceSkewerRecord(employee.Player, data, employee.Record.Carrying) then
+	if SkewerStandManager:PlaceSkewerRecord(employee.Player, data, employee.Record.Carrying, true) then
 		employee:SetCarrying(nil)
 	end
 

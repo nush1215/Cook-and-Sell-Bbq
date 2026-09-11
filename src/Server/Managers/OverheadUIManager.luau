@@ -44,6 +44,7 @@ function OverheadUIManager:_attachUI(player: Player)
 	local overheadUI = cleaner:Clone(UI.OverheadUI)
 	overheadUI.PlayerName.Text = playerName
 	overheadUI.PlayerName.VIPGradient.Enabled = player:HasTag("VIP")
+	overheadUI:SetAttribute("Owner", player.UserId)
 	overheadUI.Parent = workspace.Terrain
 
 	-- Set adornee

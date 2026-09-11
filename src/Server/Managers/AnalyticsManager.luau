@@ -6,6 +6,8 @@ local AnalyticsService = game:GetService("AnalyticsService")
 local Shared = ReplicatedStorage.Shared
 local StickModel = require(Shared.StickModel)
 local Ingredients = require(Shared.Config.Ingredients)
+local HiringBoard = require(Shared.Config.HiringBoard)
+local Rating = require(Shared.Config.Rating)
 
 -- Managers (resolved in OnInit, connected to in OnStart)
 local PlayerDataManager
@@ -24,6 +26,9 @@ local TutorialManager
 local TutorialCrateManager
 local PlaytimeManager
 local RatingManager
+local HiringBoardManager
+local EmployeeManager
+local EmployeeHutManager
 
 -- The one place AnalyticsService is spoken to: subscribes to every manager's signals and turns each into an event. Every call is spawned and pcall'd, so it can't block or error gameplay.
 local AnalyticsManager = {
@@ -39,6 +44,7 @@ local SOURCE_TRANSACTION_TYPES = {
 	PlotUnlock = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	HutRepair = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	HutSlot = Enum.AnalyticsEconomyTransactionType.Shop.Name,
+	WorkerHire = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	IngredientPurchase = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	StickPurchase = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	SauceDispenserUpgrade = Enum.AnalyticsEconomyTransactionType.Shop.Name,
@@ -70,6 +76,15 @@ local function logOrderFunnelStep(player: Player, funnelId: string, stepIndex: n
 	task.spawn(function()
 		pcall(function()
 			AnalyticsService:LogFunnelStepEvent(player, "Custom Order 1", funnelId, stepIndex, stepName)
+		end)
+	end)
+end
+
+-- Logs one step of the worker hut funnel. It runs once per player, so a repeated step only ever counts the first time.
+local function logWorkerFunnelStep(player: Player, stepIndex: number, stepName: string)
+	task.spawn(function()
+		pcall(function()
+			AnalyticsService:LogFunnelStepEvent(player, "Worker Hut 1", nil, stepIndex, stepName)
 		end)
 	end)
 end
@@ -189,6 +204,9 @@ function AnalyticsManager:OnInit()
 	TutorialCrateManager = require(script.Parent.TutorialCrateManager)
 	PlaytimeManager = require(script.Parent.PlaytimeManager)
 	RatingManager = require(script.Parent.RatingManager)
+	HiringBoardManager = require(script.Parent.HiringBoardManager)
+	EmployeeManager = require(script.Parent.EmployeeManager)
+	EmployeeHutManager = require(script.Parent.EmployeeHutManager)
 end
 
 function AnalyticsManager:OnStart()
@@ -243,21 +261,35 @@ function AnalyticsManager:OnStart()
 	GrillerManager.OnCookCompleted:Connect(function(player, cookStateId, elapsed, method)
 		logCustom(player, "Cook Completed", elapsed, cookStateId, method)
 	end)
-	SkewerStandManager.OnSkewerPlaced:Connect(function(player, record, placedCount)
-		logCustom(player, "Skewer Placed", 1, StickModel.GetCookStateId(record), tostring(placedCount))
-	end)
-	SellNpcManager.OnSaleCompleted:Connect(function(player, offer, skewerRecords, customerType)
+	-- A worker's placements and sales get names of their own, so the player charts stay what they did by hand. Cooks split on their method instead
+	SkewerStandManager.OnSkewerPlaced:Connect(function(player, record, placedCount, _, byEmployee)
 		logCustom(
 			player,
-			"Sale Completed",
+			if byEmployee then "Worker Skewer Placed" else "Skewer Placed",
+			1,
+			StickModel.GetCookStateId(record),
+			tostring(placedCount)
+		)
+	end)
+	SellNpcManager.OnSaleCompleted:Connect(function(player, offer, skewerRecords, customerType, byEmployee)
+		logCustom(
+			player,
+			if byEmployee then "Worker Sale Completed" else "Sale Completed",
 			offer,
 			tostring(#skewerRecords),
 			customerType,
 			getDominantCookState(skewerRecords)
 		)
 	end)
-	SellNpcManager.OnSaleDeclined:Connect(function(player, offer, skewerRecords, customerType, reason)
-		logCustom(player, "Sale Declined", offer, reason, customerType, getDominantCookState(skewerRecords))
+	SellNpcManager.OnSaleDeclined:Connect(function(player, offer, skewerRecords, customerType, reason, byEmployee)
+		logCustom(
+			player,
+			if byEmployee then "Worker Sale Declined" else "Sale Declined",
+			offer,
+			reason,
+			customerType,
+			getDominantCookState(skewerRecords)
+		)
 	end)
 	-- The value is how long they took to stock the stand, so an ignored one reads as the full wait
 	SellNpcManager.OnCheckingVisitEnded:Connect(function(player, converted, waited)
@@ -310,6 +342,74 @@ function AnalyticsManager:OnStart()
 	end)
 	BadgeManager.OnBadgeAwarded:Connect(function(player, badgeKey)
 		logCustom(player, "Badge Awarded", 1, badgeKey)
+	end)
+
+	-- Workers: repair the hut -> find the board -> hire -> equip, with the hut's store alongside. The funnel's 1 is versioning, so changing its steps means a 2
+	EmployeeHutManager.OnRepairPanelOpened:Connect(function(player)
+		logWorkerFunnelStep(player, 1, "Viewed Repair")
+	end)
+	EmployeeHutManager.OnHutRepairPurchased:Connect(function(player, cost)
+		logCustom(player, "Hut Repair Bought", cost)
+		logWorkerFunnelStep(player, 2, "Bought Repair")
+	end)
+	-- Only once the hut stands: a look before then would auto-complete the repair steps ahead of it
+	HiringBoardManager.OnHiringBoardOpened:Connect(function(player, hutRepaired)
+		logCustom(player, "Hiring Board Opened", 1, if hutRepaired then "Repaired" else "Broken")
+
+		if hutRepaired then
+			logWorkerFunnelStep(player, 3, "Viewed Board")
+		end
+	end)
+	HiringBoardManager.OnWorkerHired:Connect(function(player, _, worker, firstHire)
+		logCustom(
+			player,
+			"Worker Hired",
+			worker.Price,
+			worker.Role,
+			worker.Tier,
+			if firstHire then "First" else "Repeat"
+		)
+
+		if firstHire then
+			logWorkerFunnelStep(player, 4, "Hired Worker")
+		end
+	end)
+	-- Every equip reports the step, since the funnel only ever keeps a player's first
+	EmployeeManager.OnEmployeeSlotChanged:Connect(function(player, record, slot, previousSlot)
+		logCustom(
+			player,
+			if slot then "Worker Equipped" else "Worker Unequipped",
+			1,
+			record.Role,
+			HiringBoard.GetTierFromStars(Rating.ToStars(record.Skill)).Id,
+			tostring(slot or previousSlot)
+		)
+
+		if slot then
+			logWorkerFunnelStep(player, 5, "Equipped Worker")
+		end
+	end)
+	EmployeeHutManager.OnHutSlotPurchased:Connect(function(player, slot, cost, method)
+		logCustom(player, "Hut Slot Unlocked", cost, tostring(slot), method)
+	end)
+	EmployeeHutManager.OnHutItemStored:Connect(function(player, kind, itemId, amount, storeAll)
+		logCustom(
+			player,
+			"Hut Item Stored",
+			amount,
+			itemId,
+			if kind == "Ingredients" then getIngredientTier(itemId) else "Stick",
+			if storeAll then "All" else "One"
+		)
+	end)
+	EmployeeHutManager.OnHutItemWithdrawn:Connect(function(player, kind, itemId)
+		logCustom(
+			player,
+			"Hut Item Withdrawn",
+			1,
+			itemId,
+			if kind == "Ingredients" then getIngredientTier(itemId) else "Stick"
+		)
 	end)
 
 	-- The rating rides a field rather than the value, so opens break down by band instead of averaging out

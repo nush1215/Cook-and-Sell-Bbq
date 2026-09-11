@@ -22,6 +22,7 @@ local UIController = require(script.Parent.UIController)
 local PlayerDataController = require(script.Parent.PlayerDataController)
 local NotificationController = require(script.Parent.NotificationController)
 local ShopController = require(script.Parent.ShopController)
+local WorkerGuideController = require(script.Parent.WorkerGuideController)
 
 --
 local LocalPlayer = Players.LocalPlayer
@@ -165,6 +166,10 @@ function WorkerHutController:_buildWorkerCards(slot: number): number
 			end
 		end, true, false, { ShowFrame = holder }).Disconnect)
 
+		self._workerCleaner:Add(UIController:BindButtonClick(holder.Info, function()
+			WorkerGuideController:OpenRoleGuide(record.Role)
+		end, true).Disconnect)
+
 		card.Parent = self._workerList
 	end
 
@@ -296,6 +301,12 @@ function WorkerHutController:OnStart()
 		UIController:BindButtonClick(details.Unequip, function()
 			if state.Uid then
 				self:_request(self.UnequipEmployeeEvent, state.Uid)
+			end
+		end, true)
+
+		UIController:BindButtonClick(details.Info, function()
+			if state.Uid then
+				WorkerGuideController:OpenRoleGuide(PlayerDataController:GetKey("Employees")[state.Uid].Role)
 			end
 		end, true)
 

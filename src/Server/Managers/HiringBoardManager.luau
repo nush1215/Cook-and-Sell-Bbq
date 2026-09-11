@@ -49,7 +49,14 @@ local HiringBoardManager = {
 	HireWorkerEvent = Network.Event("HireWorker"), -- client -> server (slotIndex)
 	HireWorkerResultEvent = Network.Event("HireWorkerResult"), -- server -> client (success, slotIndex)
 
-	OnWorkerHired = Signal.new(), -- (player, slotIndex, worker)
+	-- Carries nothing: whether their hut is repaired is read back off their data here, not taken from the client
+	HiringBoardOpenedEvent = Network.Event("HiringBoardOpened", {
+		Direction = "ClientToServer",
+		RateLimit = { MaxPerSecond = 2 },
+	}),
+
+	OnWorkerHired = Signal.new(), -- (player, slotIndex, worker, firstHire)
+	OnHiringBoardOpened = Signal.new(), -- (player, hutRepaired)
 
 	_hiring = {}, -- [player] = true, held across the CanAfford -> DeductCurrency yield window
 	_boardSeed = 0, -- the seed this window's four were rolled from: the clock's window seed strided
@@ -251,13 +258,16 @@ function HiringBoardManager:HireWorker(player: Player, slotIndex: number): boole
 
 	CurrencyManager:DeductCurrency(player, worker.Price, "WorkerHire")
 
+	-- Read before the hire, which writes into this same live table
+	local firstHire = next(data.Employees) == nil
+
 	EmployeeManager:HireEmployee(player, worker.Role, worker.Body, worker.Stars, {
 		Name = worker.Name,
 		Cosmetics = { Hair = worker.Hair, Hat = worker.Hat, Head = worker.Head, Skin = worker.Skin },
 	})
 
 	PlayerDataManager:SetPlayerDataKey(player, { "HiringBoard", "Hired", slotIndex }, true)
-	self.OnWorkerHired:Fire(player, slotIndex, worker)
+	self.OnWorkerHired:Fire(player, slotIndex, worker, firstHire)
 
 	self._hiring[player] = nil
 
@@ -271,6 +281,17 @@ function HiringBoardManager:HireWorker(player: Player, slotIndex: number): boole
 	})
 
 	return true
+end
+
+-- Announces that the player opened the hiring board, and whether their hut could house a hire yet.
+function HiringBoardManager:RecordHiringBoardOpened(player: Player)
+	-- Read without waiting, since the remote can land before their data has loaded
+	local data = PlayerDataManager:GetLoadedPlayerData(player)
+	if not data then
+		return
+	end
+
+	self.OnHiringBoardOpened:Fire(player, data.HutRepaired)
 end
 
 function HiringBoardManager:OnInit()
@@ -324,6 +345,10 @@ function HiringBoardManager:OnStart()
 	self.HireWorkerEvent:OnServerEvent(function(player: Player, slotIndex: number)
 		local success = self:HireWorker(player, slotIndex)
 		self.HireWorkerResultEvent:FireClient(player, success, slotIndex)
+	end)
+
+	self.HiringBoardOpenedEvent:OnServerEvent(function(player: Player)
+		self:RecordHiringBoardOpened(player)
 	end)
 
 	Players.PlayerRemoving:Connect(function(player: Player)

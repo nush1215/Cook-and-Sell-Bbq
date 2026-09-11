@@ -4,6 +4,9 @@
 local MathUtil = require(script.Parent.Parent.MathUtil)
 local StickModel = require(script.Parent.Parent.StickModel)
 
+-- The guide's "Stars" colour, the same gold as every other highlight in the game
+local STAR_COLOR = "#ffd400"
+
 --
 export type Employee = {
 	Role: string, -- one of Employees.ROLES; an employee only ever works the one station
@@ -51,6 +54,9 @@ Employees.ROLE_ATTRIBUTE = "EmployeeRole"
 
 -- The ScreenGui in the owner's PlayerGui their baked portraits land in, each named by uid. PlayerGui, so only the owner is sent them
 Employees.PORTRAIT_FOLDER = "EmployeePortraits"
+
+-- The ScreenGui a role's guide is drawn in, opened off the Info buttons on the hut and the hiring board
+Employees.GUIDE_UI_NAME = "GuideUI"
 
 -- Why they're in that state, where a state can be entered for more than one reason. Picks a `{State}{Variant}`
 -- label and a `{Category}{Variant}` line, so the sign and the bubble are always saying the same thing
@@ -106,6 +112,15 @@ Employees.ROLE_DESCRIPTIONS = {
 }
 
 table.freeze(Employees.ROLE_DESCRIPTIONS)
+
+-- What more Stars get each role, for the guide's Benefit line. The guide's steps are authored in the GuideUI itself
+Employees.ROLE_BENEFITS = {
+	[Employees.ROLES.COOKER] = `More <font color="{STAR_COLOR}">Stars</font> = works faster and cooks better BBQ`,
+	[Employees.ROLES.BBQ_MAKER] = `More <font color="{STAR_COLOR}">Stars</font> = works faster and carries more stuff`,
+	[Employees.ROLES.SELLER] = `More <font color="{STAR_COLOR}">Stars</font> = works faster and gets you more money`,
+}
+
+table.freeze(Employees.ROLE_BENEFITS)
 
 -- How often they might pipe up, and the chance they actually do when the moment comes. Rolled rather
 -- than fixed, so a row of them doesn't chatter in unison. Their lines live in Config.NpcDialogue

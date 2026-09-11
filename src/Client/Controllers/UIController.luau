@@ -133,6 +133,11 @@ function UIController:CloseOpenFrame()
 	end
 end
 
+-- The frame open as the main panel, or nil. Independent frames never count, since they don't replace it.
+function UIController:GetOpenFrame(): Frame?
+	return self._currentOpenedFrame
+end
+
 -- Puts the pad's cursor and B on the menus while any is up, and takes both off when none is. `openedFrame` is where the cursor lands.
 function UIController:_refreshGamepadMenu(openedFrame: Frame?)
 	local topFrame = self._openFrames[#self._openFrames]

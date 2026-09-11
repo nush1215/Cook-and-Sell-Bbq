@@ -38,6 +38,7 @@ local REPAIR_TIMEOUT = 5
 -- The View prompt on every base's broken hut and the panel it opens, where the repair is bought. Owner-only and held until the hut's plot is bought; once repaired the server empties the folder and the hut becomes an ordinary placed structure, so an empty folder is what "repaired" looks like from here.
 local EmployeeHutController = {
 	RepairHutEvent = Network.Event("RepairHut"),
+	RepairPanelOpenedEvent = Network.Event("RepairPanelOpened"), -- client -> server (no args)
 
 	_huts = {}, -- [baseModel] = { Folder, BaseCleaner, Prompt?, Cleaner?, RepairCleaner?, RepairEndsAt? }
 	_repairing = false, -- the client half of the debounce; the server holds the authoritative one
@@ -330,6 +331,13 @@ function EmployeeHutController:OnStart()
 		UIController:BindButtonClick(holder.Exit, function()
 			self:Close()
 		end, true)
+
+		-- Reported off the signal rather than Open, which toggles -- calling it on an open panel shuts it
+		UIController.OnFrameOpened:Connect(function(frame)
+			if frame == holder then
+				self.RepairPanelOpenedEvent:FireServer()
+			end
+		end)
 	end
 
 	-- Watched rather than swept once, and off this thread since the loader runs every OnStart on one

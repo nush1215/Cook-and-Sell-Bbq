@@ -28,7 +28,7 @@ local SkewerStandManager = {
 	PlaceSkewerEvent = Network.Event("PlaceSkewerOnStand"),
 	RemoveSkewerEvent = Network.Event("RemoveSkewerFromStand"),
 
-	-- (player, record, placedCount, heldForOrder) on a place; the sell NPC system listens to send a customer for one not held for a custom order
+	-- (player, record, placedCount, heldForOrder, byEmployee?) on a place; the sell NPC system listens to send a customer for one not held for a custom order
 	OnSkewerPlaced = Signal.new(),
 
 	_listeners = {}, -- [player] = the SkewerStand data listener
@@ -110,8 +110,8 @@ function SkewerStandManager:PlaceSkewer(player: Player)
 	self._toggling[player] = nil
 end
 
--- Puts a skewer record on display and calls the customer. Takes the caller's already-awaited `data`, so an employee delivering one reaches the same checks as a player placing one.
-function SkewerStandManager:PlaceSkewerRecord(player: Player, data, filled): boolean
+-- Puts a skewer record on display and calls the customer. Takes the caller's already-awaited `data`, so an employee delivering one reaches the same checks as a player placing one, and `byEmployee` marks that delivery.
+function SkewerStandManager:PlaceSkewerRecord(player: Player, data, filled, byEmployee: boolean?): boolean
 	local skewers = data.SkewerStand
 	if #skewers >= self.MAX_SKEWERS then
 		NotificationManager:NotifyNormal(player, {
@@ -143,7 +143,7 @@ function SkewerStandManager:PlaceSkewerRecord(player: Player, data, filled): boo
 	local heldForOrder = CustomOrderNpcManager:ClaimStandSkewerForOrder(player, { record })
 
 	-- A skewer is now on display, so a customer should come for it
-	self.OnSkewerPlaced:Fire(player, record, #placed, heldForOrder)
+	self.OnSkewerPlaced:Fire(player, record, #placed, heldForOrder, byEmployee)
 
 	return true
 end

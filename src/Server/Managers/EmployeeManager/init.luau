@@ -4,6 +4,10 @@ local ServerStorage = game:GetService("ServerStorage")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 
+-- Packages
+local Packages = ReplicatedStorage.Packages
+local Signal = require(Packages.Signal)
+
 -- Managers
 local NotificationManager = require(script.Parent.NotificationManager)
 
@@ -35,6 +39,8 @@ local EmployeeManager = {
 	EmployeeSayEvent = Network.Event("EmployeeSay"),
 	EquipEmployeeEvent = Network.Event("EquipEmployee"), -- client -> server (uid, slot)
 	UnequipEmployeeEvent = Network.Event("UnequipEmployee"), -- client -> server (uid)
+
+	OnEmployeeSlotChanged = Signal.new(), -- (player, record, slot?, previousSlot?)
 
 	_employees = {}, -- [player] = { [uid] = Employee }, the equipped ones only
 	-- [player] = { ["<role>:<structureUid>"] = employeeUid }, so a station is worked by one of each role
@@ -193,6 +199,9 @@ function EmployeeManager:SetEmployeeSlot(player: Player, uid: string, slot: numb
 		return false
 	end
 
+	-- Read before the write, which lands on this same live record
+	local previousSlot = record.Slot
+
 	PlayerDataManager:SetPlayerDataKey(player, { "Employees", uid, "Slot" }, slot)
 
 	-- Carrying and Load stay on the record while unequipped, so a worker put back picks up what it was holding
@@ -201,6 +210,8 @@ function EmployeeManager:SetEmployeeSlot(player: Player, uid: string, slot: numb
 	else
 		self:RemoveFromRoster(player, uid)
 	end
+
+	self.OnEmployeeSlotChanged:Fire(player, record, slot, previousSlot)
 
 	self._equipping[player] = nil
 

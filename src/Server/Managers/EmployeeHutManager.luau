@@ -3,6 +3,10 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
 local Players = game:GetService("Players")
 
+-- Packages
+local Packages = ReplicatedStorage.Packages
+local Signal = require(Packages.Signal)
+
 -- Managers
 local CollisionManager = require(script.Parent.CollisionManager)
 local EffectManager = require(script.Parent.EffectManager)
@@ -53,6 +57,18 @@ local EmployeeHutManager = {
 	StoreItemEvent = Network.Event("StoreHutItem"),
 	WithdrawItemEvent = Network.Event("WithdrawHutItem"), -- client -> server (hutUid, kind, id)
 
+	-- Carries nothing: opening the repair panel is the whole of what it reports, for the worker funnel
+	RepairPanelOpenedEvent = Network.Event("RepairPanelOpened", {
+		Direction = "ClientToServer",
+		RateLimit = { MaxPerSecond = 2 },
+	}),
+
+	OnRepairPanelOpened = Signal.new(), -- (player)
+	OnHutRepairPurchased = Signal.new(), -- (player, cost)
+	OnHutSlotPurchased = Signal.new(), -- (player, slot, cost, method); a Robux receipt's cost is 0
+	OnHutItemStored = Signal.new(), -- (player, kind, itemId, amount, storeAll?)
+	OnHutItemWithdrawn = Signal.new(), -- (player, kind, itemId); an employee taking from the store isn't one
+
 	_purchasing = {}, -- [player] = true, held across the CanAfford -> DeductCurrency window
 	_scheduled = {}, -- [player] = the token for the wait on their running repair -- see ScheduleRepair
 	_storing = {}, -- [player] = true across a deposit's read -> write window, so a mashed prompt banks once
@@ -85,6 +101,11 @@ local function getColorizedItemName(kind: string, id: string): string
 
 	local stick = Sticks.GetStickFromId(id)
 	return if stick then GuiUtil.Colorize(`{stick.Name} Stick`, stick.TextColor) else "Stick"
+end
+
+-- Announces that the player opened the hut's repair panel.
+function EmployeeHutManager:RecordRepairPanelOpened(player: Player)
+	self.OnRepairPanelOpened:Fire(player)
 end
 
 -- Repairs the player's hut and hands them the structure, dropped on the marker it was standing on.
@@ -126,6 +147,8 @@ function EmployeeHutManager:RepairHut(player: Player): boolean
 		"HutRepairEndsAt",
 		workspace:GetServerTimeNow() + EmployeeHut.REPAIR_DURATION
 	)
+
+	self.OnHutRepairPurchased:Fire(player, EmployeeHut.REPAIR_COST)
 
 	self._purchasing[player] = nil
 
@@ -455,6 +478,8 @@ function EmployeeHutManager:StoreHeldItem(player: Player, uid: string, storeAll:
 	local itemId = ingredientId or stickId
 	local itemName = getColorizedItemName(kind, itemId)
 
+	self.OnHutItemStored:Fire(player, kind, itemId, amount, storeAll)
+
 	-- A position rather than the hut, which a far-off client may not have streamed in and would receive as nil
 	local base = BaseManager:GetBaseFromPlayer(player)
 	local hutModel = base and base:GetStructureModel(uid)
@@ -532,6 +557,8 @@ function EmployeeHutManager:WithdrawStoredItem(player: Player, hutUid: string, k
 
 	-- Straight to the count rather than through GrantIngredient, which would record an obtain and equip it
 	PlayerDataManager:SetPlayerDataKey(player, { kind, id }, (data[kind][id] or 0) + 1)
+
+	self.OnHutItemWithdrawn:Fire(player, kind, id)
 
 	NotificationManager:NotifyNormal(player, {
 		Text = `Took {getColorizedItemName(kind, id)}`,
@@ -636,6 +663,13 @@ function EmployeeHutManager:PurchaseHutSlot(player: Player, slot: number, skipCu
 
 	PlayerDataManager:SetPlayerDataKey(player, "HutSlotsUnlocked", slot)
 
+	self.OnHutSlotPurchased:Fire(
+		player,
+		slot,
+		if skipCurrencyCost then 0 else price,
+		if skipCurrencyCost then "Robux" else "Currency"
+	)
+
 	self._purchasing[player] = nil
 
 	NotificationManager:NotifyNormal(player, {
@@ -661,6 +695,10 @@ end
 function EmployeeHutManager:OnStart()
 	self.RepairHutEvent:OnServerEvent(function(player: Player)
 		self:RepairHut(player)
+	end)
+
+	self.RepairPanelOpenedEvent:OnServerEvent(function(player: Player)
+		self:RecordRepairPanelOpened(player)
 	end)
 
 	self.StoreItemEvent:OnServerEvent(function(player: Player, uid: string, storeAll: boolean?)
