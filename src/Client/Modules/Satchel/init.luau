@@ -43,6 +43,7 @@ local CustomProperties: ModuleScript = require(script.CustomProperties)
 local Shared = ReplicatedStorage.Shared
 local CookStates = require(Shared.Config.CookStates)
 local StickModel = require(Shared.StickModel)
+local GlobalUtil = require(Shared.GlobalUtil)
 
 -- Constants --
 local PREFERRED_TRANSPARENCY: number = GuiService.PreferredTransparency or 1
@@ -186,7 +187,7 @@ end
 
 local GamepadActionsBound: boolean = false
 
-local IS_PHONE: boolean = UserInputService.TouchEnabled
+local IS_PHONE: boolean = GlobalUtil.IsTouchOnly()
 	and workspace.CurrentCamera.ViewportSize.X < HOTBAR_SLOTS_WIDTH_CUTOFF
 
 if IS_PHONE then

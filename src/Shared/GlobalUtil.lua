@@ -1,4 +1,5 @@
 -- Services
+local UserInputService = game:GetService("UserInputService")
 local Players = game:GetService("Players")
 
 --
@@ -36,6 +37,11 @@ function GlobalUtil.WeldModel(model: Model, anchorPrimary: boolean?)
 	end
 
 	primaryPart.Anchored = anchorPrimary
+end
+
+-- Whether the touch path applies: a touchscreen with no mouse. A touchscreen PC still has a pointer to aim with
+function GlobalUtil.IsTouchOnly(): boolean
+	return UserInputService.TouchEnabled and not UserInputService.MouseEnabled
 end
 
 -- Gets all the players in the game

@@ -113,10 +113,13 @@ local ContextActionUtility = {}
 
 --// 𝐒𝐞𝐫𝐯𝐢𝐜𝐞𝐬 //--
 local ContextActionService = game:GetService("ContextActionService")
-local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Players = game:GetService("Players")
+
+--// 𝐒𝐡𝐚𝐫𝐞𝐝 //--
+local GlobalUtil = require(ReplicatedStorage.Shared.GlobalUtil)
 
 --// 𝐕𝐚𝐫𝐢𝐚𝐛𝐥𝐞𝐬 //--
 --player
@@ -127,7 +130,7 @@ local TouchControlFrame
 local JumpButton
 
 --mobile
-local isMobile = UserInputService.TouchEnabled
+local isMobile = GlobalUtil.IsTouchOnly()
 if isMobile then
 	TouchGui = PlayerGui:WaitForChild("TouchGui")
 	TouchControlFrame = TouchGui:WaitForChild("TouchControlFrame")
