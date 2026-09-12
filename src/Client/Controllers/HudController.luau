@@ -43,6 +43,14 @@ local HIDE_HUD_FOR_UI = {
 		"BottomRight",
 	},
 
+	OfflineEarningUI = {
+		"Top",
+		"Left",
+		"Right",
+		"BottomLeft",
+		"BottomRight",
+	},
+
 	ShopUI = {
 		"Top",
 		"Left",

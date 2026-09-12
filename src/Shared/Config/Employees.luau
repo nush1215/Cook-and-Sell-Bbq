@@ -4,6 +4,9 @@
 local MathUtil = require(script.Parent.Parent.MathUtil)
 local StickModel = require(script.Parent.Parent.StickModel)
 
+-- Config
+local Rating = require(script.Parent.Rating)
+
 -- The guide's "Stars" colour, the same gold as every other highlight in the game
 local STAR_COLOR = "#ffd400"
 
@@ -115,7 +118,7 @@ table.freeze(Employees.ROLE_DESCRIPTIONS)
 
 -- What more Stars get each role, for the guide's Benefit line. The guide's steps are authored in the GuideUI itself
 Employees.ROLE_BENEFITS = {
-	[Employees.ROLES.COOKER] = `More <font color="{STAR_COLOR}">Stars</font> = works faster and cooks better BBQ`,
+	[Employees.ROLES.COOKER] = `More <font color="{STAR_COLOR}">Stars</font> = works faster, cooks better BBQ and runs more Grills at once`,
 	[Employees.ROLES.BBQ_MAKER] = `More <font color="{STAR_COLOR}">Stars</font> = works faster and carries more stuff`,
 	[Employees.ROLES.SELLER] = `More <font color="{STAR_COLOR}">Stars</font> = works faster and gets you more money`,
 }
@@ -154,8 +157,10 @@ Employees.STATE_LABELS = {
 		Collect = "Picking Up BBQ",
 		ToGrill = "Taking BBQ to the Grill",
 		ToTend = "Helping at the Grill",
+		ToTendBack = "Going Back to the Grill",
 		Place = "Putting BBQ on the Grill",
 		Tend = "Waiting for BBQ",
+		TendReady = "Picking Up BBQ",
 		Pull = "Taking BBQ Off the Grill",
 		ToSell = "Taking BBQ to Sell",
 		Deliver = "Putting BBQ Out to Sell",
@@ -224,37 +229,54 @@ Employees.WANDER_PAUSE_MAX = 6
 -- The size a carried skewer is held at. One, not the customers' shrunken display size -- staff hold it as a player does
 Employees.CARRY_SKEWER_SCALE = 1
 
--- Behaviour is read off the star rating and never stored: a WORST value at 0 stars, a BEST at 5, and a gamma
--- bending the curve between. Above 1 holds the low end down, so the top of the ladder is the thing worth rolling for
+-- Behaviour is read off the star rating and never stored: a WORST value at MIN_STARS, a BEST at 5, and a
+-- gamma bending the curve between. Above 1 holds the low end down, so the top of the ladder is the thing
+-- worth rolling for
 
--- How far off its aim a cooker pulls, as a multiple of the perfect window's half-width in wall seconds.
--- Past 1 it misses the window entirely; the gamma keeps a 3-star sloppy so 4 and 5 are worth having
-Employees.COOK_ERROR_WORST = 1.5
+-- The lowest rating an employee can be hired at, so every WORST above describes the worst worker a player
+-- can actually get rather than a 0-star nobody is ever handed
+Employees.MIN_STARS = 0.25
+
+-- How far off its aim a cooker pulls, as a multiple of the perfect window's half-width in wall seconds. Wide
+-- at the bottom on purpose: the spread is what makes a poor chef's pull a gamble rather than a fixed penalty
+Employees.COOK_ERROR_WORST = 2.75
 Employees.COOK_ERROR_BEST = 0.08
-Employees.COOK_ERROR_GAMMA = 1.3
+Employees.COOK_ERROR_GAMMA = 1.4
 
--- Where in the perfect window it aims, as a fraction of it. A poor cooker aims early on purpose: a miss short
--- of the window lands Raw, which banks CookProgress and re-grills, where a miss past it is value burnt for good
-Employees.COOK_AIM_WORST = 0.35
-Employees.COOK_AIM_BEST = 0.5
-Employees.COOK_AIM_GAMMA = 1
+-- Where it pulls. Under 1 it's a fraction of the perfect window, 0 being the moment the bar turns green;
+-- over 1 it's that far again past the window, 2 landing exactly where a full bar starts reading Overcooked.
+-- Best is a hair off zero, since a finished cook only loses value from here -- a five star pulls on green.
+-- Worst sits deep in Cooked, so a poor chef's ordinary day is a nicely-cooked skewer and its bad one is burnt
+Employees.COOK_AIM_WORST = 1.45
+Employees.COOK_AIM_BEST = 0.05
+Employees.COOK_AIM_GAMMA = 1.5
 
 -- Lerped onto the rig's Humanoid. Deliberately narrow -- speed is flavour, the pull is the ladder
 Employees.WALK_SPEED_WORST = 12
 Employees.WALK_SPEED_BEST = 18
 Employees.WALK_SPEED_GAMMA = 1
 
--- Seconds spent at a station per action. The best is a tick, which is as near instant as the roster can step:
--- a five star is meant to read as sharp, and this runs four or five times over one skewer
-Employees.ACTION_OVERHEAD_WORST = 7
-Employees.ACTION_OVERHEAD_BEST = 0.25
-Employees.ACTION_OVERHEAD_GAMMA = 1
+-- Seconds spent taking something off a station: a stick off a stand, a skewer off a grill. The best is a
+-- tick, which is as near instant as the roster can step, and this runs twice over one skewer
+Employees.PICKUP_OVERHEAD_WORST = 6
+Employees.PICKUP_OVERHEAD_BEST = 0.25
+Employees.PICKUP_OVERHEAD_GAMMA = 1
+
+-- Seconds spent putting something down: onto a grill, out on the sell stand. Under the pickup, since setting
+-- a skewer down is the easier half of the job
+Employees.PLACE_OVERHEAD_WORST = 5
+Employees.PLACE_OVERHEAD_BEST = 0.25
+Employees.PLACE_OVERHEAD_GAMMA = 1
 
 -- Star marks where a cooker picks up another grill; the count is how many it has cleared. Gaps widen, since
--- capacity is raw throughput and has to stay contained. Authored ahead of the code that reads it
-Employees.GRILL_MARKS = { 0, 2.5, 4.5 }
+-- capacity is raw throughput and has to stay contained
+Employees.GRILL_MARKS = { 0, 3.5, 4.5 }
 
 table.freeze(Employees.GRILL_MARKS)
+
+-- Seconds of slack an errand must leave before every pull it's judged against: MoveTo settling short, a
+-- tick's jitter and the aim's own error. Short of it the cooker stays with what it has rather than gamble a cook
+Employees.GRILL_ERRAND_MARGIN = 3
 
 -- How much better than break-even the odds must look before a seller turns an offer down for more. This is
 -- what keeps a seller from ever being worse than none: the worst it can be is too cautious, which is the
@@ -276,8 +298,8 @@ table.freeze(Employees.SELL_PUSH_MARKS)
 
 -- Seconds spent weighing an offer before answering. Well inside SellNpc.OFFER_TIMEOUT, so even a slow one
 -- never lets an offer lapse -- a lapsed sale would be worse than no seller at all
-Employees.SELL_DECIDE_WORST = 5
-Employees.SELL_DECIDE_BEST = 1.5
+Employees.SELL_DECIDE_WORST = 4
+Employees.SELL_DECIDE_BEST = 0.3
 Employees.SELL_DECIDE_GAMMA = 1
 
 -- Star marks where a maker carries another ingredient per trip. This is its ladder: a one star fetches one
@@ -292,6 +314,12 @@ table.freeze(Employees.MAKER_CARRY_MARKS)
 Employees.MAKER_PICK_TOP_WORST = 1
 Employees.MAKER_PICK_TOP_BEST = 0.05
 Employees.MAKER_PICK_TOP_GAMMA = 1.2
+
+-- Seconds a maker spends threading one item onto a stand. Its own rather than PLACE_OVERHEAD, since a
+-- stick goes on item by item and the worst of that has to stay short enough to watch
+Employees.MAKER_BUILD_WORST = 3
+Employees.MAKER_BUILD_BEST = 0.25
+Employees.MAKER_BUILD_GAMMA = 1
 
 -- Seconds a stand stays the player's after they touch it, so a skewer being built by hand is left alone
 Employees.PLAYER_BUILD_COOLDOWN = 30
@@ -554,7 +582,12 @@ end
 
 -- A behaviour number for `skill` (0-1), bent by `gamma`. Every star-driven value goes through here.
 function Employees.InterpolateBySkill(worst: number, best: number, gamma: number, skill: number): number
-	return MathUtil.Lerp(worst, best, math.clamp(skill, 0, 1) ^ gamma)
+	-- Measured up from the floor rather than from 0, so WORST is what a MIN_STARS worker does and the whole
+	-- curve is spent on ratings a player can be handed
+	local floor = Employees.MIN_STARS / Rating.MAX_STARS
+	local reach = math.clamp((skill - floor) / (1 - floor), 0, 1)
+
+	return MathUtil.Lerp(worst, best, reach ^ gamma)
 end
 
 -- How many of `marks` a star rating has cleared, so an integer ladder reads off one authored array.

@@ -136,6 +136,17 @@ function CookStates.GetPerfectEnd(cookTime: number): number
 	return CookStates.RAW_END + window
 end
 
+-- Wall seconds past a full bar before it stops reading Cooked -- the grace a finished skewer has left on it.
+function CookStates.GetOvertimeStart(): number
+	for _, state in CookStates.Data do
+		if state.Overtime then
+			return state.Overtime
+		end
+	end
+
+	return 0
+end
+
 -- Where a cook run offline parks on the bar: the end of Raw, less a walk-up lead. Nil where the band can't spare one.
 function CookStates.GetOfflineStopBar(cookTime: number): number?
 	local rawEnd = CookStates.RAW_END * cookTime
@@ -278,9 +289,10 @@ function CookStates.GetElapsedForBar(
 		return 0
 	end
 
-	-- Wide enough to bracket any target -- the wobble lands back on cookTime and the stretch adds one window
+	-- Wide enough to bracket any target -- the wobble lands back on cookTime, the stretch adds one window,
+	-- and the grace covers a target past the bar, which is where an employee's own aim can sit
 	local low = 0
-	local high = cookTime * (1 + (windowStretch or 1))
+	local high = cookTime * (1 + (windowStretch or 1)) + CookStates.GetOvertimeStart()
 
 	-- To a millisecond, iteration-capped so a target outside the bracket ends rather than spins
 	for _ = 1, 64 do

@@ -9,6 +9,7 @@ local SellNpcManager = require(Managers.SellNpcManager)
 -- Shared
 local Shared = ReplicatedStorage.Shared
 local Employees = require(Shared.Config.Employees)
+local Rating = require(Shared.Config.Rating)
 
 -- Said while minding a stall with nothing on it, which is a different thing from minding a busy one
 local EMPTY_VARIANT = "Empty"
@@ -25,29 +26,21 @@ local Seller = {}
 -- Where a fresh seller starts: on its post. It has no Idle of its own -- minding the stall is the idle
 Seller.Initial = "Post"
 
--- What one more round is worth: the headroom left to the customer's cap, at their own average step.
-local function getExpectedGain(record): number
-	local headroom = record.value * record.counterCap - record.offer
-	if headroom <= 0 then
-		return 0
-	end
-
-	return headroom * (record.counterIncreaseMin + record.counterIncreaseMax) / 2
-end
-
--- Whether turning this offer down beats taking it. A walk-off doesn't cost the sale -- the skewers go back on the stand for the next customer -- so what's at risk is the wait for that customer, not the money on the table.
-local function shouldPush(employee, record): boolean
+-- Whether a seller of `skill` turning `record`'s offer down beats taking it. A walk-off doesn't cost the sale -- the skewers go back on the stand for the next customer -- so what's at risk is the wait for that customer, not the money on the table.
+function Seller.ShouldPush(skill: number, record): boolean
 	-- Under the first mark it never haggles, and the customer's own cap ends it either way
-	local rounds = Employees.GetTierFromStars(Employees.SELL_PUSH_MARKS, employee:GetStars())
+	local rounds = Employees.GetTierFromStars(Employees.SELL_PUSH_MARKS, Rating.ToStars(skill))
 	if record.counterRounds >= math.min(rounds, record.maxCounterRounds) then
 		return false
 	end
 
-	local gain = getExpectedGain(record)
-	if gain <= 0 then
+	-- What one more round is worth: the headroom left to the customer's cap, at their own average step
+	local headroom = record.value * record.counterCap - record.offer
+	if headroom <= 0 then
 		return false
 	end
 
+	local gain = headroom * (record.counterIncreaseMin + record.counterIncreaseMax) / 2
 	local chance = math.clamp(record.counterChance / 100, 0, 1)
 
 	-- What a walk-off really costs: this customer gone and the stall idle until the next one turns up
@@ -55,8 +48,12 @@ local function shouldPush(employee, record): boolean
 
 	-- The margin is the whole "never worse than none" guarantee: a cautious seller demands a bigger edge
 	-- before gambling, and being too cautious just means it accepted, which was always a safe outcome
-	local margin =
-		employee:GetCurveValue(Employees.SELL_MARGIN_WORST, Employees.SELL_MARGIN_BEST, Employees.SELL_MARGIN_GAMMA)
+	local margin = Employees.InterpolateBySkill(
+		Employees.SELL_MARGIN_WORST,
+		Employees.SELL_MARGIN_BEST,
+		Employees.SELL_MARGIN_GAMMA,
+		skill
+	)
 
 	return chance * gain > (1 - chance) * risk * (1 + margin)
 end
@@ -80,10 +77,7 @@ local function getPostPosition(employee): Vector3?
 		return post.Position + post.CFrame.RightVector * offset
 	end
 
-	local baseModel = employee:GetBaseModel()
-	local stalls = baseModel and baseModel:FindFirstChild("Stalls")
-	local sellStall = stalls and stalls:FindFirstChild("SellStall")
-	local stand = sellStall and sellStall:FindFirstChild("SkewerStand")
+	local stand = employee:GetSellStandPart()
 	if not stand then
 		return nil
 	end
@@ -199,7 +193,7 @@ Seller.Haggle = function(employee, now: number): string?
 		return nil
 	end
 
-	local push = shouldPush(employee, record)
+	local push = Seller.ShouldPush(employee.Record.Skill, record)
 
 	employee._answeredRound = record.counterRounds
 	employee:Say(if push then "Push" else "Accept")

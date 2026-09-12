@@ -61,16 +61,17 @@ local function isPlayerBuilding(employee, uid: string): boolean
 	return touchedAt > 0 and os.clock() - touchedAt < Employees.PLAYER_BUILD_COOLDOWN
 end
 
--- The slice of a ranked list this employee draws from, richest first. One at worst stars is the whole list.
-local function pickRanked(employee, ranked: { any })
+-- The slice of a ranked list a maker of `skill` draws from, richest first. One at worst stars is the whole list.
+function BbqMaker.PickRanked(skill: number, ranked: { any })
 	if #ranked == 0 then
 		return nil
 	end
 
-	local top = employee:GetCurveValue(
+	local top = Employees.InterpolateBySkill(
 		Employees.MAKER_PICK_TOP_WORST,
 		Employees.MAKER_PICK_TOP_BEST,
-		Employees.MAKER_PICK_TOP_GAMMA
+		Employees.MAKER_PICK_TOP_GAMMA,
+		skill
 	)
 
 	-- At least one, so even a perfect employee has something to draw from
@@ -80,7 +81,7 @@ local function pickRanked(employee, ranked: { any })
 end
 
 -- What a hut holds, richest first. Value per second of cook time rises with tier throughout the config, so the tier ladder is that ranking and needs no arithmetic.
-local function rankStoredIngredients(store): { string }
+function BbqMaker.RankStoredIngredients(store): { string }
 	local ids = {}
 
 	for ingredientId, amount in store.Ingredients do
@@ -103,7 +104,7 @@ local function rankStoredIngredients(store): { string }
 end
 
 -- What a hut holds in sticks, best first. Array order in the config is the tier, and capacity rises with it.
-local function rankStoredSticks(store): { string }
+function BbqMaker.RankStoredSticks(store): { string }
 	local ids = {}
 
 	for index = #Sticks.GetAllSticks(), 1, -1 do
@@ -129,10 +130,10 @@ local function findStockedHut(employee, data, needsStick: boolean): string?
 		end
 
 		if needsStick then
-			if #rankStoredSticks(store) > 0 then
+			if #BbqMaker.RankStoredSticks(store) > 0 then
 				return uid
 			end
-		elseif #rankStoredIngredients(store) > 0 then
+		elseif #BbqMaker.RankStoredIngredients(store) > 0 then
 			return uid
 		end
 	end
@@ -217,6 +218,15 @@ local function hoverNearStore(employee, now: number, data)
 			return employee:PickPointNear(home, Employees.HOVER_RADIUS)
 		end)
 	end
+end
+
+-- Seconds this maker spends putting one item on a stand, off its star.
+local function getBuildOverhead(employee): number
+	return employee:GetCurveValue(
+		Employees.MAKER_BUILD_WORST,
+		Employees.MAKER_BUILD_BEST,
+		Employees.MAKER_BUILD_GAMMA
+	)
 end
 
 -- Walks toward a station, giving up on a route it can't finish. Returns the state to move to, or nil to keep walking.
@@ -322,7 +332,7 @@ BbqMaker.Hover = function(employee, now: number): string?
 end
 
 BbqMaker.ToStore = function(employee, now: number): string?
-	return walkToStation(employee, now, employee._hutUid, "Fetch", employee:GetActionOverhead())
+	return walkToStation(employee, now, employee._hutUid, "Fetch", employee:GetPickupOverhead())
 end
 
 -- Takes a load out of the hut. Each item is withdrawn one at a time and banked into Load as it goes, so a hut picked up mid-fetch costs the rest of the trip rather than what's already in hand.
@@ -340,7 +350,7 @@ BbqMaker.Fetch = function(employee, _now: number): string?
 
 	-- An empty stand needs a stick under it before anything can go on
 	if type(record) ~= "table" then
-		local stickId = pickRanked(employee, rankStoredSticks(store))
+		local stickId = BbqMaker.PickRanked(employee.Record.Skill, BbqMaker.RankStoredSticks(store))
 
 		if not stickId or not EmployeeHutManager:TakeFromStore(employee.Player, employee._hutUid, "Sticks", stickId) then
 			employee:ReleaseStations()
@@ -355,7 +365,7 @@ BbqMaker.Fetch = function(employee, _now: number): string?
 	local carry = Employees.GetTierFromStars(Employees.MAKER_CARRY_MARKS, employee:GetStars())
 
 	for _ = 1, math.min(room, carry) do
-		local ingredientId = pickRanked(employee, rankStoredIngredients(store))
+		local ingredientId = BbqMaker.PickRanked(employee.Record.Skill, BbqMaker.RankStoredIngredients(store))
 		if not ingredientId then
 			break
 		end
@@ -380,7 +390,7 @@ BbqMaker.Fetch = function(employee, _now: number): string?
 end
 
 BbqMaker.ToBench = function(employee, now: number): string?
-	return walkToStation(employee, now, employee._buildUid, "Build", employee:GetActionOverhead())
+	return walkToStation(employee, now, employee._buildUid, "Build", getBuildOverhead(employee))
 end
 
 -- Threads the load onto the stand, one item per dwell. One at a time is what makes each ingredient drop in and sound like a player put it there.
@@ -442,7 +452,7 @@ BbqMaker.Build = function(employee, now: number): string?
 
 		-- Paced only while something's still in hand, or it stands about "making BBQ" with nothing to place
 		if #load.Ingredients > 0 then
-			employee:Dwell(now, employee:GetActionOverhead())
+			employee:Dwell(now, getBuildOverhead(employee))
 		end
 
 		return nil
@@ -457,7 +467,7 @@ BbqMaker.Build = function(employee, now: number): string?
 
 		-- Same rule: no wait after the one that empties its hands, so the finished line lands on the finish
 		if #load.Ingredients > 0 then
-			employee:Dwell(now, employee:GetActionOverhead())
+			employee:Dwell(now, getBuildOverhead(employee))
 		end
 	end
 

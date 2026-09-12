@@ -65,7 +65,7 @@ EmployeeHut.WORKER_PROMPT_MAX_DISTANCE = 12
 EmployeeHut.SLOTS_UI_NAME = "HutUI"
 
 -- What each slot costs, by slot number. Slot 1 comes with the repair; the length is how many slots there are
-EmployeeHut.SLOT_PRICES = { 0, 50_000, 150_000 }
+EmployeeHut.SLOT_PRICES = { 0, 50_000, 100_000 }
 
 table.freeze(EmployeeHut.SLOT_PRICES)
 
@@ -87,7 +87,7 @@ EmployeeHut.CELL_ROTATION = 3
 EmployeeHut.REPAIR_COST = 25_000
 
 -- How long the repair takes once bought. Stamped absolute, so it runs down while they're offline
-EmployeeHut.REPAIR_DURATION = 10
+EmployeeHut.REPAIR_DURATION = 5 --20 * 60
 
 -- The base-model attribute the repair's deadline is published under, so the server write and the client read can't drift. Nil while nothing is running
 EmployeeHut.REPAIR_ENDS_ATTRIBUTE = "HutRepairEndsAt"

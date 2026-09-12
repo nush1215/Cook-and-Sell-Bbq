@@ -29,6 +29,8 @@ local RatingManager
 local HiringBoardManager
 local EmployeeManager
 local EmployeeHutManager
+local FreeWorkersManager
+local OfflineEarningManager
 
 -- The one place AnalyticsService is spoken to: subscribes to every manager's signals and turns each into an event. Every call is spawned and pcall'd, so it can't block or error gameplay.
 local AnalyticsManager = {
@@ -89,6 +91,16 @@ local function logWorkerFunnelStep(player: Player, stepIndex: number, stepName: 
 	end)
 end
 
+-- Logs one step of the free workers funnel. Its own rather than steps on the hut's, since every player meets
+-- it at one fixed point and either takes one or does not. Runs once per player, so a repeated step only counts the first time.
+local function logFreeWorkerFunnelStep(player: Player, stepIndex: number, stepName: string)
+	task.spawn(function()
+		pcall(function()
+			AnalyticsService:LogFunnelStepEvent(player, "Free Workers 1", nil, stepIndex, stepName)
+		end)
+	end)
+end
+
 -- Returns the tier an order reads as, its slots averaged and rounded to the nearest band.
 local function getOrderTier(order): string
 	return Ingredients.Tiers[math.round(order.TierIndex)].Id
@@ -117,6 +129,25 @@ local function getSessionLengthBucket(sessionLength: number): string
 	end
 
 	return "60m+"
+end
+
+-- Buckets a stretch of time away, which runs to a day where a session runs to an hour.
+local function getAwayBucket(awaySeconds: number): string
+	local minutes = awaySeconds / 60
+
+	if minutes < 5 then
+		return "0-5m"
+	elseif minutes < 30 then
+		return "5-30m"
+	elseif minutes < 120 then
+		return "30m-2h"
+	elseif minutes < 480 then
+		return "2-8h"
+	elseif minutes < 1440 then
+		return "8-24h"
+	end
+
+	return "24h+"
 end
 
 -- Buckets a rating, a two-decimal star being too granular to break a chart down by. Unrated is its own band.
@@ -207,6 +238,8 @@ function AnalyticsManager:OnInit()
 	HiringBoardManager = require(script.Parent.HiringBoardManager)
 	EmployeeManager = require(script.Parent.EmployeeManager)
 	EmployeeHutManager = require(script.Parent.EmployeeHutManager)
+	FreeWorkersManager = require(script.Parent.FreeWorkersManager)
+	OfflineEarningManager = require(script.Parent.OfflineEarningManager)
 end
 
 function AnalyticsManager:OnStart()
@@ -374,6 +407,27 @@ function AnalyticsManager:OnStart()
 			logWorkerFunnelStep(player, 4, "Hired Worker")
 		end
 	end)
+	-- The three free workers, prompt to equipped: shown them, looked at one, looked at all three, took one,
+	-- put them to work. The funnel's 1 is versioning, so changing its steps means a 2
+	FreeWorkersManager.OnFreeWorkersOpened:Connect(function(player)
+		logFreeWorkerFunnelStep(player, 1, "Opened Panel")
+	end)
+	FreeWorkersManager.OnFreeWorkerLookedAt:Connect(function(player, seen, total)
+		if seen == 1 then
+			logFreeWorkerFunnelStep(player, 2, "Looked at One")
+		end
+
+		-- The step the Hire button is gated on, so this is where a player who never got past the guard drops
+		if seen == total then
+			logFreeWorkerFunnelStep(player, 3, "Looked at All")
+		end
+	end)
+	-- The free one is genuinely their first worker, so it reports the hire step the board would have too
+	FreeWorkersManager.OnFreeWorkerClaimed:Connect(function(player, _, candidate)
+		logCustom(player, "Free Worker Claimed", 1, candidate.Role)
+		logWorkerFunnelStep(player, 4, "Hired Worker")
+		logFreeWorkerFunnelStep(player, 4, "Took a Worker")
+	end)
 	-- Every equip reports the step, since the funnel only ever keeps a player's first
 	EmployeeManager.OnEmployeeSlotChanged:Connect(function(player, record, slot, previousSlot)
 		logCustom(
@@ -387,6 +441,10 @@ function AnalyticsManager:OnStart()
 
 		if slot then
 			logWorkerFunnelStep(player, 5, "Equipped Worker")
+
+			-- The hut panel is the only place a worker is equipped, and the free three stand in front of it until
+			-- one is taken -- so a first equip always follows the claim, whichever worker it turns out to be
+			logFreeWorkerFunnelStep(player, 5, "Equipped Worker")
 		end
 	end)
 	EmployeeHutManager.OnHutSlotPurchased:Connect(function(player, slot, cost, method)
@@ -409,6 +467,19 @@ function AnalyticsManager:OnStart()
 			1,
 			itemId,
 			if kind == "Ingredients" then getIngredientTier(itemId) else "Stick"
+		)
+	end)
+
+	-- What the workers did while the player was away, at the pass rather than the claim: what stopped them is
+	-- the tuning signal, and the claim's Bux land as an economy event of their own
+	OfflineEarningManager.OnOfflineEarningsSimulated:Connect(function(player, report)
+		logCustom(
+			player,
+			"Offline Earnings",
+			report.Earned,
+			getAwayBucket(report.AwaySeconds),
+			report.Stopped or "Working",
+			tostring(report.Sold)
 		)
 	end)
 

@@ -25,6 +25,8 @@ return {
 		HutRepaired = false,
 		-- When the repair lands; -1 is none running. Absolute, so it finishes while they're offline
 		HutRepairEndsAt = -1,
+		-- The three free workers offered on the first open of a repaired hut; true once one has been taken
+		FreeWorkersClaimed = false,
 		-- Hired employees, keyed by a uid minted at hire. Skill is 0-1, not stars -- see docs/player-data.md
 		Employees = {}, -- [uid] = { Role, Skill, Body, Name, Cosmetics, Slot?, Carrying?, Load?, HiredAt }
 		-- Hut slots unlocked, counted from slot 1. Bought in order, so 3 means slots 1-3; slot 1 comes with the repair
@@ -35,6 +37,9 @@ return {
 		-- What each placed hut holds for the staff. Written on the first deposit, so an untouched hut has
 		-- no entry at all -- see docs/player-data.md
 		HutStorage = {}, -- [structureUid] = { Ingredients = [ingredientId] = amount, Sticks = [stickId] = amount }
+		-- When they were last in the game, absolute on workspace:GetServerTimeNow(); 0 is never. What the
+		-- workers' time away is measured from on the next join -- see docs/player-data.md
+		LastSeenAt = 0,
 
 		-- Core Shop Stuff
 		StarterPackStart = 0,
@@ -123,7 +128,7 @@ return {
 
 		-- Tutorial
 		-- The onboarding runs once; leaving unfinished wipes gameplay progress on the way out
-		TutorialCompleted = true,
+		TutorialCompleted = false,
 		-- Furthest funnel step reached, for analytics only. An index into that variant's own funnel
 		TutorialStep = 0,
 
@@ -157,5 +162,6 @@ return {
 
 	ToLeaderstats = {
 		Currency = { UseSuffix = true, Name = "Bux", Prefix = "$" },
+		SkewersSold = "Bbq Sold",
 	},
 }

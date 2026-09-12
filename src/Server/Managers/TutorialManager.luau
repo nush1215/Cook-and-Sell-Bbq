@@ -66,6 +66,8 @@ local PROGRESS_RESET_KEYS = {
 	"HutStorage",
 	-- The ledger of who they hired this window, which would otherwise outlive the staff it was spent on
 	"HiringBoard",
+	-- Or the three free ones would be spent on staff the wipe took, and never offered again
+	"FreeWorkersClaimed",
 
 	"Ingredients",
 	"PendingRolls",

@@ -100,6 +100,17 @@ function EmployeeManager:GetRoleIndex(player: Player, role: string, uid: string)
 	return index
 end
 
+-- Whether another of `role` on the roster is free for work, so a busy one leaves the next job to them rather than hoarding it.
+function EmployeeManager:HasFreeEmployee(player: Player, role: string, exceptUid: string): boolean
+	for uid, employee in self._employees[player] or {} do
+		if uid ~= exceptUid and employee.Record.Role == role and employee:IsFree() then
+			return true
+		end
+	end
+
+	return false
+end
+
 function EmployeeManager:ReleaseStation(player: Player, role: string, uid: string)
 	local claims = self._claims[player]
 	if claims then
@@ -204,10 +215,11 @@ function EmployeeManager:SetEmployeeSlot(player: Player, uid: string, slot: numb
 
 	PlayerDataManager:SetPlayerDataKey(player, { "Employees", uid, "Slot" }, slot)
 
-	-- Carrying and Load stay on the record while unequipped, so a worker put back picks up what it was holding
 	if slot then
 		self:AddEmployee(player, uid, data.Employees[uid], data)
 	else
+		-- Handed back rather than kept: a worker put down mid-trip would otherwise hold the stock out of play until they're equipped again
+		self:ReturnEmployeeStock(player, uid, record)
 		self:RemoveFromRoster(player, uid)
 	end
 
@@ -322,17 +334,12 @@ function EmployeeManager:HireEmployee(
 	return true, `Hired {record.Name}, a {Rating.ToStars(record.Skill)} star {role}, for {player.Name}.`
 end
 
--- Fires one employee for good, equipped or not. Anything in their hands goes back to the player rather than off the books.
-function EmployeeManager:FireEmployee(player: Player, uid: string): boolean
-	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
-	local record = hasData and data.Employees[uid]
-	if not record then
-		return false
-	end
-
+-- Hands back whatever one employee is holding and clears it off their record, so taking them off the job never takes the stock with it.
+function EmployeeManager:ReturnEmployeeStock(player: Player, uid: string, record: Employees.Employee)
 	-- Skipped equipping: they're being handed a skewer they didn't ask for, mid-whatever they were doing
 	if record.Carrying then
 		StickManager:AddFilledStick(player, record.Carrying, true)
+		PlayerDataManager:SetPlayerDataKey(player, { "Employees", uid, "Carrying" }, nil)
 	end
 
 	-- A maker's fetched load goes to the player rather than back to the hut, which may since have been picked up
@@ -345,7 +352,20 @@ function EmployeeManager:FireEmployee(player: Player, uid: string): boolean
 		for _, ingredientId in load.Ingredients do
 			IngredientManager:GrantIngredient(player, ingredientId, 1)
 		end
+
+		PlayerDataManager:SetPlayerDataKey(player, { "Employees", uid, "Load" }, nil)
 	end
+end
+
+-- Fires one employee for good, equipped or not. Anything in their hands goes back to the player rather than off the books.
+function EmployeeManager:FireEmployee(player: Player, uid: string): boolean
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	local record = hasData and data.Employees[uid]
+	if not record then
+		return false
+	end
+
+	self:ReturnEmployeeStock(player, uid, record)
 
 	self:RemoveFromRoster(player, uid)
 

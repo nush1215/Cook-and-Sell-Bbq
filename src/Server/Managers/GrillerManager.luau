@@ -592,13 +592,17 @@ function GrillerManager:GrantSkipCookFromProduct(player: Player)
 	)
 end
 
+-- Wall seconds a skewer of `ingredients` cooks for on the griller at `uid`: the whole bar, at that grill's own speed.
+function GrillerManager:GetCookTime(data, uid: string, ingredients: { string }): number
+	local structure = self:GetGrillerStructure(data, uid)
+
+	return Ingredients.GetTotalCookTime(ingredients) / CookStates.RAW_END / (structure and structure.CookSpeed or 1)
+end
+
 -- Builds the record that lights `record`'s skewer, its whole cook stamped up front. Paired with SettleCookRecord.
 function GrillerManager:StartCookRecord(player: Player, data, uid: string, record)
 	local structure = self:GetGrillerStructure(data, uid)
-
-	local cookTime = Ingredients.GetTotalCookTime(record.Ingredients)
-		/ CookStates.RAW_END
-		/ (structure and structure.CookSpeed or 1)
+	local cookTime = self:GetCookTime(data, uid, record.Ingredients)
 
 	-- A skewer whose ingredients add up to no cook still goes down, just unlit; the take hands it back.
 	local cooking = cookTime > 0

@@ -68,6 +68,8 @@ function Employee.new(manager, player: Player, uid: string, record: Employees.Em
 		-- A step can yield on a data read, so one in flight is skipped rather than run twice
 		_busy = false,
 		_dwellUntil = 0,
+		-- A wait the billboard counts down that isn't a dwell, so a solved wait can still be spent on its feet
+		_countdownUntil = 0,
 		_nextPollAt = 0,
 
 		_walkTarget = nil,
@@ -82,10 +84,10 @@ function Employee.new(manager, player: Player, uid: string, record: Employees.Em
 
 		_publishedDeadline = nil, -- the last deadline written to the rig, so a tick only writes on a change
 
-		_pullAt = 0, -- when this cook should come off, solved once at Place
-		-- when it starts reaching for it, an action's overhead earlier so the skewer leaves the grill on time
-		_reachAt = 0,
-		_standUid = nil, -- the stick stand it has claimed, and the griller it's cooking on
+		-- Every cook a cooker is timing, by griller uid: when it comes off, when to reach for it, when its
+		-- window opens, and the light it was solved against. More than one only up the GRILL_MARKS ladder
+		_cooks = {},
+		_standUid = nil, -- the stick stand it has claimed, and the griller this leg is about
 		_grillUid = nil,
 
 		_hutUid = nil, -- the hut a maker is drawing from, and the stand it's building on
@@ -122,6 +124,15 @@ function Employee:GetCorePart(name: string): BasePart?
 	local core = baseModel and baseModel:FindFirstChild("Core")
 
 	return core and core:FindFirstChild(name)
+end
+
+-- The base's sell stand part, where a cooker puts BBQ out and a seller minds the counter. Nil while the base has no stall.
+function Employee:GetSellStandPart(): BasePart?
+	local baseModel = self:GetBaseModel()
+	local stalls = baseModel and baseModel:FindFirstChild("Stalls")
+	local sellStall = stalls and stalls:FindFirstChild("SellStall")
+
+	return sellStall and sellStall:FindFirstChild("SkewerStand")
 end
 
 -- A placed structure's model, found by uid. Every structure is named for its uid, so this needs no cache.
@@ -485,6 +496,21 @@ function Employee:GetRoleIndex(): number
 	return self.Manager:GetRoleIndex(self.Player, self.Record.Role, self.Uid)
 end
 
+-- Whether it's between jobs: in its role's opening state with nothing in hand and no cook on the go.
+function Employee:IsFree(): boolean
+	local states = Roles[self.Record.Role]
+
+	return self.State == (states and states.Initial or "Idle")
+		and not self.Record.Carrying
+		and not self.Record.Load
+		and next(self._cooks) == nil
+end
+
+-- Whether another of its role is free for work, so a busy one leaves the next job to them rather than hoarding it.
+function Employee:HasFreeColleague(): boolean
+	return self.Manager:HasFreeEmployee(self.Player, self.Record.Role, self.Uid)
+end
+
 -- Gives one station back while keeping the rest, for a run that's finished with a station but not with its work.
 function Employee:ReleaseStation(uid: string)
 	self.Manager:ReleaseStation(self.Player, self.Record.Role, uid)
@@ -494,6 +520,7 @@ end
 function Employee:ReleaseStations()
 	self.Manager:ReleaseStations(self.Player, self.Uid)
 
+	self._cooks = {}
 	self._standUid = nil
 	self._grillUid = nil
 	self._buildUid = nil
@@ -506,6 +533,7 @@ function Employee:SetState(state: string)
 	self._walkTarget = nil
 	self._wanderTarget = nil
 	self._faced = false
+	self._countdownUntil = 0
 
 	self:SetVariant(nil)
 
@@ -529,9 +557,10 @@ end
 
 -- Mirrors when the current job finishes onto the rig, so the billboard counts down on its own. Written only on a change, since this is read every tick.
 function Employee:PublishDeadline(now: number)
-	-- Only the pauses at a station get a countdown. A cook already has the griller's own bar over it, and
-	-- two clocks on one wait read as two different things happening
-	local deadline = if self._dwellUntil > now then self._dwellUntil else nil
+	-- Only a wait whose end is already solved gets a clock. A cook still coming up to its window has the
+	-- griller's own bar over it, and two clocks on one wait read as two different things happening
+	local waitUntil = math.max(self._dwellUntil, self._countdownUntil)
+	local deadline = if waitUntil > now then waitUntil else nil
 
 	if deadline ~= self._publishedDeadline then
 		self._publishedDeadline = deadline
@@ -596,12 +625,26 @@ function Employee:IsDwelling(now: number): boolean
 	return now < self._dwellUntil
 end
 
--- Seconds this employee spends on one action, off its star.
-function Employee:GetActionOverhead(): number
+-- Counts the billboard down to `deadline` without holding the employee still, for a wait it spends on its feet.
+function Employee:CountDownTo(deadline: number)
+	self._countdownUntil = deadline
+end
+
+-- Seconds this employee spends taking something off a station, off its star.
+function Employee:GetPickupOverhead(): number
 	return self:GetCurveValue(
-		Employees.ACTION_OVERHEAD_WORST,
-		Employees.ACTION_OVERHEAD_BEST,
-		Employees.ACTION_OVERHEAD_GAMMA
+		Employees.PICKUP_OVERHEAD_WORST,
+		Employees.PICKUP_OVERHEAD_BEST,
+		Employees.PICKUP_OVERHEAD_GAMMA
+	)
+end
+
+-- Seconds this employee spends putting something down on a station, off its star.
+function Employee:GetPlaceOverhead(): number
+	return self:GetCurveValue(
+		Employees.PLACE_OVERHEAD_WORST,
+		Employees.PLACE_OVERHEAD_BEST,
+		Employees.PLACE_OVERHEAD_GAMMA
 	)
 end
 

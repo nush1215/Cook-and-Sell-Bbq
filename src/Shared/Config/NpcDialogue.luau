@@ -2858,6 +2858,14 @@ local NpcDialogue = {
 		"Beautiful day for grilling",
 	},
 
+	-- Handing the owner a raw skewer it has no grill for, rather than holding it while its own cooks burn
+	EmployeeIdleHandBack = {
+		"Every grill's busy, you hold this",
+		"No grill for this one, chef",
+		"Take this one off me",
+		"You keep that one, I'm full up",
+	},
+
 	-- Walking over to a stick stand that's been filled
 	EmployeeToStand = {
 		"On my way",
@@ -3020,6 +3028,18 @@ local NpcDialogue = {
 		"I'll take it from here",
 	},
 
+	-- Heading back to a grill it already has going, after a delivery or a trip to fetch the next stick
+	EmployeeToTendBack = {
+		"Back to my grill",
+		"Don't you burn on me",
+		"Coming back for you",
+		"Right, where was I",
+		"Two on the go, easy",
+		"Multitasking, chef",
+		"Hold on, nearly there",
+		"Didn't forget about you",
+	},
+
 	-- Setting the skewer down on the griller and lighting it
 	EmployeePlace = {
 		"On it goes",
@@ -3086,6 +3106,35 @@ local NpcDialogue = {
 		"Good things take time",
 		"Focus mode",
 		"Nobody talk to me rn",
+	},
+
+	-- Stood at the griller with the cook already in the window, waiting out the last of its own timing
+	EmployeeTendReady = {
+		"That's the one",
+		"Right, that's ready",
+		"Perfect, going in",
+		"This is the moment",
+		"That's my window",
+		"Reaching in now",
+		"Look at that colour",
+		"Now we're talking",
+		"There it is",
+		"That's it, that's it",
+		"Cooked to the second",
+		"That's the sweet spot",
+		"Moving in",
+		"Hands ready",
+		"Told you I'd know",
+		"Ooh, that's the one",
+		"About to grab it",
+		"Watch this bit",
+		"My favourite part",
+		"Textbook, this one",
+		"Don't blink",
+		"In we go",
+		"Squaring it up",
+		"Bang on the window",
+		"Coming in for it",
 	},
 
 	-- Taking the cook off the grill. The base lines, for a cook with no sibling below

@@ -4,6 +4,10 @@
 -- Shared
 local MathUtil = require(script.Parent.Parent.MathUtil)
 
+-- Config
+local Employees = require(script.Parent.Employees)
+local Rating = require(script.Parent.Rating)
+
 --
 export type Tier = {
 	Id: string, -- also the key into Shared.Colors this tier takes its label colour from
@@ -60,7 +64,7 @@ HiringBoard.SCREEN_UI = "HireEmployeeUI"
 HiringBoard.ENTRY_COUNT = 4
 
 -- Seconds per window. The seed, and so the four workers, is shared across every server
-HiringBoard.ROTATE_INTERVAL = 12.5 * 60
+HiringBoard.ROTATE_INTERVAL = 30 * 60
 
 -- Stride between window seeds, matching the shops': headroom so a future re-roll can't land on the next
 -- natural window and spoil it before it opens
@@ -78,20 +82,25 @@ HiringBoard.TIMER_PREFIX = "New Workers in "
 HiringBoard.TIMER_COLOR = "#55ff00"
 
 -- The star bands, drawn against each other by weight. Ordered rather than keyed, since the draw walks it
--- and a dictionary's order would differ between servers -- see docs/balance.md
+-- and a dictionary's order would differ between servers -- see docs/balance.md. Common opens on
+-- Employees.MIN_STARS, so the worst worker the board offers is the one every WORST value is written against
 HiringBoard.TIERS = {
-	{ Id = "Common", Weight = 45, MinStars = 0.5, MaxStars = 1.5 },
+	{ Id = "Common", Weight = 45, MinStars = Employees.MIN_STARS, MaxStars = 1.5 },
 	{ Id = "Uncommon", Weight = 27, MinStars = 1.5, MaxStars = 2.5 },
 	{ Id = "Rare", Weight = 16, MinStars = 2.5, MaxStars = 3.5 },
 	{ Id = "Epic", Weight = 9, MinStars = 3.5, MaxStars = 4.5 },
-	{ Id = "Legendary", Weight = 3, MinStars = 4.5, MaxStars = 5 },
+	{ Id = "Legendary", Weight = 1, MinStars = 4.5, MaxStars = 5 },
 }
 
 table.freeze(HiringBoard.TIERS)
 
--- Cubed, so the gap between a four and a five star is the thing worth saving several windows for. A one star
--- is pocket change at $500; a five is $62,500, against the hut repair's $25,000
-HiringBoard.PRICE_BASE = 500
+-- The two ends of the ladder: what the worst worker the board can offer costs, and what a five star does.
+-- Anchored rather than grown off a base, so moving either end moves every price between them with it
+HiringBoard.MIN_PRICE = 1_000
+HiringBoard.MAX_PRICE = 125_000
+
+-- Cubed, so the gap between a four and a five star is the thing worth saving several windows for. A one
+-- star is $1,500; a five is the whole $125,000, against the hut repair's $25,000
 HiringBoard.PRICE_EXPONENT = 3
 
 -- Rounded to this, so a price reads as a price rather than as a formula's output
@@ -99,12 +108,13 @@ HiringBoard.PRICE_ROUNDING = 100
 
 -- What a worker of `stars` costs. The curve, not a table, so retuning it moves every star rating at once.
 function HiringBoard.GetPrice(stars: number): number
-	local raw = HiringBoard.PRICE_BASE * stars ^ HiringBoard.PRICE_EXPONENT
+	-- Measured up from the floor the same way Employees.InterpolateBySkill is, so the whole curve is spent
+	-- on ratings the board can actually roll rather than on a 0-star nobody is ever offered
+	local floor = Employees.MIN_STARS
+	local reach = math.clamp((stars - floor) / (Rating.MAX_STARS - floor), 0, 1)
+	local raw = MathUtil.Lerp(HiringBoard.MIN_PRICE, HiringBoard.MAX_PRICE, reach ^ HiringBoard.PRICE_EXPONENT)
 
-	return math.max(
-		math.round(raw / HiringBoard.PRICE_ROUNDING) * HiringBoard.PRICE_ROUNDING,
-		HiringBoard.PRICE_ROUNDING
-	)
+	return math.round(raw / HiringBoard.PRICE_ROUNDING) * HiringBoard.PRICE_ROUNDING
 end
 
 -- The tier with this id, for the label colour. Falls back to the first, so a retune can't return nil.

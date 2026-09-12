@@ -20,6 +20,7 @@ local HutStorage = require(script.HutStorage)
 
 -- Controllers
 local WorkerHutController = require(script.Parent.WorkerHutController)
+local FreeWorkersController = require(script.Parent.FreeWorkersController)
 local UIController = require(script.Parent.UIController)
 local PlayerDataController = require(script.Parent.PlayerDataController)
 
@@ -204,8 +205,13 @@ function HutStorageController:_buildStorageRows()
 	end
 end
 
--- Opens the Worker Hut panel, where the hut's slots are bought and its workers equipped.
+-- Opens the Worker Hut panel, where the hut's slots are bought and its workers equipped. The first open goes to the three free Workers instead, and the hut's own panel follows once one has been taken.
 function HutStorageController:RequestOpenWorkerHut()
+	if FreeWorkersController:ShouldOffer() then
+		FreeWorkersController:Open()
+		return
+	end
+
 	WorkerHutController:Open()
 end
 

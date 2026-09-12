@@ -318,6 +318,17 @@ It belongs to the **player, not a hut**. `HutStorage` is keyed by structure uid,
 placing it again mints a new uid, and slots paid for with currency can't be allowed to vanish on a move. It's
 in `TutorialManager`'s `PROGRESS_RESET_KEYS` beside `Employees`.
 
+**`FreeWorkersClaimed`** — whether the three free workers have been taken. The first time a repaired hut is
+opened the hut's own panel is held back for a panel of three candidates, one per role and all
+`Config.FreeWorkers.STARS`, and exactly one of them is kept for nothing.
+
+**The three themselves are not stored.** `Config.FreeWorkers.RollCandidates` walks one `Random.new(userId)`,
+so the client draws the same three the server reads the claim against and the same faces come back every
+session — the claim sends a slot number and nothing else. The flag is the whole of the state, and it is what
+makes the offer one-time: `FreeWorkersManager:ClaimFreeWorker` refuses a second claim, and the client reads it
+to decide which panel the hut's Worker prompt opens. It sits in `TutorialManager`'s `PROGRESS_RESET_KEYS`
+beside `HutRepaired` and `Employees`, or a wipe would spend the three on staff it then took away.
+
 Portraits are **not** saved. `EmployeeManager:BakeEmployeePortrait` dresses one per worker on handover and at
 hire, into a disabled `EmployeePortraits` ScreenGui in the owner's `PlayerGui` — which only that player is
 sent — and the hut panel clones them into its viewports.
@@ -360,6 +371,26 @@ empty sticks only — a filled skewer is the cooker's to carry, and carries a wh
 Returning a hut's stock on pickup writes the counts back **directly** rather than through
 `IngredientManager:GrantIngredient`. That method records an obtain against `IngredientIndex`, so routing a
 player's own stored stock through it would count everything as newly discovered and inflate their index.
+
+**`LastSeenAt`** — when the player was last known to be in the game, absolute on `workspace:GetServerTimeNow()`
+like the other stamps that have to keep running while they're away, with `0` as "never" (the `LastSaleAt`
+doctrine: a profile from before the key gets nothing on its first join rather than a day's credit). It is what
+`OfflineEarningManager` measures the time away from, and it is written three times over: on the last save,
+every `OfflineEarnings.HEARTBEAT_INTERVAL` while they play, and again the moment the pass has read it on
+join. The heartbeat is the one that isn't obvious — ProfileStore's auto-save never runs the last-save hook,
+so without it a server that died would hand the whole session back as time away on the next join.
+
+The pass itself runs off a **post-load hook** (`PlayerDataManager:RegisterPostLoadCallback`), the mirror of
+the pre-cleanup one: right after `Reconcile`, before the replica exists, mutating the data directly. That is
+why nothing else has to know about it — the chest, the stick stands, the grills and the sell stand are all
+written before `Base:AssignOwner` renders them, and the client's first snapshot already carries the result.
+
+**What it does not save.** The claim (`Made`, `Sold`, `Earned`) lives in server memory until it's pressed,
+and a player who leaves without pressing it is paid straight into `Currency`/`TotalEarned` on the last save —
+the sibling project's `OfflineEarningManager` doctrine. Offline sales bump the lifetime counters
+(`SkewersCooked`, `SkewersSold`, `SalesCompleted`, the two cook-state tallies) but never `RecentSales` or
+`LastSaleAt`: the rating window stays the player's own cooking, and a checking customer still reads their
+last *real* sale.
 
 ## Tutorial
 
