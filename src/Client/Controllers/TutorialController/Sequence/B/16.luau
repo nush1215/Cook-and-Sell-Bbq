@@ -1,5 +1,6 @@
 -- Step 16: take the Base teleport home. Ends on standing at PlayerSpawn, re-resolved per check -- the base streams out over at the store and returns as a new model, so a held reference is dead.
 local HudController = require(script.Parent.Parent.Parent.Parent.HudController)
+local InputController = require(script.Parent.Parent.Parent.Parent.InputController)
 
 -- The bar the Base button sits on, held down for the rest of the run by Start
 local TOP_BAR_FRAME = "Top"
@@ -13,7 +14,10 @@ return function(self)
 	local spotlight = self:SpotlightHudButton("Base")
 
 	self:AwaitGoal(nil, {
-		Description = `Click the {self:Emphasize("Base")} button to go home`,
+		-- A function, so a device switch mid-beat re-words it
+		Description = function()
+			return `{InputController:GetActivationVerb()} the {self:Emphasize("Base")} button to go home`
+		end,
 		Wait = function()
 			local function atBase(): boolean
 				local base = self:GetBaseIfPresent()

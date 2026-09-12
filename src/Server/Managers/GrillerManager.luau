@@ -347,6 +347,84 @@ function GrillerManager:ToggleGrillStick(player: Player, uid: string)
 	self._toggling[player] = nil
 end
 
+-- Settles a running cook and counts it, under the lock that stops one cook settling twice. Nil when another take holds it. The lock stays held: the caller drops it once the griller is cleared.
+function GrillerManager:_settleCookUnderStopLock(player: Player, data, uid: string, record, stoppedAt: number, method: string)
+	if self._stopping[player] then
+		return nil, nil
+	end
+	self._stopping[player] = true
+
+	local settled, cookState = self:SettleCookRecord(data, uid, record, stoppedAt)
+	self:RecordCookResult(player, cookState, stoppedAt - record.CookStartedAt, method)
+
+	return settled, cookState
+end
+
+-- Puts an already-resolved skewer on a griller and lights it, for an employee carrying one rather than a player holding one.
+function GrillerManager:PlaceSkewerOnGriller(player: Player, uid: string, record): boolean
+	if self._toggling[player] then
+		return false
+	end
+	self._toggling[player] = true
+
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		self._toggling[player] = nil
+		return false
+	end
+
+	-- Re-read after the yield, so a griller the player filled in the meantime isn't cooked over
+	if not self:OwnsGrillerStructure(data, uid) or data.Grillers[uid] then
+		self._toggling[player] = nil
+		return false
+	end
+
+	PlayerDataManager:SetPlayerDataKey(player, { "Grillers", uid }, self:StartCookRecord(player, data, uid, record))
+
+	self._toggling[player] = nil
+
+	return true
+end
+
+-- Settles an employee's pull and clears the griller, handing the skewer straight back rather than into the owner's inventory. Nil if the cook is already settling.
+function GrillerManager:TakeSkewerFromGriller(player: Player, uid: string, stoppedAt: number)
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		return nil
+	end
+
+	local record = data.Grillers[uid]
+	if not record then
+		return nil
+	end
+
+	local settled = record
+	local cookState
+
+	if record.Cooking then
+		settled, cookState = self:_settleCookUnderStopLock(player, data, uid, record, stoppedAt, "Employee")
+		if not settled then
+			return nil
+		end
+	end
+
+	PlayerDataManager:SetPlayerDataKey(player, { "Grillers", uid }, nil)
+
+	-- Only dropped on the branch that took it, as the hand-back path does
+	if cookState then
+		self._stopping[player] = nil
+	end
+
+	return {
+		StickId = settled.StickId,
+		Ingredients = table.clone(settled.Ingredients),
+		Cooked = settled.Cooked,
+		CookState = settled.CookState,
+		CookProgress = settled.CookProgress,
+		Mutation = settled.Mutation,
+	}
+end
+
 -- Hands a griller's skewer back as a tool, settling its cook. Returns false if the other entry point is already settling it.
 function GrillerManager:ReturnContentsToPlayer(
 	player: Player,
@@ -364,21 +442,19 @@ function GrillerManager:ReturnContentsToPlayer(
 		local settledAt = stoppedAt
 			or (workspace:GetServerTimeNow() - math.min(player:GetNetworkPing(), MAX_STOP_COMPENSATION))
 
-		-- Held through the hand-back, since AddFilledStick yields and the caller clears Grillers[uid] after
-		if self._stopping[player] then
-			return false
-		end
-		self._stopping[player] = true
-
-		settled, cookState = self:SettleCookRecord(data, uid, record, settledAt)
-
 		-- Real, unwarped seconds. A hand take is a timing call; a griller taken down out from under a cook isn't
-		self:RecordCookResult(
+		settled, cookState = self:_settleCookUnderStopLock(
 			player,
-			cookState,
-			settledAt - record.CookStartedAt,
+			data,
+			uid,
+			record,
+			settledAt,
 			if fromPickup then "PickedUp" else "Timed"
 		)
+
+		if not settled then
+			return false
+		end
 	end
 
 	StickManager:AddFilledStick(player, {
@@ -516,13 +592,17 @@ function GrillerManager:GrantSkipCookFromProduct(player: Player)
 	)
 end
 
+-- Wall seconds a skewer of `ingredients` cooks for on the griller at `uid`: the whole bar, at that grill's own speed.
+function GrillerManager:GetCookTime(data, uid: string, ingredients: { string }): number
+	local structure = self:GetGrillerStructure(data, uid)
+
+	return Ingredients.GetTotalCookTime(ingredients) / CookStates.RAW_END / (structure and structure.CookSpeed or 1)
+end
+
 -- Builds the record that lights `record`'s skewer, its whole cook stamped up front. Paired with SettleCookRecord.
 function GrillerManager:StartCookRecord(player: Player, data, uid: string, record)
 	local structure = self:GetGrillerStructure(data, uid)
-
-	local cookTime = Ingredients.GetTotalCookTime(record.Ingredients)
-		/ CookStates.RAW_END
-		/ (structure and structure.CookSpeed or 1)
+	local cookTime = self:GetCookTime(data, uid, record.Ingredients)
 
 	-- A skewer whose ingredients add up to no cook still goes down, just unlit; the take hands it back.
 	local cooking = cookTime > 0

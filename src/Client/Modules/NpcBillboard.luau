@@ -1,5 +1,8 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ContextActionService = game:GetService("ContextActionService")
+local UserInputService = game:GetService("UserInputService")
+local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
 -- Packages
@@ -13,6 +16,9 @@ local SellNpc = require(Shared.Config.SellNpc)
 
 -- Modules
 local BubbleChat = require(script.Parent.BubbleChat)
+
+-- Controllers
+local InputController = require(script.Parent.Parent.Controllers.InputController)
 
 -- Assets
 local UI = ReplicatedStorage.Assets.UI
@@ -45,7 +51,20 @@ local NOT_INTERESTED = {
 	StrokeColor = Color3.fromRGB(85, 0, 0),
 }
 
--- Mounts an NPC's billboards and speaks its lines. Shared by every customer, since the mounting is what makes the buttons clickable and getting it wrong is invisible until a touch tap misses.
+-- A pad answers the customer being looked at: right accepts and left declines, the way the buttons sit
+local OFFER_ANSWER_ACTION = "NpcOfferAnswer"
+local OFFER_ACCEPT_KEY = Enum.KeyCode.DPadRight
+local OFFER_DECLINE_KEY = Enum.KeyCode.DPadLeft
+
+-- The glyph floats above its button, square against the button's height
+local OFFER_GLYPH_SIZE = UDim2.fromScale(0.6, 0.6)
+local OFFER_GLYPH_POSITION = UDim2.fromScale(0.5, 0)
+local OFFER_GLYPH_ANCHOR = Vector2.new(0.5, 1)
+
+-- Radians another customer must beat the current one by, so two heads in a queue don't trade the glyphs every frame
+local OFFER_TARGET_HYSTERESIS = math.rad(5)
+
+-- Mounts an NPC's billboards and speaks its lines. Shared by every customer, since the mounting is what makes the buttons clickable and getting it wrong is invisible until a touch tap misses. Also how a pad answers an offer, for the same reason.
 
 --
 local NpcBillboard = {}
@@ -76,6 +95,119 @@ local function pulseScale(scale: UIScale, startScale: number)
 	scale.Scale = startScale
 	Spr.target(scale, PULSE_DAMPING, PULSE_FREQUENCY, { Scale = PULSE_TARGET })
 end
+
+-- The offers a pad can answer right now, by customer, and which of them the camera is on.
+local offers = {} -- [npc] = { Head, Row, AcceptButton, DeclineButton, Answer }
+local offerTarget: Model? = nil
+local offerTargetConnection: RBXScriptConnection? = nil
+local acceptGlyph: ImageLabel? = nil
+local declineGlyph: ImageLabel? = nil
+
+-- One D-pad glyph, built on first use. Never Active, so the click underneath still lands on the button.
+local function createOfferGlyph(): ImageLabel
+	local glyph = Instance.new("ImageLabel")
+	glyph.Name = "GamepadKey"
+	glyph.BackgroundTransparency = 1
+	glyph.ScaleType = Enum.ScaleType.Fit
+	glyph.Size = OFFER_GLYPH_SIZE
+	glyph.SizeConstraint = Enum.SizeConstraint.RelativeYY
+	glyph.Position = OFFER_GLYPH_POSITION
+	glyph.AnchorPoint = OFFER_GLYPH_ANCHOR
+	return glyph
+end
+
+-- Moves the glyphs onto `npc`'s buttons, or off everything for nil.
+local function setOfferTarget(npc: Model?)
+	if npc == offerTarget then
+		return
+	end
+	offerTarget = npc
+
+	acceptGlyph = acceptGlyph or createOfferGlyph()
+	declineGlyph = declineGlyph or createOfferGlyph()
+
+	-- Re-read each time, since the glyph set follows whichever pad is in hand
+	acceptGlyph.Image = UserInputService:GetImageForKeyCode(OFFER_ACCEPT_KEY)
+	declineGlyph.Image = UserInputService:GetImageForKeyCode(OFFER_DECLINE_KEY)
+
+	local entry = npc and offers[npc]
+	acceptGlyph.Parent = entry and entry.AcceptButton
+	declineGlyph.Parent = entry and entry.DeclineButton
+end
+
+-- Targets the customer nearest the middle of the screen, in front of the camera; an exact tie goes to the nearer one.
+local function updateOfferTarget()
+	local cameraCFrame = workspace.CurrentCamera.CFrame
+	local character = LocalPlayer.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart")
+
+	local best: Model? = nil
+	local bestAngle = math.huge
+	local bestDistance = math.huge
+
+	for npc, entry in offers do
+		-- The row is hidden while an employee seller has this customer, and then it isn't the player's to answer
+		if not entry.Row.Visible then
+			continue
+		end
+
+		local toHead = entry.Head.Position - cameraCFrame.Position
+		local dot = cameraCFrame.LookVector:Dot(toHead.Unit)
+		if dot <= 0 then
+			continue
+		end
+
+		-- The current target holds on unless beaten by the hysteresis, so a queue doesn't strobe
+		local angle = math.acos(math.min(dot, 1))
+		if npc == offerTarget then
+			angle -= OFFER_TARGET_HYSTERESIS
+		end
+
+		local distance = if root then (entry.Head.Position - root.Position).Magnitude else 0
+
+		if angle < bestAngle or (angle == bestAngle and distance < bestDistance) then
+			best, bestAngle, bestDistance = npc, angle, distance
+		end
+	end
+
+	setOfferTarget(best)
+end
+
+-- The D-pad press: answers the targeted customer with whichever button the key stands for.
+local function onOfferAnswer(_, inputState: Enum.UserInputState, input: InputObject)
+	local entry = offerTarget and offers[offerTarget]
+	if inputState ~= Enum.UserInputState.Begin or not entry then
+		return Enum.ContextActionResult.Pass
+	end
+
+	local accepted = input.KeyCode == OFFER_ACCEPT_KEY
+	local button = if accepted then entry.AcceptButton else entry.DeclineButton
+
+	-- The tutorial hides Decline on its one offer, and a pad mustn't press what a finger can't
+	if not button.Visible then
+		return Enum.ContextActionResult.Pass
+	end
+
+	entry.Answer(accepted)
+	return Enum.ContextActionResult.Sink
+end
+
+-- Runs the targeting and the D-pad only while there's an offer up and a pad in hand.
+local function refreshOfferTargeting()
+	local active = next(offers) ~= nil and InputController:IsGamepad()
+
+	if active and not offerTargetConnection then
+		ContextActionService:BindAction(OFFER_ANSWER_ACTION, onOfferAnswer, false, OFFER_ACCEPT_KEY, OFFER_DECLINE_KEY)
+		offerTargetConnection = RunService.RenderStepped:Connect(updateOfferTarget)
+	elseif not active and offerTargetConnection then
+		ContextActionService:UnbindAction(OFFER_ANSWER_ACTION)
+		offerTargetConnection:Disconnect()
+		offerTargetConnection = nil
+		setOfferTarget(nil)
+	end
+end
+
+InputController.OnPreferredInputChanged:Connect(refreshOfferTargeting)
 
 -- Mounts `templateName`'s billboards on the NPC's head and returns the state a caller drives them through, or nil only if the rig left the world before its head arrived. `billboards` is every BillboardGui the template held, by name.
 function NpcBillboard.Attach(npc: Model, templateName: string, dialogueVariant: string?, dialoguePrefix: string)
@@ -208,6 +340,34 @@ function NpcBillboard.PlayDecide(state, decideFrame: GuiObject, interested: bool
 	-- Land on the real verdict with a final pulse
 	applyVerdict(title, stroke, if interested then INTERESTED else NOT_INTERESTED)
 	pulseScale(scale, PULSE_START_SWAP)
+end
+
+-- Puts `npc`'s offer on the pad, answered through `answer(accepted)`. Keyed by customer, so a counter-offer re-arming the same buttons replaces its entry.
+function NpcBillboard.RegisterOffer(
+	npc: Model,
+	acceptButton: GuiButton,
+	declineButton: GuiButton,
+	answer: (boolean) -> ()
+)
+	offers[npc] = {
+		Head = npc.Head,
+		Row = acceptButton.Parent,
+		AcceptButton = acceptButton,
+		DeclineButton = declineButton,
+		Answer = answer,
+	}
+
+	refreshOfferTargeting()
+end
+
+-- Takes `npc`'s offer off the pad. Safe for one never put on, and must run before its billboards go, since the glyphs sit on them.
+function NpcBillboard.UnregisterOffer(npc: Model)
+	if offerTarget == npc then
+		setOfferTarget(nil)
+	end
+
+	offers[npc] = nil
+	refreshOfferTargeting()
 end
 
 return NpcBillboard

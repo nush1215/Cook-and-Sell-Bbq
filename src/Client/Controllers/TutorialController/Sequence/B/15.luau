@@ -6,6 +6,7 @@ local RunService = game:GetService("RunService")
 local Sticks = require(ReplicatedStorage.Shared.Config.Sticks)
 
 local StickShopController = require(script.Parent.Parent.Parent.Parent.StickShopController)
+local InputController = require(script.Parent.Parent.Parent.Parent.InputController)
 
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer.PlayerGui
@@ -97,7 +98,10 @@ return function(self)
 			end,
 		},
 		{
-			Description = `Click the {stickName}`,
+			-- A function, so a device switch mid-beat re-words it
+			Description = function()
+				return `{InputController:GetActivationVerb()} the {stickName}`
+			end,
 			Check = isSelected,
 		},
 	}, {

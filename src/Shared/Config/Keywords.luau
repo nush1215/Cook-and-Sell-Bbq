@@ -18,6 +18,9 @@ local STICK_COLOR = Color3.fromRGB(222, 184, 135)
 -- The heat rather than the metal, a grill's own grey barely carrying. Shared with the shop that sells them
 local GRILLER_COLOR = Color3.fromRGB(255, 146, 40)
 
+-- The ground it names, in a grass green kept clear of the emphasis green and of the gold its own number carries
+local PLOT_COLOR = Color3.fromRGB(124, 196, 92)
+
 -- Numbers and the "[N]" stack suffix, in the game's existing emphasis gold
 Keywords.NUMBER = Color3.fromRGB(255, 212, 0)
 
@@ -52,6 +55,13 @@ Keywords.Colors = {
 	Crate = Color3.fromRGB(120, 180, 230),
 	Crates = Color3.fromRGB(120, 180, 230),
 
+	-- Plural only: the singular is half of the Worker Hut and Worker Stall names, and half a name coloured reads as a bug
+	Workers = Color3.fromRGB(7, 214, 255),
+
+	-- Numbered, so these are what the rule below is really for: "Plot 1" is one name, not a word and a figure
+	Plot = PLOT_COLOR,
+	Plots = PLOT_COLOR,
+
 	-- The tier words, keyed off Shared.Colors so the word matches the thing it describes
 	Common = Colors.Common.TextColor,
 	Uncommon = Colors.Uncommon.TextColor,
@@ -78,6 +88,8 @@ end)
 local MONEY_PATTERN = "^%$%d[%d,]*%.?%d*%a*"
 -- A unit is part of the number it follows -- a multiplier's "x", a duration's "m" -- so it colours with it
 local NUMBER_PATTERN = "^%d+%.?%d*%a*"
+-- The same number, one space on from a keyword that names a numbered thing: the "1" in "Plot 1"
+local NUMBERED_KEYWORD_PATTERN = "^ %d+%.?%d*%a*"
 
 -- Bounded, so "Uncommon" can't match as "Common" and "$500" can't match again as "500"
 local function isWordBoundary(character: string?): boolean
@@ -139,6 +151,14 @@ function Keywords.Highlight(text: string): string
 					if candidate:lower() == keyword and isWordBoundary(nextCharacter) then
 						matched = candidate
 						color = LOWERED_KEYWORDS[keyword]
+
+						-- Taken into the keyword's own run rather than left to colour as a number, or "Plot 1"
+						-- reads as a word beside a figure instead of the one name it is
+						local numbered = text:match(NUMBERED_KEYWORD_PATTERN, index + #keyword)
+						if numbered then
+							matched ..= numbered
+						end
+
 						break
 					end
 				end

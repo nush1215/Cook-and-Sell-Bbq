@@ -1,5 +1,6 @@
 -- Step 5: take the Store teleport. Arriving ends the beat, so walking counts the same as pressing. Looked up per check, since a reference taken before a teleport is worth nothing after it.
 local HudController = require(script.Parent.Parent.Parent.Parent.HudController)
+local InputController = require(script.Parent.Parent.Parent.Parent.InputController)
 
 -- The bar the Store button sits on, held down for the rest of the run by Start
 local TOP_BAR_FRAME = "Top"
@@ -15,7 +16,10 @@ return function(self)
 	local spotlight = self:SpotlightHudButton("Store")
 
 	self:AwaitGoal(nil, {
-		Description = `Click the {self:Emphasize("Store")} button`,
+		-- A function, so a device switch mid-beat re-words it
+		Description = function()
+			return `{InputController:GetActivationVerb()} the {self:Emphasize("Store")} button`
+		end,
 		Wait = function()
 			local function atStore(): boolean
 				local store = teleports:FindFirstChild("Store")

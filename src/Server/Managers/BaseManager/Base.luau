@@ -14,6 +14,7 @@ local SoundManager = require(script.Parent.Parent.SoundManager)
 -- Shared
 local Shared = ReplicatedStorage.Shared
 local BaseUnlocks = require(Shared.Config.BaseUnlocks)
+local EmployeeHut = require(Shared.Config.EmployeeHut)
 local Plots = require(Shared.Config.Plots)
 local Structures = require(Shared.Config.Structures)
 local GridUtil = require(Shared.GridUtil)
@@ -66,10 +67,21 @@ function Base.new(model: Model)
 	storage.Name = `BaseStorage_{model.Name}`
 	storage.Parent = ServerStorage
 
+	-- Authored scenery rather than placed structures, but the same thing to an NPC: solid to the player,
+	-- walked through by staff and customers, who would otherwise snag on the stall they're heading for or
+	-- pin themselves against the fence taking the short way across the base
+	CollisionManager:SetModelGroup(model.Stalls, CollisionManager.STRUCTURE)
+	CollisionManager:SetModelGroup(model.Environment.Fence, CollisionManager.STRUCTURE)
+
 	-- Made rather than authored, and off the cleaner, since it outlives every owner the base has
 	local structureFolder = Instance.new("Folder")
 	structureFolder.Name = Structures.FOLDER_NAME
 	structureFolder.Parent = model
+
+	-- The same, and one place for the client to watch while the base carries a broken hut
+	local hutFolder = Instance.new("Folder")
+	hutFolder.Name = EmployeeHut.FOLDER_NAME
+	hutFolder.Parent = model
 
 	--
 	local self = setmetatable({
@@ -91,6 +103,15 @@ function Base.new(model: Model)
 		_structureFolder = structureFolder,
 		_structures = {}, -- [uid] = the live model for that placed structure
 
+		_hutFolder = hutFolder,
+		_hut = nil, -- the broken hut's model, up only while the hut is unrepaired
+		-- nil rather than false, so the first ApplyHut always renders instead of reading as no change
+		_hutRepaired = nil,
+		-- { Type, CellX, CellZ, Rotation } for the cells the repaired hut lands on -- see _cacheHutBlock
+		_hutBlock = nil,
+		-- The block centre's pose on the ground, which both hut states are pivoted off
+		_hutSurface = nil,
+
 		--
 		_cleaner = cleaner,
 		_ownerCleaner = cleaner:Construct(Trove),
@@ -99,10 +120,12 @@ function Base.new(model: Model)
 
 	self:_cacheUnlocks()
 	self:_cachePlots()
+	self:_cacheHutBlock()
 
 	-- Nobody owns it yet, and the caches above had to read the authored state before anything renders.
 	self:ApplyUnlocks(BaseUnlocks.NO_UNLOCKS)
 	self:ApplyPlots({})
+	self:ApplyHut(false)
 
 	return self
 end
@@ -216,6 +239,115 @@ function Base:_cachePlots()
 				.. `so its grid can't be measured and nothing can be built on it`
 		)
 	end
+end
+
+-- Works out where the hut sits: the config's cell, measured in this base's own lattice. Both states pose off it, so repairing swaps the model without moving it, and the broken one holds those cells until it's bought.
+function Base:_cacheHutBlock()
+	local structure = Structures.GetStructureFromId(EmployeeHut.STRUCTURE_ID)
+	local startFloor = self:GetPlotFloor(Plots.START)
+
+	-- The structure is dropped from the config when its model is missing, and the grid needs the start floor
+	if not structure or not startFloor then
+		return
+	end
+
+	local rotation = EmployeeHut.CELL_ROTATION
+	local footprintX, footprintZ = Structures.GetFootprint(structure, rotation)
+
+	-- Shaped like a placed structure, so Structures.Overlaps reads it without a second code path
+	self._hutBlock = {
+		Type = EmployeeHut.STRUCTURE_ID,
+		CellX = EmployeeHut.CELL_X,
+		CellZ = EmployeeHut.CELL_Z,
+		Rotation = rotation,
+	}
+
+	-- The repaired hut's footprint centres it, so the broken one stands on exactly the cells being held for it
+	self._hutSurface = GridUtil.CellToSurfaceCFrame(
+		GridUtil.GetOrigin(startFloor),
+		EmployeeHut.CELL_X,
+		EmployeeHut.CELL_Z,
+		footprintX,
+		footprintZ,
+		Structures.CELL_SIZE
+	)
+end
+
+-- Mirrors a running repair's deadline onto the base model, which is a visitor's only view of it. Nil clears it.
+function Base:PublishHutRepair(endsAt: number?)
+	-- Below zero is the resting value in data, and reads here as nothing running
+	self._model:SetAttribute(EmployeeHut.REPAIR_ENDS_ATTRIBUTE, if endsAt and endsAt >= 0 then endsAt else nil)
+end
+
+-- Where the repaired hut goes: the cell the marker sits on, and the turn the marker faces. Nil on a base that can't place one.
+function Base:GetHutPlacement(): (number?, number?, number?)
+	local block = self._hutBlock
+	if not block then
+		return nil, nil, nil
+	end
+
+	return block.CellX, block.CellZ, block.Rotation
+end
+
+-- The cells held for the repaired hut, shaped as a placed structure so Structures.Overlaps reads it. Nil on a base that can't place one.
+function Base:GetHutBlock(): Structures.PlacedStructure?
+	return self._hutBlock
+end
+
+-- The broken hut standing on the base, or nil once it's been repaired into a placed structure the build system owns.
+function Base:GetHutModel(): Model?
+	return self._hut
+end
+
+-- The placed model for one of this base's structures, or nil if it isn't built.
+function Base:GetStructureModel(uid: string): Model?
+	return self._structures[uid]
+end
+
+-- Puts the broken hut on the base's marker, and takes it away once the hut is repaired -- from then on it's a placed structure like any other.
+function Base:ApplyHut(repaired: boolean)
+	if self._hutRepaired == repaired then
+		return
+	end
+
+	self._hutRepaired = repaired
+
+	if self._hut then
+		self._hut:Destroy()
+		self._hut = nil
+	end
+
+	-- The structure system renders it from here, wherever the player has since moved it to
+	if repaired then
+		return
+	end
+
+	-- Warned at load rather than here, which would say it once per base
+	if not EmployeeHut.BROKEN_MODEL or not self._hutSurface then
+		return
+	end
+
+	local model = EmployeeHut.BROKEN_MODEL:Clone()
+	model.Name = EmployeeHut.MODEL_NAME
+
+	-- Whole or not at all -- the client hangs a prompt off its parts, delivered late by default
+	model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
+
+	-- Made inert, or the hut would carry an invisible wall. The same treatment a placed structure gets
+	local hitbox = model:FindFirstChild(Structures.HITBOX_NAME)
+	if hitbox and hitbox:IsA("BasePart") then
+		hitbox.CanCollide = false
+		hitbox.CanTouch = false
+	end
+
+	-- Passable to customers, who path with a plain MoveTo and would otherwise stall on it
+	CollisionManager:SetModelGroup(model, CollisionManager.STRUCTURE)
+
+	-- Posed off its own bounds rather than the repaired hut's, so it rests on the ground whatever shape it is
+	model:PivotTo(Structures.GetPlacementPivot(model, self._hutSurface, self._hutBlock.Rotation))
+	model.Parent = self._hutFolder
+
+	self._hut = model
 end
 
 -- Renders the base's plots and their buy signs. `animate` marks a render following a purchase, which burns.
@@ -415,18 +547,24 @@ function Base:GetCellPose(
 	return Structures.GetPlacementPivot(structure.Model, surface, rotation)
 end
 
--- Whether a footprint fits: every cell on owned ground, nothing built in the way. Authoritative.
+-- Whether a footprint fits: every cell on owned ground, nothing built in the way, clear of the hut's reserved cells. Authoritative.
 function Base:IsBlockFree(
 	cellX: number,
 	cellZ: number,
 	footprintX: number,
 	footprintZ: number,
 	structures: { [string]: Structures.PlacedStructure },
-	plots: { [string]: boolean }
+	plots: { [string]: boolean },
+	hutRepaired: boolean
 ): boolean
 	local ground = self:GetGround(plots)
 
 	if not ground or not GridUtil.IsBlockOnGround(ground, cellX, cellZ, footprintX, footprintZ) then
+		return false
+	end
+
+	-- Held for the repaired hut while it's still broken, so it always has somewhere to land. Passed in rather than read off self, or the hut's own placement would race the render listener
+	if not hutRepaired and self._hutBlock and Structures.Overlaps(self._hutBlock, cellX, cellZ, footprintX, footprintZ) then
 		return false
 	end
 
@@ -572,7 +710,9 @@ function Base:AssignOwner(
 	player: Player,
 	unlocks: { [string]: number },
 	plots: { [string]: boolean },
-	structures: { [string]: Structures.PlacedStructure }
+	structures: { [string]: Structures.PlacedStructure },
+	hutRepaired: boolean,
+	hutRepairEndsAt: number
 )
 	self._owner = player
 
@@ -591,6 +731,8 @@ function Base:AssignOwner(
 	-- Built before the client gets its id, which it needs to find these. None animate -- that's for what was just done
 	self:ApplyUnlocks(unlocks)
 	self:ApplyPlots(plots)
+	self:ApplyHut(hutRepaired)
+	self:PublishHutRepair(hutRepairEndsAt)
 	self:RenderStructures(structures)
 
 	-- The client reads this to work out which base in the world is its own.
@@ -633,6 +775,8 @@ function Base:ClearOwner()
 	self:ClearStructures()
 	self:ApplyUnlocks(BaseUnlocks.NO_UNLOCKS)
 	self:ApplyPlots({})
+	self:ApplyHut(false)
+	self:PublishHutRepair(nil)
 end
 
 -- Returns the player who currently owns this base, if any.

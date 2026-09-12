@@ -43,6 +43,14 @@ local HIDE_HUD_FOR_UI = {
 		"BottomRight",
 	},
 
+	OfflineEarningUI = {
+		"Top",
+		"Left",
+		"Right",
+		"BottomLeft",
+		"BottomRight",
+	},
+
 	ShopUI = {
 		"Top",
 		"Left",
@@ -57,11 +65,24 @@ local HIDE_HUD_FOR_UI = {
 		"BottomLeft",
 		"BottomRight",
 	},
+
+	-- BottomLeft stays, as the shop's does: they're reading prices, so the Bux they have is the one thing
+	-- worth leaving on screen
+	HireEmployeeUI = {
+		"Top",
+		"Left",
+		"Right",
+		"BottomRight",
+	},
 }
 
 -- Frames that come down on their own while a UI is open. The shop keeps Currency, which is what a Bux browser is watching
 local HIDE_IN_BOTTOM_LEFT = {
 	ShopUI = {
+		"FriendBoost",
+	},
+
+	HireEmployeeUI = {
 		"FriendBoost",
 	},
 }

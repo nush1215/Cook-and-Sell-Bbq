@@ -34,6 +34,7 @@ local IngredientRollingController = {
 	RequestRollFunction = Network.Function("RequestRoll"),
 	PurchaseIngredientEvent = Network.Event("PurchaseIngredient"),
 	OnPurchasedEvent = Network.Event("OnIngredientPurchased"),
+	PurchaseAllIngredientsFunction = Network.Function("PurchaseAllIngredients"),
 
 	-- Fires once per lever pull the server accepted.
 	OnRollPerformed = Signal.new(),
@@ -43,6 +44,7 @@ local IngredientRollingController = {
 
 	_bases = {}, -- [model: Model] = Base
 	_purchasing = {}, -- [standId] = the ingredient it was showing while a purchase is in flight
+	_purchasingAll = false,
 
 	_rollLocked = false, -- while true, no base offers its lever (see SetRollLocked)
 
@@ -82,6 +84,39 @@ function IngredientRollingController:RequestPurchase(standId: string, ingredient
 
 	self._purchasing[standId] = ingredientId
 	self.PurchaseIngredientEvent:FireServer(standId)
+end
+
+-- Buys every landed ingredient on the owner's stands under one charge.
+function IngredientRollingController:RequestPurchaseAllIngredients()
+	if self._purchasingAll then
+		return
+	end
+
+	self._purchasingAll = true
+
+	local success, bought, discovered = pcall(function()
+		return self.PurchaseAllIngredientsFunction:Invoke()
+	end)
+
+	self._purchasingAll = false
+
+	if not success then
+		warn(bought)
+		return
+	end
+
+	if not bought then
+		return
+	end
+
+	for _, ingredientId in bought do
+		self.OnIngredientBought:Fire(ingredientId, Ingredients.GetIngredientFromId(ingredientId).Price)
+	end
+
+	-- Once for the whole bank, and not over a discovery notification that already rings
+	if not discovered then
+		SoundController:PlaySound("Purchase")
+	end
 end
 
 -- Re-checks every base's lever cue and stand prompt. Cheap, and it depends on the base and what's held.
@@ -142,8 +177,10 @@ function IngredientRollingController:_addBase(baseModel: Model)
 
 	local lever = rollingFolder:WaitForChild("Lever", CHILD_TIMEOUT)
 	local leverHandle = lever and lever:WaitForChild("Handle", CHILD_TIMEOUT)
+	local rollAttachment = lever and lever:WaitForChild("RollAttachment", CHILD_TIMEOUT)
+	local bulkPurchaseAttachment = lever and lever:WaitForChild("BulkPurchaseAttachment", CHILD_TIMEOUT)
 	local standsFolder = rollingFolder:WaitForChild("Stands", CHILD_TIMEOUT)
-	if not leverHandle or not standsFolder then
+	if not leverHandle or not rollAttachment or not bulkPurchaseAttachment or not standsFolder then
 		warn(`[IngredientRolling] {baseModel.Name}'s rolling setup is incomplete, it won't render`)
 		return
 	end

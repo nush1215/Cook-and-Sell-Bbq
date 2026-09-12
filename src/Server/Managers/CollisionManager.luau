@@ -19,8 +19,8 @@ local function ensureGroup(name: string)
 	end
 end
 
--- Puts every BasePart in `model` into collision group `groupName`.
-function CollisionManager:SetModelGroup(model: Model, groupName: string)
+-- Puts every BasePart under `model` into collision group `groupName`. Takes any instance -- tools and folders of furniture go through here too.
+function CollisionManager:SetModelGroup(model: Instance, groupName: string)
 	for _, descendant in model:GetDescendants() do
 		if descendant:IsA("BasePart") then
 			descendant.CollisionGroup = groupName

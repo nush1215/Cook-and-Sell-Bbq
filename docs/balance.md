@@ -937,3 +937,71 @@ money on the only ingredients most players have.
 Above common the boost is pure profit, and that's where the tiers are meant to be told apart. Wooden and
 bamboo carry none on purpose: at $3 and $17 a slot their price is already noise, and what they sell is
 capacity.
+
+## Offline earnings
+
+`Shared/Config/OfflineEarnings.luau`. The hut's workers keep going while their owner is away. On the next
+join `OfflineEarningManager` runs the equipped roster through the time away — up to `MAX_AWAY_SECONDS`, at
+`WORK_RATE` of the pace they work at while watched — spends the chest, leaves whatever they hadn't sold where
+it stood, and puts the money on the welcome-back panel to be claimed. Nothing about it is a separate economy:
+every duration comes off the same `Config.Employees` curves the live workers step by, every cook off the same
+aim-and-error pull, every price off `StickModel.GetSellValue` and the cook state's own offer range, and the
+seller pushes by the same `Seller.ShouldPush` rule.
+
+### The model
+
+A skewer at a time, in the order they'd be built, through a pipeline that blocks the way the base does: a
+maker needs a bare stick stand, a cooker needs a filled stand and a free grill, a cooked BBQ needs a slot on
+the sell stand, and a sale needs a seller to answer the customer. Each stage keeps a "free at" clock per
+worker and per station, so a slow stage backs the ones before it up rather than being averaged away — a
+chef on one grill holds a five-star maker exactly as it does live.
+
+Walking is the one thing it doesn't measure. The base's layout isn't read at load, so every leg is
+`WALK_LEG_STUDS` over that worker's star walk speed; it's the smallest part of any trip beside the cook and
+the customer, which is why a flat figure is fine. Customers arrive on `SellNpc`'s average spawn and decide
+waits plus `CUSTOMER_WALK_SECONDS`, with the early boost's head start folded in, and roll their interest and
+their counters as they do live. Rich, checking and custom-order customers are live-server rolls and don't
+visit; a seller's own refusals never charge the refusal ledger, exactly as online.
+
+### What was left mid-pipeline
+
+The pass finishes what was in progress before starting anything new: BBQ already on the sell stand sells
+first (unless a custom order's customer is on its way for one of them, when the stand is left alone), a
+filled skewer on a stick stand is collected and cooked, and a cook left lit on a grill is pulled by the
+cooker on its aim — or the moment it walks up if the aim has already passed, the same honest late pull the
+live cooker makes on a cook it adopts, read through the saved record's own warps. Part-built stands are the
+player's to finish and stay as they were.
+
+### The clean stop
+
+At the horizon each item settles at the last resting place it reached: sold, out on the sell stand, or built
+and waiting on a stick stand. Anything still in a pair of hands or on a grill is put back where it started —
+a new skewer's stick and ingredients return to the chest, a filled stand keeps its skewer, a lit grill keeps
+its cook and parks in Raw as it always did. Stock is only ever spent on a skewer that landed somewhere, so
+nothing can vanish into a half-finished trip, and the stand's six slots are honoured by construction.
+
+`Stopped` names what ended the run early, for the analytics and any line a panel wants to show: `NoSticks`,
+`NoIngredients` or `Empty` when the chest ran out, `NoMaker`, `NoStand`, and — when the row of stands filled
+because the stage behind it was missing — `NoCooker`, `NoGrill` or `NoSeller`. A run that simply reached the
+horizon carries nil: they were still working when the player came back.
+
+### The claim
+
+The plain offer total waits in server memory and is paid through `CurrencyManager:IncrementCurrency` when the
+panel's Claim (or its Exit) is pressed, so the gamepass, friend and early boosts land on it once, exactly as
+on a sale; the panel shows the boosted figure. Leaving with it unclaimed pays it on the last save. Offline
+sales feed the lifetime counters and never the rating's sale window — see `docs/player-data.md`.
+
+| Knob | Higher | Lower |
+|---|---|---|
+| `MIN_AWAY_SECONDS` | short hops and crashes count as time away | a server hop pays out |
+| `MAX_AWAY_SECONDS` | a bigger chest converts in one absence | players must check in more often to spend it |
+| `WORK_RATE` | offline outearns watching (over 1) | offline pays a fraction of the live rate |
+| `WALK_LEG_STUDS` | every trip drags, the maker and the cooker slow together | walks vanish and the cook and the customer are the whole cost |
+| `CUSTOMER_WALK_SECONDS` | sales drag | the stand clears at the spawn-and-decide pace alone |
+| `HEARTBEAT_INTERVAL` | a crash can hand back more of the session as time away | more replica writes for nothing |
+| `MAX_SIMULATED_SKEWERS` | a stocked whale's join costs more CPU | a full day on a big chest is cut short |
+
+`/offlineEarnings <seconds> [player]` runs the pass on a loaded profile through the replica and shows the
+panel, so the whole flow can be checked in one Studio session on the mock store; its return line reads the
+report out. Customers aren't re-sent for what it puts on the stand — a real join does that on handover.

@@ -10,6 +10,8 @@ local Spring = require(Packages.Spring)
 -- Shared
 local Shared = ReplicatedStorage.Shared
 local RandomUtil = require(Shared.RandomUtil)
+local GuiUtil = require(Shared.GuiUtil)
+local Colors = require(Shared.Colors)
 local Highlights = require(Shared.Config.Highlights)
 local RollingConfig = require(Shared.Config.Rolling)
 
@@ -32,6 +34,13 @@ local LocalPlayer = Players.LocalPlayer
 local LEVER_ROTATION_AXIS = Vector3.zAxis
 
 local PROMPT_HOLD = 0.25
+
+-- A beat longer than a stand's Buy (0.4), since this one spends on the whole bank
+local BULK_PROMPT_HOLD = 0.6
+-- F rather than E, so it sits beside the lever's roll prompt instead of competing with it
+local BULK_PROMPT_KEY = Enum.KeyCode.F
+local BULK_PROMPT_GAMEPAD_KEY = Enum.KeyCode.ButtonY
+local BULK_PROMPT_MIN_INGREDIENTS = 2
 
 -- Past the 14 studs the tutorial's pull step treats as arrived, so the prompt is up when it points
 local PROMPT_DISTANCE = 15
@@ -79,6 +88,8 @@ function Base.new(model: Model)
 
 		_lever = lever,
 		_leverHandle = leverHandle,
+		_rollAttachment = lever.RollAttachment,
+		_bulkPurchaseAttachment = lever.BulkPurchaseAttachment,
 		_leverSpring = leverSpring,
 		_leverRestCFrame = leverRestCFrame,
 		_soundEmitter = soundEmitter,
@@ -91,6 +102,7 @@ function Base.new(model: Model)
 
 		_band = BAND_NONE,
 		_prompt = nil,
+		_bulkPrompt = nil,
 		_rolling = false,
 
 		_cleaner = cleaner,
@@ -191,6 +203,9 @@ function Base:_reconcileStands()
 		self._stands[standModel.Name] = stand
 		self._standCleaner:Add(stand)
 	end
+
+	-- A stand built while rendered lands its result before it's in the count, and a removed one leaves it
+	self:RefreshBulkPurchasePrompt()
 end
 
 -- Re-picks the distance band, widened by hysteresis so a player on a boundary doesn't thrash the models.
@@ -325,6 +340,31 @@ function Base:_refreshLeverHighlight()
 	end
 end
 
+-- Prices the buy-all prompt off the stands' landed results and raises it once enough are waiting.
+function Base:RefreshBulkPurchasePrompt()
+	if not self._bulkPrompt then
+		return
+	end
+
+	IngredientRollingController = IngredientRollingController or require(script.Parent)
+
+	local count = 0
+	local total = 0
+
+	for _, stand in self._stands do
+		local ingredient = stand:GetLandedIngredient()
+		if ingredient then
+			count += 1
+			total += ingredient.Price
+		end
+	end
+
+	self._bulkPrompt.ActionText = `${GuiUtil.ConvertNumberWithSuffix(total)}`
+	self._bulkPrompt.Enabled = count >= BULK_PROMPT_MIN_INGREDIENTS
+		and not self._rolling
+		and not IngredientRollingController:IsRollLocked()
+end
+
 -- Puts the roll prompt and lever cue up on the owner's base only, so a visitor can watch without being offered one.
 function Base:RefreshInteraction()
 	IngredientRollingController = IngredientRollingController or require(script.Parent)
@@ -338,22 +378,45 @@ function Base:RefreshInteraction()
 		prompt.MaxActivationDistance = PROMPT_DISTANCE
 		prompt.ActionText = "Roll Ingredients"
 		prompt.Style = Enum.ProximityPromptStyle.Custom
-		prompt.Parent = self._leverHandle
+		prompt.Parent = self._rollAttachment
 
 		self._prompt = prompt
 		self._promptCleaner:Add(prompt)
 		self._promptCleaner:Connect(prompt.Triggered, function()
 			self:RollIngredients()
 		end)
+
+		-- AlwaysShow so it stays up beside any other F prompt nearby
+		local bulkPrompt = Instance.new("ProximityPrompt")
+		bulkPrompt.RequiresLineOfSight = false
+		bulkPrompt.HoldDuration = BULK_PROMPT_HOLD
+		bulkPrompt.MaxActivationDistance = PROMPT_DISTANCE
+		bulkPrompt.ObjectText = "Buy all Ingredients"
+		bulkPrompt.KeyboardKeyCode = BULK_PROMPT_KEY
+		bulkPrompt.GamepadKeyCode = BULK_PROMPT_GAMEPAD_KEY
+		bulkPrompt.Exclusivity = Enum.ProximityPromptExclusivity.AlwaysShow
+		bulkPrompt.Style = Enum.ProximityPromptStyle.Custom
+		bulkPrompt:SetAttribute("ObjectTextColor", Color3.new(1, 1, 1))
+		bulkPrompt:SetAttribute("ActionTextColor", Colors.Currency)
+		bulkPrompt.Enabled = false
+		bulkPrompt.Parent = self._bulkPurchaseAttachment
+
+		self._bulkPrompt = bulkPrompt
+		self._promptCleaner:Add(bulkPrompt)
+		self._promptCleaner:Connect(bulkPrompt.Triggered, function()
+			IngredientRollingController:RequestPurchaseAllIngredients()
+		end)
 	elseif not owned and self._prompt then
 		self._promptCleaner:Clean()
 		self._prompt = nil
+		self._bulkPrompt = nil
 	end
 
 	if self._prompt then
 		self._prompt.Enabled = not self._rolling and not IngredientRollingController:IsRollLocked()
 	end
 
+	self:RefreshBulkPurchasePrompt()
 	self:_refreshLeverHighlight()
 
 	for _, stand in self._stands do

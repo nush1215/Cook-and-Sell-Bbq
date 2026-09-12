@@ -61,14 +61,6 @@ function RatingSignController:RefreshSigns()
 	end
 end
 
--- Fills a star row. Only the X offset is ours, so a gradient inset in the place file stays inset.
-function RatingSignController:_drawStars(starsFrame: Frame, stars: number?)
-	for index = 1, Rating.MAX_STARS do
-		local gradient = starsFrame[tostring(index)].UIGradient
-		gradient.Offset = Vector2.new(Rating.GetStarOffset(stars, index), gradient.Offset.Y)
-	end
-end
-
 -- Builds, repaints or drops one base's sign against who owns it now.
 function RatingSignController:_refreshSign(baseModel: Model, sign)
 	local owner = self:GetBaseOwner(baseModel.Name)
@@ -100,7 +92,7 @@ function RatingSignController:_refreshSign(baseModel: Model, sign)
 	local stars = owner:GetAttribute(Rating.OVERALL_ATTRIBUTE)
 
 	sign.Ui.Title.Text = Rating.FormatTitle(Rating.SIGN_TITLE, stars)
-	self:_drawStars(sign.Ui.Stars, stars)
+	Rating.DrawStars(sign.Ui.Stars, stars)
 end
 
 -- Registers a base once its sign board has replicated, and paints it against whoever owns it.

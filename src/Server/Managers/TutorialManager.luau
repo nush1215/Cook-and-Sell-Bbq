@@ -56,6 +56,19 @@ local PROGRESS_RESET_KEYS = {
 	-- Both halves, or a player who placed their griller and quit would have it in neither
 	"OwnedStructures",
 
+	-- Goes with Plots: the hut's repair is gated on plot 1, so keeping it would outlive its ground
+	"HutRepaired",
+	-- Or a repair would still be running on a hut the wipe just put back to broken
+	"HutRepairEndsAt",
+	-- Both hang off the hut, so they go with it: staff with no hut, and stock in a hut that's gone
+	"Employees",
+	"HutSlotsUnlocked",
+	"HutStorage",
+	-- The ledger of who they hired this window, which would otherwise outlive the staff it was spent on
+	"HiringBoard",
+	-- Or the three free ones would be spent on staff the wipe took, and never offered again
+	"FreeWorkersClaimed",
+
 	"Ingredients",
 	"PendingRolls",
 	"IngredientIndex",

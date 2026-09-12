@@ -21,6 +21,7 @@ local GlobalUtil = require(Shared.GlobalUtil)
 -- Controllers
 local PlayerDataController = require(script.Parent.PlayerDataController)
 local NotificationController = require(script.Parent.NotificationController)
+local InputController = require(script.Parent.InputController)
 
 -- Modules
 local Modules = script.Parent.Parent.Modules
@@ -64,11 +65,14 @@ local PICKUP_REFRESH_INTERVAL = 0.2
 
 local RAY_LENGTH = 1000
 local ROTATE_KEY = Enum.KeyCode.R
+local ROTATE_GAMEPAD_KEY = Enum.KeyCode.ButtonL2
+-- What Tool.Activated fires on, so the guide can show it; nothing binds it
+local PLACE_GAMEPAD_KEY = Enum.KeyCode.ButtonR2
 
 -- Which way round a model is built, in quarter-turns from -Z. Turn this for a backwards template
 local FACING_FRONT_OFFSET = 0
 
--- Where a touch ghost sits: clearance is to the near edge, and reach is short enough to thumb-aim
+-- Where a cursorless (touch or pad) ghost sits: clearance is to the near edge, and reach is short enough to thumb-aim
 local TOUCH_AIM_CLEARANCE = 5
 local TOUCH_AIM_REACH = 40
 local TOUCH_AIM_HEIGHT = 12
@@ -100,6 +104,14 @@ local GUIDE_FRAME_NAME = "PCGuide"
 local GUIDE_PLACE_ENTRY = "Place"
 local GUIDE_ROTATE_ENTRY = "Rotate"
 local GUIDE_TIMEOUT = 10
+
+-- The authored key label inside each entry, and the pad glyph laid over it in its place
+local GUIDE_KEY_NAME = "Key"
+local GUIDE_GLYPH_NAME = "GamepadKey"
+local GUIDE_GAMEPAD_KEYS = {
+	[GUIDE_PLACE_ENTRY] = PLACE_GAMEPAD_KEY,
+	[GUIDE_ROTATE_ENTRY] = ROTATE_GAMEPAD_KEY,
+}
 
 -- Stands in for the guide when there's nowhere to build. Its own frame, so it can show on a phone too
 local INVALID_FRAME_NAME = "Invalid"
@@ -332,6 +344,9 @@ function BuildController:_createGhost(structure: Structures.Structure): Model
 
 	-- Parented away from what it outlines, like the pickup ones, so it isn't cloned or cleaned with it.
 	local highlight = Instance.new("Highlight")
+	-- Occluded like the other passive passes: AlwaysOnTop paints the verdict over whatever stands in front
+	-- of the spot, which turned an employee walking through the ghost red along with it
+	highlight.DepthMode = Enum.HighlightDepthMode.Occluded
 	highlight.FillTransparency = GHOST_FILL_TRANSPARENCY
 	highlight.OutlineTransparency = GHOST_OUTLINE_TRANSPARENCY
 	highlight.Adornee = ghost
@@ -436,7 +451,7 @@ function BuildController:_getCameraAimSpot(root: BasePart): Vector3?
 	return root.Position + offset.Unit * reach
 end
 
--- The ray the ghost is aimed down. The touch one points straight down, so a level camera doesn't skid.
+-- The ray the ghost is aimed down. The cursorless one (touch or pad) points straight down, so a level camera doesn't skid.
 function BuildController:_getAimRay(): Ray?
 	if not GlobalUtil.IsTouchOnly() then
 		local mouse = self._mouse
@@ -638,6 +653,14 @@ end
 -- Whichever structure is under the cursor, and its uid. Nil for one whose uid hasn't replicated yet.
 function BuildController:_getStructureUnderCursor(): (Model?, string?)
 	local ray = self._mouse.UnitRay
+
+	-- A pad has no cursor, so it aims from the middle of the screen and the hover outline is its reticle
+	if InputController:IsGamepad() then
+		local camera = workspace.CurrentCamera
+		local viewport = camera.ViewportSize
+		ray = camera:ViewportPointToRay(viewport.X / 2, viewport.Y / 2)
+	end
+
 	local result = workspace:Raycast(ray.Origin, ray.Direction * RAY_LENGTH, self._raycastParams)
 
 	-- The folder's own child, not the nearest Model -- a structure has models inside it
@@ -694,7 +717,7 @@ function BuildController:_armPickup(model: Model?, uid: string?)
 
 	if model then
 		NotificationController:NotifyNormal({
-			Text = "Click again to pick it up",
+			Text = `{InputController:GetActivationVerb()} again to pick it up`,
 		})
 	end
 
@@ -814,7 +837,50 @@ function BuildController:_getGuideScale(entryName: string): UIScale?
 	return entry and entry:FindFirstChildOfClass("UIScale")
 end
 
--- Puts up the guide or the invalid badge, never both. Desktop only -- a phone has the touch buttons.
+-- Shows each entry's pad glyph over its authored key on a pad, and the key itself otherwise.
+function BuildController:_refreshGuideKeys()
+	local guide = self:_getGuide()
+	if not guide then
+		return
+	end
+
+	local gamepad = InputController:IsGamepad()
+
+	for entryName, keyCode in GUIDE_GAMEPAD_KEYS do
+		local entry = guide:FindFirstChild(entryName)
+		local key = entry and entry:FindFirstChild(GUIDE_KEY_NAME)
+
+		-- Authored in the place file, so a missing label is a name mismatch worth saying once
+		if not key then
+			if not self._warnedGuideKeys then
+				self._warnedGuideKeys = true
+				warn(`[Build] {GUIDE_FRAME_NAME}.{entryName} has no {GUIDE_KEY_NAME}, so a pad gets no glyph on it`)
+			end
+			continue
+		end
+
+		-- Laid over the label rather than written into it, so the authored key comes back with a Visible flip
+		local glyph = entry:FindFirstChild(GUIDE_GLYPH_NAME)
+		if not glyph then
+			glyph = Instance.new("ImageLabel")
+			glyph.Name = GUIDE_GLYPH_NAME
+			glyph.BackgroundTransparency = 1
+			glyph.ScaleType = Enum.ScaleType.Fit
+			glyph.Size = key.Size
+			glyph.Position = key.Position
+			glyph.AnchorPoint = key.AnchorPoint
+			glyph.SizeConstraint = key.SizeConstraint
+			glyph.ZIndex = key.ZIndex
+			glyph.Parent = entry
+		end
+
+		glyph.Image = UserInputService:GetImageForKeyCode(keyCode)
+		glyph.Visible = gamepad
+		key.Visible = not gamepad
+	end
+end
+
+-- Puts up the guide or the invalid badge, never both. Not on a phone, which has the touch buttons; a pad wants it.
 function BuildController:_refreshGuide()
 	local placing = self._guidePlacing and not GlobalUtil.IsTouchOnly()
 	local guide = self:_getGuide()
@@ -867,6 +933,8 @@ function BuildController:_showGuide(shown: boolean)
 				uiScale.Scale = GUIDE_NORMAL_SCALE
 			end
 		end
+
+		self:_refreshGuideKeys()
 	end
 
 	self._guidePlacing = shown
@@ -877,7 +945,7 @@ function BuildController:_showGuide(shown: boolean)
 	self:_refreshGuide()
 end
 
--- Glides whichever frame is up to the cursor. Both share one position, so the swap happens in place.
+-- Glides whichever frame is up to the cursor, or to the ghost on a pad. Both share one position, so the swap happens in place.
 function BuildController:_updateGuide(deltaTime: number)
 	local frame = self:_getGuide()
 
@@ -889,10 +957,20 @@ function BuildController:_updateGuide(deltaTime: number)
 		return
 	end
 
-	local mouse = UserInputService:GetMouseLocation()
+	local pointer = UserInputService:GetMouseLocation()
+
+	-- A pad has no cursor to follow, so the guide sits on the ghost -- or mid-screen before the first spot
+	if InputController:IsGamepad() then
+		local camera = workspace.CurrentCamera
+		local ghostPoint = self._ghostCFrame and camera:WorldToViewportPoint(self._ghostCFrame.Position)
+
+		pointer = if ghostPoint and ghostPoint.Z > 0
+			then Vector2.new(ghostPoint.X, ghostPoint.Y)
+			else camera.ViewportSize / 2
+	end
 
 	-- GetMouseLocation and a ScreenGui's origin both exclude the topbar inset, unless the gui ignores it
-	local target = if self.UI.IgnoreGuiInset then mouse else mouse + GuiService:GetGuiInset()
+	local target = if self.UI.IgnoreGuiInset then pointer else pointer + GuiService:GetGuiInset()
 
 	-- Same framerate-independent easing the ghost uses over the grid; the first frame snaps.
 	if self._guidePosition then
@@ -905,7 +983,7 @@ function BuildController:_updateGuide(deltaTime: number)
 	frame.Position = UDim2.fromOffset(self._guidePosition.X, self._guidePosition.Y)
 end
 
--- Binds place and rotate for the placement's length, each with a touch button. Only rotate takes a key.
+-- Binds place and rotate for the placement's length, each with a touch button. Only rotate takes keys; a pad places off the tool.
 function BuildController:_bindPlacementActions()
 	ContextActionUtility = ContextActionUtility or require(Modules.ContextActionUtlity)
 
@@ -927,7 +1005,7 @@ function BuildController:_bindPlacementActions()
 	end
 
 	-- Rotate first, so it takes the touch slot nearest the jump button.
-	ContextActionUtility:BindAction(ROTATE_ACTION, onRotate, true, ROTATE_KEY)
+	ContextActionUtility:BindAction(ROTATE_ACTION, onRotate, true, ROTATE_KEY, ROTATE_GAMEPAD_KEY)
 	ContextActionUtility:SetTitle(ROTATE_ACTION, "Rotate")
 
 	ContextActionUtility:BindAction(PLACE_ACTION, onPlace, true)
@@ -968,6 +1046,11 @@ function BuildController:_enterPlacement(structure: Structures.Structure, mouse:
 
 	-- Building only: the pickup tool has nothing to rotate, so _enterPickup leaves the guide down.
 	self:_showGuide(true)
+
+	-- A pad picked up mid-placement swaps the guide's keys for glyphs, and one put down swaps them back
+	self._placementCleaner:Connect(InputController.OnPreferredInputChanged, function()
+		self:_refreshGuideKeys()
+	end)
 
 	-- On the cleaner rather than in _exitPlacement, so it also runs when the tool is destroyed.
 	self._placementCleaner:Add(function()

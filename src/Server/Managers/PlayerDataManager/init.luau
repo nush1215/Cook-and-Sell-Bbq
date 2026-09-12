@@ -31,10 +31,11 @@ local DATA_POLL_INTERVAL = 0.1
 --
 local PlayerDataToken = Replica.Token("PlayerData")
 
--- Run synchronously before the final save; mutate `data` directly and never yield -- see RegisterPreCleanupCallback
+-- Both callback lists run synchronously and mutate `data` directly, never yielding -- see RegisterPostLoadCallback and RegisterPreCleanupCallback
 local PlayerDataManager = {
 	OnDataChanged = Signal.new(),
 	_playerData = {},
+	_postLoadCallbacks = {},
 	_preCleanupCallbacks = {},
 }
 
@@ -383,6 +384,18 @@ function PlayerDataManager:ListenForChanges(player: Player, key: string, callbac
 	end)
 end
 
+-- Registers a callback run right after a player's profile loads, before anything else can read it; it mutates the live data and must not yield. Returns an unregister function.
+function PlayerDataManager:RegisterPostLoadCallback(callback: (player: Player, data: any) -> ())
+	table.insert(self._postLoadCallbacks, callback)
+
+	return function()
+		local index = table.find(self._postLoadCallbacks, callback)
+		if index then
+			table.remove(self._postLoadCallbacks, index)
+		end
+	end
+end
+
 -- Registers a callback run just before a player's last save; it mutates the live data and must not yield. Returns an unregister function.
 function PlayerDataManager:RegisterPreCleanupCallback(callback: (player: Player, data: any, reason: string) -> ())
 	table.insert(self._preCleanupCallbacks, callback)
@@ -414,6 +427,14 @@ function PlayerDataManager:_setupPlayer(player: Player)
 
 	playerProfile:AddUserId(player.UserId)
 	playerProfile:Reconcile()
+
+	-- Before the replica exists, so what these write is simply what the client and the base are handed
+	for _, callback in self._postLoadCallbacks do
+		local ok, err = xpcall(callback, debug.traceback, player, playerProfile.Data)
+		if not ok then
+			warn(`Post-load callback errored for {player.Name}: {err}`)
+		end
+	end
 
 	playerProfile.OnSessionEnd:Connect(function()
 		self._playerData[player] = nil

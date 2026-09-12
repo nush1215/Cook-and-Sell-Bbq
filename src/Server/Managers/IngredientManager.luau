@@ -126,6 +126,22 @@ function IngredientManager:_reconcileTools(player: Player)
 	end
 end
 
+-- The equipped ingredient tool's id, or nil. An equipped tool sits in the character, not the backpack.
+function IngredientManager:GetEquippedIngredientId(player: Player): string?
+	local character = player.Character
+	if not character then
+		return nil
+	end
+
+	for _, child in character:GetChildren() do
+		if child:IsA("Tool") and child:HasTag(TOOL_TAG) then
+			return child:GetAttribute("IngredientId")
+		end
+	end
+
+	return nil
+end
+
 -- Adds to the player's owned count and records the obtain in their index. Returns whether it was their first.
 function IngredientManager:GrantIngredient(player: Player, ingredientId: string, amount: number?): boolean
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()

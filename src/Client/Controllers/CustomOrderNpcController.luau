@@ -104,6 +104,9 @@ function CustomOrderNpcController:_cleanup(npc: Model)
 	-- A pooled rig outlives its visit, so a tag left on would breathe on the next customer to use it
 	npc:RemoveTag(Highlights.TAG)
 
+	-- Before the trove takes the billboards, since the pad's glyphs sit on their buttons
+	NpcBillboard.UnregisterOffer(npc)
+
 	state.trove:Destroy()
 
 	-- Dropped from _active above, so this drops the beam too if the customer leaving was the target
@@ -405,6 +408,9 @@ function CustomOrderNpcController:_showOffer(state, npc: Model, order, owned: bo
 		state.answered = true
 		accept.Active, decline.Active = false, false
 
+		-- Off the pad the moment it's answered, whichever way the answer came in
+		NpcBillboard.UnregisterOffer(npc)
+
 		self.CustomOrderResponseEvent:FireServer(npc, accepted)
 	end
 
@@ -418,6 +424,8 @@ function CustomOrderNpcController:_showOffer(state, npc: Model, order, owned: bo
 
 	state.answered = false
 	accept.Active, decline.Active = true, true
+
+	NpcBillboard.RegisterOffer(npc, accept, decline, answer)
 end
 
 -- Puts the hand-over prompt on the customer, so walking up with a skewer is what gives it over.
@@ -464,6 +472,7 @@ function CustomOrderNpcController:_startTimer(state, npc: Model, order, owned: b
 	end
 
 	state.offerFrame.Visible = false
+	NpcBillboard.UnregisterOffer(npc)
 
 	local timer = state.holder.Timer
 	timer.Visible = true
@@ -502,6 +511,7 @@ function CustomOrderNpcController:_endOrder(npc: Model)
 
 	state.answered = true
 	state.offerFrame.Visible = false
+	NpcBillboard.UnregisterOffer(npc)
 	state.holder.Visible = false
 	state.holder.Alert.Visible = false
 

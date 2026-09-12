@@ -341,13 +341,26 @@ function Rating.GetStarOffset(stars: number?, index: number): number
 	return MathUtil.RoundUpTo2Dec(math.clamp((stars or 0) - (index - 1), 0, 1) - 0.5)
 end
 
--- A rating as a panel title reads it, e.g. "Menu (3.58)". Trailing zeros stay, or the number changes width as it moves.
-function Rating.FormatTitle(name: string, stars: number?): string
+-- Fills a star row: a frame whose children are named "1" upward, each holding a UIGradient. Only the X offset is ours, so a gradient inset in the place file stays inset.
+function Rating.DrawStars(starsFrame: Frame, stars: number?)
+	for index = 1, Rating.MAX_STARS do
+		local gradient = starsFrame[tostring(index)].UIGradient
+		gradient.Offset = Vector2.new(Rating.GetStarOffset(stars, index), gradient.Offset.Y)
+	end
+end
+
+-- A star rating as a number reads, e.g. "1.05". Trailing zeros stay, or the number changes width as it moves.
+function Rating.FormatStars(stars: number?): string
 	if not stars then
-		return `{name} ({Rating.PENDING_TEXT})`
+		return Rating.PENDING_TEXT
 	end
 
-	return `{name} ({string.format(`%.{Rating.TITLE_DECIMALS}f`, stars)})`
+	return string.format(`%.{Rating.TITLE_DECIMALS}f`, stars)
+end
+
+-- A rating as a panel title reads it, e.g. "Menu (3.58)".
+function Rating.FormatTitle(name: string, stars: number?): string
+	return `{name} ({Rating.FormatStars(stars)})`
 end
 
 -- The player attribute one trait's stars are published under, built here so the write and the read can't drift.

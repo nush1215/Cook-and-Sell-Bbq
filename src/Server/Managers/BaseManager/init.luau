@@ -17,6 +17,7 @@ local Structures = require(Shared.Config.Structures)
 -- Managers
 local StickStandManager = require(script.Parent.StickStandManager)
 local GrillerManager = require(script.Parent.GrillerManager)
+local EmployeeHutManager = require(script.Parent.EmployeeHutManager)
 local BoostManager = require(script.Parent.BoostManager)
 
 -- Modules
@@ -38,6 +39,7 @@ local RECLAIM_BOOST_DURATION = 480 -- seconds
 local STRUCTURE_CONTENTS = {
 	Grillers = { Key = "Grillers", Manager = GrillerManager },
 	StickStands = { Key = "StickStands", Manager = StickStandManager },
+	Huts = { Key = "HutStorage", Manager = EmployeeHutManager },
 }
 
 --
@@ -102,12 +104,18 @@ function BaseManager:AssignBaseToPlayer(player: Player)
 			PlayerDataManager:ListenForChanges(player, "Structures", function()
 				self:RefreshBaseStructuresForPlayer(player)
 			end),
+			PlayerDataManager:ListenForChanges(player, "HutRepaired", function()
+				self:RefreshBaseHutForPlayer(player)
+			end),
+			PlayerDataManager:ListenForChanges(player, "HutRepairEndsAt", function()
+				self:RefreshBaseHutForPlayer(player)
+			end),
 		}
 
 		-- Before the render, so a build saved under a different CELL_SIZE is never posed in the wrong place
 		self:RescaleStructureCells(player)
 
-		base:AssignOwner(player, data.Unlocks, data.Plots, data.Structures)
+		base:AssignOwner(player, data.Unlocks, data.Plots, data.Structures, data.HutRepaired, data.HutRepairEndsAt)
 		self.OnBaseAssigned:Fire(player, base)
 
 		-- After it: taking a griller back settles its cook, and GrillerManager restamps a paused one as it binds the grill
@@ -148,6 +156,22 @@ function BaseManager:RefreshBasePlotsForPlayer(player: Player)
 	end
 
 	base:ApplyPlots(data.Plots, true)
+end
+
+-- Renders the owner's hut and republishes any running repair, which is a visitor's only view of the countdown.
+function BaseManager:RefreshBaseHutForPlayer(player: Player)
+	local base = self:GetBaseFromPlayer(player)
+	if not base then
+		return
+	end
+
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		return
+	end
+
+	base:ApplyHut(data.HutRepaired)
+	base:PublishHutRepair(data.HutRepairEndsAt)
 end
 
 -- Buys one plot; the data write re-renders the base. Priced off how many they own, so the only choice is where.
@@ -363,7 +387,7 @@ function BaseManager:PlaceStructureOnBase(
 	rotation = math.floor(rotation) % 4
 	local footprintX, footprintZ = Structures.GetFootprint(structure, rotation)
 
-	if not base:IsBlockFree(cellX, cellZ, footprintX, footprintZ, data.Structures, data.Plots) then
+	if not base:IsBlockFree(cellX, cellZ, footprintX, footprintZ, data.Structures, data.Plots, data.HutRepaired) then
 		self._purchasing[player] = nil
 		return false
 	end
@@ -485,6 +509,9 @@ function BaseManager:ReclaimStrandedStructures(player: Player)
 	-- Sorted, so which of two overlapping structures survives is the same on every load
 	table.sort(uids)
 
+	-- Held for the repaired hut while it's still broken, and a build already standing there is stranded by it
+	local hutBlock = if data.HutRepaired then nil else base:GetHutBlock()
+
 	local kept = {}
 	local stranded = {}
 
@@ -499,18 +526,31 @@ function BaseManager:ReclaimStrandedStructures(player: Player)
 
 		local footprintX, footprintZ = Structures.GetFootprint(structure, placed.Rotation)
 
-		if base:IsBlockFree(placed.CellX, placed.CellZ, footprintX, footprintZ, kept, data.Plots) then
+		if base:IsBlockFree(placed.CellX, placed.CellZ, footprintX, footprintZ, kept, data.Plots, data.HutRepaired) then
 			kept[uid] = placed
-		else
-			table.insert(stranded, uid)
+			continue
 		end
+
+		table.insert(stranded, {
+			Uid = uid,
+			-- Which of the two reasons to name below; IsBlockFree folds them into one answer
+			TookHutCells = hutBlock ~= nil
+				and Structures.Overlaps(hutBlock, placed.CellX, placed.CellZ, footprintX, footprintZ),
+		})
 	end
 
 	local reclaimed = 0
+	local hutReclaimed = 0
 
-	for _, uid in stranded do
-		if self:RemoveStructureFromBase(player, uid) then
-			reclaimed += 1
+	for _, entry in stranded do
+		if not self:RemoveStructureFromBase(player, entry.Uid) then
+			continue
+		end
+
+		reclaimed += 1
+
+		if entry.TookHutCells then
+			hutReclaimed += 1
 		end
 	end
 
@@ -519,9 +559,12 @@ function BaseManager:ReclaimStrandedStructures(player: Player)
 		return
 	end
 
-	-- One for the sweep; anything sitting on a structure has already toasted its own way back
+	-- One for the sweep; anything sitting on a structure has already toasted its own way back. The hut is named
+	-- whenever it took any cells, being the newer and far more surprising of the two reasons
 	NotificationManager:NotifyNormal(player, {
-		Text = "Your plots shrank, so some builds went back to your backpack",
+		Text = if hutReclaimed > 0
+			then "The new hut needs that spot, so what was there went back to your backpack"
+			else "Your plots shrank, so some builds went back to your backpack",
 		Duration = 5,
 		Sound = "Notify",
 	})

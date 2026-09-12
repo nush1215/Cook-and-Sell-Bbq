@@ -83,28 +83,20 @@ function ShopRatingController:Close()
 	UIController:CloseFrame(self.UI.Holder)
 end
 
--- Fills a star row. Only the X offset is ours, so a gradient inset in the place file stays inset.
-function ShopRatingController:_drawStars(starsFrame: Frame, stars: number?)
-	for index = 1, Rating.MAX_STARS do
-		local gradient = starsFrame[tostring(index)].UIGradient
-		gradient.Offset = Vector2.new(Rating.GetStarOffset(stars, index), gradient.Offset.Y)
-	end
-end
-
 -- Redraws the headline and every trait row. An unrated trait draws empty stars and reads as pending.
 function ShopRatingController:_drawRating()
 	local holder = self.UI.Holder
 	local overall = LocalPlayer:GetAttribute(Rating.OVERALL_ATTRIBUTE)
 
 	holder.OverallRating.OverallRating.Text = Rating.FormatTitle(Rating.OVERALL_NAME, overall)
-	self:_drawStars(holder.OverallRating.Stars, overall)
+	Rating.DrawStars(holder.OverallRating.Stars, overall)
 
 	for traitId, display in Rating.TraitDisplay do
 		local row = holder.StarRatingImprovement.Container[display.Frame]
 		local stars = LocalPlayer:GetAttribute(Rating.GetTraitAttribute(traitId))
 
 		row.Title.Text = Rating.FormatTitle(display.Name, stars)
-		self:_drawStars(row.Stars, stars)
+		Rating.DrawStars(row.Stars, stars)
 	end
 end
 

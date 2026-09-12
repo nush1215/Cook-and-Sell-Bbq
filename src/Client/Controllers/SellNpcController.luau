@@ -18,6 +18,7 @@ local RandomUtil = require(Shared.RandomUtil)
 local Animations = require(Shared.Animations)
 local Structures = require(Shared.Config.Structures)
 local SellNpc = require(Shared.Config.SellNpc)
+local Employees = require(Shared.Config.Employees)
 local NpcDialogue = require(Shared.Config.NpcDialogue)
 
 -- Modules
@@ -143,6 +144,11 @@ function SellNpcController:_attach(npc: Model)
 		self:_render(npc)
 	end)
 
+	-- A seller takes the customer on a moment after the offer goes up, so this can't be read once and left
+	state.trove:Connect(npc:GetAttributeChangedSignal(Employees.SERVED_BY_ATTRIBUTE), function()
+		self:_refreshOfferButtons(npc)
+	end)
+
 	-- Seeded as well as connected, so a customer already mid-visit when this client reached it draws now
 	self:_render(npc)
 end
@@ -232,22 +238,26 @@ function SellNpcController:_showOffer(state, npc: Model, visit)
 	if not state.offerBound then
 		state.offerBound = true
 
-		local function answer(accepted: boolean)
+		-- On the state, so a counter-offer can hand the pad the same closure
+		function state.answer(accepted: boolean)
 			if state.answered then
 				return
 			end
 			state.answered = true
 			accept.Active, decline.Active = false, false
 
+			-- Off the pad the moment it's answered, whichever way the answer came in
+			NpcBillboard.UnregisterOffer(npc)
+
 			self.NpcOfferResponseEvent:FireServer(npc, accepted)
 		end
 
 		-- On press, not release -- the buttons ride an animated head and can drift out from under a finger
 		state.trove:Add(UIController:BindButtonClick(accept, function()
-			answer(true)
+			state.answer(true)
 		end, true, nil, nil, true).Disconnect)
 		state.trove:Add(UIController:BindButtonClick(decline, function()
-			answer(false)
+			state.answer(false)
 		end, true, nil, nil, true).Disconnect)
 	end
 
@@ -256,7 +266,22 @@ function SellNpcController:_showOffer(state, npc: Model, visit)
 	accept.Active, decline.Active = true, true
 	offerFrame.Visible = true
 
+	self:_refreshOfferButtons(npc)
+
+	-- Every show, counters included: keyed by customer, so it's the same entry re-armed rather than a second
+	NpcBillboard.RegisterOffer(npc, accept, decline, state.answer)
+
 	self.OnOfferShown:Fire(npc, offerFrame)
+end
+
+-- Hides the answer buttons while a seller employee is working this customer, so the player isn't offered a choice their own staff is about to make. The whole row goes, not each button: the tutorial hides Decline by itself and restoring them one by one would undo it.
+function SellNpcController:_refreshOfferButtons(npc: Model)
+	local state = self._active[npc]
+	if not state or not state.offerFrame then
+		return
+	end
+
+	state.offerFrame.Buttons.Visible = npc:GetAttribute(Employees.SERVED_BY_ATTRIBUTE) == nil
 end
 
 -- Takes the offer frame down once the haggle is over, however it ended.
@@ -264,6 +289,9 @@ function SellNpcController:_hideOffer(state, npc: Model)
 	state.answered = true
 	state.offerShown = false
 	state.offerFrame.Visible = false
+
+	-- Before the billboards can go: _cleanup comes through here first, and the pad's glyphs sit on the buttons
+	NpcBillboard.UnregisterOffer(npc)
 
 	self.OnOfferEnded:Fire(npc)
 end
