@@ -16,6 +16,7 @@ local Network = require(Shared.Network)
 local Structures = require(Shared.Config.Structures)
 local Plots = require(Shared.Config.Plots)
 local GridUtil = require(Shared.GridUtil)
+local GlobalUtil = require(Shared.GlobalUtil)
 
 -- Controllers
 local PlayerDataController = require(script.Parent.PlayerDataController)
@@ -437,7 +438,7 @@ end
 
 -- The ray the ghost is aimed down. The touch one points straight down, so a level camera doesn't skid.
 function BuildController:_getAimRay(): Ray?
-	if not UserInputService.TouchEnabled then
+	if not GlobalUtil.IsTouchOnly() then
 		local mouse = self._mouse
 		return mouse and mouse.UnitRay
 	end
@@ -815,7 +816,7 @@ end
 
 -- Puts up the guide or the invalid badge, never both. Desktop only -- a phone has the touch buttons.
 function BuildController:_refreshGuide()
-	local placing = self._guidePlacing and not UserInputService.TouchEnabled
+	local placing = self._guidePlacing and not GlobalUtil.IsTouchOnly()
 	local guide = self:_getGuide()
 	local invalid = self:_getInvalid()
 
@@ -1117,7 +1118,7 @@ function BuildController:_hookTool(tool: Tool)
 		end
 
 		-- On a phone any tap fires this, so placing belongs to the Place button alone
-		if UserInputService.TouchEnabled then
+		if GlobalUtil.IsTouchOnly() then
 			return
 		end
 

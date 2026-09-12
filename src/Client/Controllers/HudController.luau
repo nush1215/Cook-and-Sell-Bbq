@@ -1,11 +1,14 @@
 -- Services
-local UserInputService = game:GetService("UserInputService")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
 -- Packages
 local Packages = ReplicatedStorage.Packages
 local Spr = require(Packages.Spr)
+
+-- Shared
+local Shared = ReplicatedStorage.Shared
+local GlobalUtil = require(Shared.GlobalUtil)
 
 -- Local Player
 local LocalPlayer = Players.LocalPlayer
@@ -469,7 +472,7 @@ function HudController:OnInit()
 	UIController = require(script.Parent.UIController)
 
 	-- Adjust the top HUD frame position for touch devices
-	if UserInputService.TouchEnabled then
+	if GlobalUtil.IsTouchOnly() then
 		HUD_FRAMES_POSITIONS.Top.Hide = UDim2.fromScale(0.5, -0.5)
 		HUD_FRAMES_POSITIONS.Top.Show = UDim2.fromScale(0.5, 0.22)
 	end
