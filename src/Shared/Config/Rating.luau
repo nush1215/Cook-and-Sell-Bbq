@@ -59,6 +59,16 @@ Rating.TraitDisplay = {
 
 table.freeze(Rating.TraitDisplay)
 
+-- [dataKey] = its frame under the panel's Stats, and whether its Amount reads as money -- keyed by profile key, since the server mirrors each onto the player
+Rating.StatDisplay = {
+	TotalEarned = { Frame = "TotalEarnings", Money = true },
+	SkewersSold = { Frame = "BBQSold" },
+	IngredientsBought = { Frame = "IngredientsBought" },
+	SalesCompleted = { Frame = "CustomersServed" },
+}
+
+table.freeze(Rating.StatDisplay)
+
 -- The player attribute the headline star is published under, so the server write and the client read can't drift
 Rating.OVERALL_ATTRIBUTE = "Rating"
 
@@ -366,6 +376,11 @@ end
 -- The player attribute one trait's stars are published under, built here so the write and the read can't drift.
 function Rating.GetTraitAttribute(traitId: string): string
 	return `{Rating.OVERALL_ATTRIBUTE}_{traitId}`
+end
+
+-- The player attribute one panel counter is published under, since player data only reaches its owner and a visitor reads this instead.
+function Rating.GetStatAttribute(dataKey: string): string
+	return `Stat_{dataKey}`
 end
 
 return Rating

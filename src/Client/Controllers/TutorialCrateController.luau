@@ -5,6 +5,7 @@ local Players = game:GetService("Players")
 
 -- Packages
 local Packages = ReplicatedStorage.Packages
+local Signal = require(Packages.Signal)
 local Trove = require(Packages.Trove)
 
 -- Assets
@@ -46,6 +47,8 @@ local ROCK_IGNORE_TAG = "RockModuleIgnore"
 local TutorialCrateController = {
 	CrashEvent = Network.Event("TutorialCrateCrash"),
 	OpenEvent = Network.Event("TutorialCrateOpen"),
+
+	OnCrateLanded = Signal.new(), -- () once the crashing crate has come to rest on the base
 
 	_timerTrove = nil :: any,
 }
@@ -238,6 +241,8 @@ function TutorialCrateController:PlayCrash(uniqueId: string, duration: number, l
 			task.defer(function()
 				CameraController:ShakeCustom(shake.Magnitude, shake.Roughness, shake.FadeIn, shake.FadeOut)
 			end)
+
+			self.OnCrateLanded:Fire()
 		end,
 	})
 

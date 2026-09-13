@@ -180,6 +180,8 @@ Employees.STATE_LABELS = {
 		HoverEmpty = "The Hut is Empty",
 		HoverNoSticks = "Needs More Sticks",
 		HoverNoIngredients = "Needs More Ingredients",
+		HoverFull = "Stick Stands are Full",
+		HoverNoStands = "Build a Stick Stand",
 		ToStore = "Going to the Hut",
 		Fetch = "Getting BBQ Stuff",
 		ToBench = "Carrying BBQ Stuff",
@@ -192,9 +194,9 @@ table.freeze(Employees.STATE_LABELS)
 -- How often the roster steps. Every state is a poll, so this is the reaction time of the whole system
 Employees.TICK_INTERVAL = 0.25
 
--- Seconds before an idle employee spots work it hasn't noticed yet. Also what keeps a full roster from
--- re-reading the base four times a second. A poor one is genuinely slow off the mark
-Employees.NOTICE_WORST = 4
+-- Seconds before an idle employee spots work it hasn't noticed yet, both as its polling gap and as its delay
+-- after a change to the base wakes it. Kept short at the bottom: a slow thinker reads as broken, not as a low star
+Employees.NOTICE_WORST = 1.5
 Employees.NOTICE_BEST = 0.25
 Employees.NOTICE_GAMMA = 1
 

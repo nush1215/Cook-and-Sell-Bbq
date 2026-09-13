@@ -518,9 +518,18 @@ else the roster is a lottery to be cashed in.
 
 Gated on 2 placed grillers **or** 2 ingredient roll stands, because an order is only a request if the
 player has the machinery to fill it. Past the cooldown the expected wait is
-`(100 / SPAWN_CHANCE) * CHECK_INTERVAL` — 75s at today's numbers, so about six minutes between orders
-once `COOLDOWN` is counted. Deliberately rarer than a rich visit: this one interrupts what the player was
+`(100 / SPAWN_CHANCE) * CHECK_INTERVAL` — about 17s at today's numbers, on top of the `COOLDOWN` counted
+from the previous arrival. Deliberately rarer than a rich visit: this one interrupts what the player was
 doing, where a rich one rewards what they already did.
+
+**One order at a time until the kitchen can run two.** `CONCURRENT_ORDER_MARKS` is a ladder of placed builds
+— a base runs as many orders at once as the rows it clears, in order — and today's second row is 3 grillers
+**and** 2 stick stands. A second order never arrives with the first: a fresh customer only comes in while
+every custom order customer already on the base is stood waiting for its BBQ, never beside the introduction
+order, and still through the same roll and `COOLDOWN`. Orders a player left behind are the exception, and
+come back together on rejoin, since each was already owed. On a two-order base the roll stops waiting for
+the live order to leave, so a player who takes their time can see up to about twice the custom order income;
+`COOLDOWN` is the dial if that runs hot. A third order is one more row.
 
 Only what makes it a custom order lives in this config; how it walks, fades, stands and eats it reads off
 `SellNpc`, the same way `RichNpc` does. Gotcha: `SPAWN_CHANCE` and `INSPECT_CHANCE` are out of 100.
@@ -593,11 +602,11 @@ claiming each slot, which is per-ingredient by nature. A 3-slot order with a Rar
 
 ### Biasing the rolls
 
-While an order is live the rolling stand is steered toward what it still wants — but as a **pity
-counter, not a reweighted table**. After `ROLL_PITY_THRESHOLD` rolls without one landing, the next is
+While orders are live the rolling stand is steered toward what they still want between them — but as a
+**pity counter, not a reweighted table**. After `ROLL_PITY_THRESHOLD` rolls without one landing, the next is
 forced to a still-missing ingredient, which is the same forced-roll path `DrawPityIngredient` already
 uses. It sits *under* the tier guarantees, which are owed from hundreds of rolls back rather than from
-this order, and *above* the teaser, which is only window-shopping.
+these orders, and *above* the teaser, which is only window-shopping.
 
 This matters for the same reason the section above does: the authored `Chance` column stays the odds on
 the label, and what changes is only how often a forced roll fires — which is already the documented gap
@@ -609,6 +618,7 @@ rarer than its printed number, which is the direction the 100% rule exists to pr
 | `SPAWN_CHANCE` | orders become the main way to earn | they're a novelty nobody plans around |
 | `COOLDOWN` | orders are an event | they chain, and the normal loop stops mattering |
 | `MIN_GRILLERS` / `MIN_ROLLING_STANDS` | opens later, when the player can definitely cope | opens onto a player who can't fill one |
+| `CONCURRENT_ORDER_MARKS` | a second order waits for a bigger kitchen | a young base juggles two clocks it can't fill |
 | `INSPECT_CHANCE` | more visits open at the stand | they all cut straight to the ask |
 | `SLOT_COUNT` | bigger recipes, longer clocks | orders stop feeling like recipes |
 | `TIER_WEIGHTS` | rarer requests, more rolling | every order is commons |
@@ -1005,3 +1015,43 @@ sales feed the lifetime counters and never the rating's sale window — see `doc
 `/offlineEarnings <seconds> [player]` runs the pass on a loaded profile through the replica and shows the
 panel, so the whole flow can be checked in one Studio session on the mock store; its return line reads the
 report out. Customers aren't re-sent for what it puts on the stand — a real join does that on handover.
+
+## Daily rewards
+
+`Shared/Config/DailyRewards.luau`. One claim every `CLAIM_INTERVAL`, counted from the previous claim rather
+than a shared daily reset: Day 1 is ready on the first join, each later day unlocks a day after the one before
+was taken, and coming back late only means it waits. Nothing resets and nothing piles up, so a week is always
+seven visits. The unlocked tile is the claim; on a worker day it opens the free workers' cards with three of
+that rating (`FreeWorkersController:OpenOffer`), and the pick is the claim.
+
+| Day | Reward | For scale |
+|---|---|---|
+| 1 | $1,000 | |
+| 2 | 1 Meat Crate | |
+| 3 | 3 Gold Sticks | $10,500 at the stick shop |
+| 4 | a 3★ worker, picked from three cards | Rare; $25,100 on the hiring board |
+| 5 | 1 Solar Grill | Epic; $250,000 in the Grill & Stand Shop |
+| 6 | $100,000 | more than the Large Bux Pack's $75,000 (~1 hr of play) |
+| 7 | a 5★ worker, picked from three cards | Legendary; the board's top $125,000 |
+
+Both Bux days pay exactly the listed amount, boosts skipped as a Bux pack's are, since the tile promises a
+number. They still count toward `TotalEarned`, so Day 6 eats up to two-thirds of the early boost
+(`EarlyBoost.THRESHOLD` is $150,000) for a player still inside it.
+
+| Knob | Higher | Lower |
+|---|---|---|
+| `CLAIM_INTERVAL` | a week takes longer than seven days of visits | a player can claim more than once a day |
+| `CLAIM_GRACE` | a claim can land that much before its day unlocks | a press on the exact second can be refused on clock skew |
+
+### Random weeks
+
+`RANDOMIZE_AFTER_FIRST_WEEK` is off, so every week repeats `Days`. To randomize, give a day a `Pool` of
+rewards, each with a `Weight`, and switch the flag on. From the second week on, a pooled day rolls off
+`GetSeed(userId, claimCount)`, so the client and the server land on the same reward without it being saved; a
+day with no `Pool` stays as listed, and the first week never rolls, so a new player gets the week they were
+shown. A pooled Bux or crate reward needs an image first (a crate's `Icon`, or one for Bux in
+`GetRewardDisplay`): a tile only overwrites the image authored on it when the config has one.
+
+`/dailyReward <day> [secondsLeft] [player]` (`/dr`) puts a player on a day, counted across weeks (8 is the
+second week's Day 1), unlocking now or after the countdown. It writes through the replica, so the panel
+follows live and a worker day's faces bake again; on the mock store it's the only way past Day 1.

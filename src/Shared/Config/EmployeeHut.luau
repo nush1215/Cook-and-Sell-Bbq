@@ -87,7 +87,7 @@ EmployeeHut.CELL_ROTATION = 3
 EmployeeHut.REPAIR_COST = 25_000
 
 -- How long the repair takes once bought. Stamped absolute, so it runs down while they're offline
-EmployeeHut.REPAIR_DURATION = 5 --20 * 60
+EmployeeHut.REPAIR_DURATION = 1 * 60
 
 -- The base-model attribute the repair's deadline is published under, so the server write and the client read can't drift. Nil while nothing is running
 EmployeeHut.REPAIR_ENDS_ATTRIBUTE = "HutRepairEndsAt"

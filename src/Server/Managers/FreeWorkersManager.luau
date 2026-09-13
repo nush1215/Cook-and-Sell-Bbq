@@ -162,11 +162,17 @@ function FreeWorkersManager:ClaimFreeWorker(player: Player, slotIndex: number): 
 	return true
 end
 
--- Dresses one candidate's portrait into its owner's PlayerGui, named for the card it belongs on. Yields on the dress, so callers spawn it.
-function FreeWorkersManager:BakeCandidatePortrait(player: Player, slotIndex: number, candidate: FreeWorkers.Candidate)
+-- Dresses one candidate's portrait into the owner's PlayerGui folder `folderName`, named for the card it belongs on. `isWanted` is asked again once the dress yields. Yields on the dress, so callers spawn it.
+function FreeWorkersManager:BakeCandidatePortrait(
+	player: Player,
+	folderName: string,
+	slotIndex: number,
+	candidate: FreeWorkers.Candidate,
+	isWanted: (data: any) -> boolean
+)
 	local template = EmployeeFolder and EmployeeFolder:FindFirstChild(candidate.Body)
 	if not template then
-		warn(`Assets.Employees.{candidate.Body} is missing, free worker {slotIndex} gets no portrait`)
+		warn(`Assets.Employees.{candidate.Body} is missing, worker card {slotIndex} gets no portrait`)
 		return
 	end
 
@@ -180,24 +186,24 @@ function FreeWorkersManager:BakeCandidatePortrait(player: Player, slotIndex: num
 		return
 	end
 
-	-- The dress yields, and they can have left or claimed one in the meantime
+	-- The dress yields, and they can have left or taken one in the meantime
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
-	if not hasData or data.FreeWorkersClaimed or not player.Parent then
+	if not hasData or not isWanted(data) or not player.Parent then
 		baked:Destroy()
 		return
 	end
 
-	local folder = player.PlayerGui:FindFirstChild(FreeWorkers.PORTRAIT_FOLDER)
+	local folder = player.PlayerGui:FindFirstChild(folderName)
 	if not folder then
 		-- A ScreenGui rather than a Folder, so ResetOnSpawn can keep the portraits through a respawn
 		folder = Instance.new("ScreenGui")
-		folder.Name = FreeWorkers.PORTRAIT_FOLDER
+		folder.Name = folderName
 		folder.ResetOnSpawn = false
 		folder.Enabled = false
 		folder.Parent = player.PlayerGui
 	end
 
-	-- Two bakes racing past the check in ResumePortraits both land here, so the later one replaces rather than doubles
+	-- Two bakes racing past the check in BakeCandidatePortraits both land here, so the later one replaces rather than doubles
 	local stale = folder:FindFirstChild(tostring(slotIndex))
 	if stale then
 		stale:Destroy()
@@ -207,6 +213,25 @@ function FreeWorkersManager:BakeCandidatePortrait(player: Player, slotIndex: num
 	baked.Parent = folder
 end
 
+-- Dresses each of `candidates` still without a face into the folder `folderName`, for as long as `isWanted` holds. Yields, so callers spawn it.
+function FreeWorkersManager:BakeCandidatePortraits(
+	player: Player,
+	folderName: string,
+	candidates: { FreeWorkers.Candidate },
+	isWanted: (data: any) -> boolean
+)
+	-- A second base handover bakes again, and one portrait per card is all the panel needs
+	local existing = player.PlayerGui:FindFirstChild(folderName)
+
+	for slotIndex, candidate in candidates do
+		if existing and existing:FindFirstChild(tostring(slotIndex)) then
+			continue
+		end
+
+		self:BakeCandidatePortrait(player, folderName, slotIndex, candidate, isWanted)
+	end
+end
+
 -- Dresses all three for a player still owed them, so the cards have faces waiting by the time the hut is opened.
 function FreeWorkersManager:ResumePortraits(player: Player)
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
@@ -214,16 +239,10 @@ function FreeWorkersManager:ResumePortraits(player: Player)
 		return
 	end
 
-	-- A second base handover bakes again, and one portrait per card is all the panel needs
-	local existing = player.PlayerGui:FindFirstChild(FreeWorkers.PORTRAIT_FOLDER)
-
-	for slotIndex, candidate in FreeWorkers.RollCandidates(player.UserId) do
-		if existing and existing:FindFirstChild(tostring(slotIndex)) then
-			continue
-		end
-
-		self:BakeCandidatePortrait(player, slotIndex, candidate)
-	end
+	local candidates = FreeWorkers.RollCandidates(player.UserId)
+	self:BakeCandidatePortraits(player, FreeWorkers.PORTRAIT_FOLDER, candidates, function(latest)
+		return not latest.FreeWorkersClaimed
+	end)
 end
 
 function FreeWorkersManager:OnInit()

@@ -43,6 +43,7 @@ local UIController = {
 
 	_currentOpenedFrame = nil,
 	_openFrames = {}, -- every frame up through OpenFrame, oldest first; the last is what B closes and the cursor sits on
+	_queuedFrames = {}, -- frames waiting on OpenFrameWhenFree for the open panel to close, oldest first
 	_cursorOwned = false, -- whether the pad cursor up now is one this put up, rather than the player's own
 	_closeBound = false,
 }
@@ -63,6 +64,12 @@ function UIController:OpenFrame(frame: Frame, independent: boolean?)
 	if self._currentOpenedFrame == frame then
 		self:CloseFrame(frame)
 		return
+	end
+
+	-- Opened now, by hand or off the queue, so a queued open of it is spent
+	local queuedIndex = table.find(self._queuedFrames, frame)
+	if queuedIndex then
+		table.remove(self._queuedFrames, queuedIndex)
 	end
 
 	SoundController:PlaySound("FrameOpen")
@@ -124,6 +131,30 @@ function UIController:CloseFrame(frame: Frame)
 	self:_refreshGamepadMenu()
 
 	self.OnFrameClosed:Fire(frame)
+
+	if self._queuedFrames[1] then
+		-- Deferred, since swapping panels closes the old one before it records the new one taking its place
+		task.defer(function()
+			local queued = self._queuedFrames[1]
+			if queued and not self._currentOpenedFrame then
+				self:OpenFrame(queued)
+			end
+		end)
+	end
+end
+
+-- Opens `frame` once no panel is up, queued behind whatever is. For panels that come up on their own, so one can't knock another down.
+function UIController:OpenFrameWhenFree(frame: Frame)
+	if self._currentOpenedFrame == frame or table.find(self._queuedFrames, frame) then
+		return
+	end
+
+	if self._currentOpenedFrame then
+		table.insert(self._queuedFrames, frame)
+		return
+	end
+
+	self:OpenFrame(frame)
 end
 
 -- Closes whatever frame is open, for callers needing the screen clear without knowing what's on it.

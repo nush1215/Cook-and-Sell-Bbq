@@ -19,7 +19,7 @@ local PlayerGui: Instance = Players.LocalPlayer:WaitForChild("PlayerGui")
 
 local BackpackScript = {}
 
-BackpackScript.OpenClose = nil :: any -- Function to toggle open/close
+BackpackScript.OpenClose = nil :: any -- Function to open/close to a given state
 BackpackScript.IsOpen = false :: boolean
 BackpackScript.StateChanged = Instance.new("BindableEvent") :: BindableEvent -- Fires after any open/close, passes IsNowOpen
 
@@ -166,10 +166,8 @@ local inventoryIcon: any = Icon.new()
 	:autoDeselect(false)
 	:setOrder(1)
 
-inventoryIcon.toggled:Connect(function(): ()
-	if not GuiService.MenuIsOpen then
-		BackpackScript.OpenClose()
-	end
+inventoryIcon.toggled:Connect(function(isSelected: boolean): ()
+	BackpackScript.OpenClose(isSelected)
 end)
 
 local BackpackGui: ScreenGui = Instance.new("ScreenGui")
@@ -397,6 +395,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 	local ToolChangeConn: any = nil
 	local AmountChangeConn: any = nil
 	local HighlightFrame: any = nil -- UIStroke
+	local ReleaseDrag: any = nil
 	local SelectionObj: ImageLabel = nil
 
 	--NOTE: The following are only defined for Hotbar Slots
@@ -552,6 +551,11 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 			return
 		end
 
+		-- A tool pulled out from under a drag never fires DragStopped, which would leave the icon locked
+		if Dragging[SlotFrame] then
+			ReleaseDrag()
+		end
+
 		-- Disconnect tool events if they exist
 		if ToolChangeConn then
 			ToolChangeConn:Disconnect()
@@ -619,6 +623,9 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 	end
 
 	function slot:Delete(): ...any
+		if Dragging[SlotFrame] then
+			ReleaseDrag()
+		end
 		SlotFrame:Destroy() --NOTE: Also clears connections
 		table.remove(Slots, self.Index)
 		local newSize: number = #Slots
@@ -954,12 +961,12 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 			end
 		end)
 
-		SlotFrame.DragStopped:Connect(function(x: number, y: number): ()
+		-- Puts a dragged slot back where it started and frees the icon lock the drag took
+		ReleaseDrag = function(): ()
 			if FakeSlotFrame then
 				FakeSlotFrame:Destroy()
+				FakeSlotFrame = nil :: any
 			end
-
-			local now: number = os.clock()
 
 			SlotFrame.Position = startPoint
 			SlotFrame.Parent = startParent
@@ -984,6 +991,12 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 			-- end
 
 			Dragging[SlotFrame] = nil
+		end
+
+		SlotFrame.DragStopped:Connect(function(x: number, y: number): ()
+			local now: number = os.clock()
+
+			ReleaseDrag()
 
 			-- Make sure the tool wasn't dropped
 			if not slot.Tool then
@@ -2180,15 +2193,29 @@ do -- Make the Inventory expand/collapse arrow (unless TopBar)
 		end
 	end
 
-	local function openClose(): ()
-		if not next(Dragging) then -- Only continue if nothing is being dragged
-			InventoryFrame.Visible = not InventoryFrame.Visible
-			local nowOpen: boolean = InventoryFrame.Visible
-			AdjustHotbarFrames()
-			HotbarFrame.Active = not HotbarFrame.Active
-			for i: number = 1, NumberOfHotbarSlots do
-				Slots[i]:SetClickability(not nowOpen)
-			end
+	-- Opens or closes the inventory to match the topbar icon's selected state
+	local function openClose(open: boolean): ()
+		if InventoryFrame.Visible == open then
+			return
+		end
+
+		-- Blocked mid-drag or under the Roblox menu, so snap the icon back; deferred since TopbarPlus finishes its state change after toggled
+		if next(Dragging) or GuiService.MenuIsOpen then
+			task.defer(function()
+				if InventoryFrame.Visible then
+					inventoryIcon:select()
+				else
+					inventoryIcon:deselect()
+				end
+			end)
+			return
+		end
+
+		InventoryFrame.Visible = open
+		AdjustHotbarFrames()
+		HotbarFrame.Active = open
+		for i: number = 1, NumberOfHotbarSlots do
+			Slots[i]:SetClickability(not open)
 		end
 
 		if InventoryFrame.Visible then

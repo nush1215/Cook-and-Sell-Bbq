@@ -36,7 +36,7 @@ Tips.Data = {
 	"Fill every slot on your Stick to help your Menu stars",
 	"You can't buy 5 stars with upgrades. You have to cook well too!",
 	"Cooking and Satisfaction are 65% of your Rating. Menu and Kitchen are the rest",
-	"Visit another player's base to see their Rating sign",
+	"Visit another player's base to see their Rating and stats",
 
 	-- Custom orders
 	"Custom orders pay up to 1.3x, but only if you get the order exactly right",

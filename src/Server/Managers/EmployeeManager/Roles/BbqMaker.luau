@@ -29,6 +29,12 @@ local NO_STICKS_VARIANT = "NoSticks"
 -- for its turn reads as exactly that rather than as an employee that hasn't spotted a free stand
 local YIELDING_VARIANT = "Waiting"
 
+-- Said when every stand is taken: full or cooked and waiting on the cooker, or claimed by another maker
+local FULL_VARIANT = "Full"
+
+-- Said when there isn't a stand on the base to build on at all
+local NO_STANDS_VARIANT = "NoStands"
+
 -- How long it waits before looking again when a trip found nothing to do
 local RETRY_DELAY = 4
 
@@ -141,20 +147,36 @@ local function findStockedHut(employee, data, needsStick: boolean): string?
 	return nil
 end
 
--- A stand worth building on: one with room, that the player isn't part-way through themselves. Two passes rather than one, so looking at an empty stand can't leave a claim on it when a part-built one wins. The last return says the only ones it passed over were the player's own, so hovering can say it's standing back rather than looking like it never noticed them.
-local function findWorkableStand(employee, data): (string?, boolean, boolean)
+-- The variant for a hover that found no stand to work, so the sign names why rather than reading as an employee that never looked.
+local function getNoStandVariant(sawStand: boolean, yielding: boolean): string
+	if not sawStand then
+		return NO_STANDS_VARIANT
+	end
+
+	return if yielding then YIELDING_VARIANT else FULL_VARIANT
+end
+
+-- A stand worth building on: one with room, that the player isn't part-way through themselves. Two passes rather than one, so looking at an empty stand can't leave a claim on it when a part-built one wins. The last two returns say whether the only ones it passed over were the player's own, and whether the base has a stand at all, so hovering can name what's holding it up.
+local function findWorkableStand(employee, data): (string?, boolean, boolean, boolean)
 	local yielding = false
+	local sawStand = false
 
 	-- Part-built first: finishing a stick beats starting another, and a cooker may be waiting on it
 	for uid, placed in data.Structures do
-		if not Structures.IsCategory(placed.Type, STAND_CATEGORY) or getRoom(data.StickStands[uid]) <= 0 then
+		if not Structures.IsCategory(placed.Type, STAND_CATEGORY) then
+			continue
+		end
+
+		sawStand = true
+
+		if getRoom(data.StickStands[uid]) <= 0 then
 			continue
 		end
 
 		if isPlayerBuilding(employee, uid) then
 			yielding = true
 		elseif employee:ClaimStation(uid) then
-			return uid, false, false
+			return uid, false, false, true
 		end
 	end
 
@@ -166,11 +188,11 @@ local function findWorkableStand(employee, data): (string?, boolean, boolean)
 		if isPlayerBuilding(employee, uid) then
 			yielding = true
 		elseif employee:ClaimStation(uid) then
-			return uid, true, false
+			return uid, true, false, true
 		end
 	end
 
-	return nil, false, yielding
+	return nil, false, yielding, sawStand
 end
 
 -- Whether `uid` can take what this load holds: a stick wants a bare stand, ingredients want one with room.
@@ -184,19 +206,30 @@ local function standFits(data, uid: string, load): boolean
 	return getRoom(record) > 0
 end
 
--- A stand for a load already in hand, so a run whose stand fell through finds another rather than fetching twice.
-local function findStandForLoad(employee, data, load): string?
+-- A stand for a load already in hand, so a run whose stand fell through finds another rather than fetching twice. Returns the same yielding and any-stand reads as findWorkableStand.
+local function findStandForLoad(employee, data, load): (string?, boolean, boolean)
+	local yielding = false
+	local sawStand = false
+
 	for uid, placed in data.Structures do
-		if not Structures.IsCategory(placed.Type, STAND_CATEGORY) or isPlayerBuilding(employee, uid) then
+		if not Structures.IsCategory(placed.Type, STAND_CATEGORY) then
 			continue
 		end
 
-		if standFits(data, uid, load) and employee:ClaimStation(uid) then
-			return uid
+		sawStand = true
+
+		if not standFits(data, uid, load) then
+			continue
+		end
+
+		if isPlayerBuilding(employee, uid) then
+			yielding = true
+		elseif employee:ClaimStation(uid) then
+			return uid, false, true
 		end
 	end
 
-	return nil
+	return nil, yielding, sawStand
 end
 
 -- Drifts around the store between jobs, circling the hut rather than tramping through the middle of it.
@@ -279,11 +312,14 @@ BbqMaker.Hover = function(employee, now: number): string?
 		end
 
 		if employee:ShouldPoll(now) then
-			employee._buildUid = findStandForLoad(employee, data, load)
+			local standUid, yielding, sawStand = findStandForLoad(employee, data, load)
 
-			if employee._buildUid then
+			if standUid then
+				employee._buildUid = standUid
 				return "ToBench"
 			end
+
+			employee:SetVariant(getNoStandVariant(sawStand, yielding))
 		end
 
 		-- Nowhere to put it yet, so it waits with its hands full rather than fetching more on top
@@ -293,7 +329,7 @@ BbqMaker.Hover = function(employee, now: number): string?
 	end
 
 	if employee:ShouldPoll(now) then
-		local standUid, needsStick, yielding = findWorkableStand(employee, data)
+		local standUid, needsStick, yielding, sawStand = findWorkableStand(employee, data)
 
 		if standUid then
 			local hutUid = findStockedHut(employee, data, needsStick)
@@ -321,8 +357,10 @@ BbqMaker.Hover = function(employee, now: number): string?
 			employee:SetVariant(NO_INGREDIENTS_VARIANT)
 		elseif not hasSticks then
 			employee:SetVariant(NO_STICKS_VARIANT)
+		elseif standUid then
+			employee:SetVariant(nil)
 		else
-			employee:SetVariant(if yielding then YIELDING_VARIANT else nil)
+			employee:SetVariant(getNoStandVariant(sawStand, yielding))
 		end
 	end
 

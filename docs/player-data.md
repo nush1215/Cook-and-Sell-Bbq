@@ -84,9 +84,10 @@ dropped by the write that resumes the cook, so a record only ever carries them w
 
 **`SkewerStand`** — the sell stall's display: an array (max 6) of cooked skewers in placement order. One
 stand per base, so a plain list rather than slot-keyed. A record a waiting custom order wants is held for
-that customer by `Uid` while it walks over, and every other customer skips it. The hold itself is never
-saved: it is read off the live order (`CustomOrderNpcManager:GetHeldStandSkewerUid`), so it can't outlive
-the customer it was held for.
+that customer by `Uid` while it walks over, and every other customer skips it. With two orders waiting, each
+holds its own — the sooner deadline picks first, and a record already held is never claimed twice. The holds
+themselves are never saved: they are read off the live orders (`CustomOrderNpcManager:GetHeldStandSkewerUids`),
+so none can outlive the customer it was held for.
 
 ## Ingredient rolling
 
@@ -176,19 +177,30 @@ skips it. Same reasoning as `SeenRichCustomer` and `SeenHaggle` above.
 The grant is also latched in memory for the session, because the saved key is written behind a yield
 and three separate signals can race to be the one that reaches it.
 
-**`ActiveCustomOrder`** — the order they are part-way through, absent when there isn't one. It has no
-template entry: absent *is* the resting state, and a template default would make "no order" and "an order
-with nothing in it" indistinguishable. Written by `SaveActiveOrder` the moment the order is owed — as the
-offer card goes up, and again as the deal is struck — so it rides the ordinary auto-save rather than
-depending on a last save that a crash or a shutdown can skip. `SaveActiveOrderOnLastSave` only restamps
-the clock on the way out, so an order carries the time it actually had left rather than the time it had
-when it was struck; miss that and you come back with a more generous clock, not with nothing. A customer
-walking over to collect a BBQ held for it on the stand is still owed its order, so it banks as `Accepted`
-too; the BBQ saves with the stand, and the restored customer claims it again before it steps aside. Cleared in
-`_recordOutcome`, which every outcome funnels through — so a new outcome added later cannot forget to
-clear it and leave a ghost customer returning forever. `_runGuardedVisit` clears it too when a restore
-never gets its customer up, since a saved order both the roll and the next restore step over would
-otherwise cost that player every order they were owed for the rest of the file's life.
+**`ActiveCustomOrders`** — the orders they are part-way through, keyed by each visit's `FunnelId` (kept
+inside the entry too, both written from the same `record.funnelId`); an empty map is the resting state.
+Keyed rather than listed so every write touches one order only, since a base can run two at once. An entry
+is written by `SaveActiveOrder` the moment its order is owed — as the offer card goes up, and again as the
+deal is struck — so it rides the ordinary auto-save rather than depending on a last save that a crash or a
+shutdown can skip. `SaveActiveOrdersOnLastSave` only restamps each owed order's clock on the way out, so an
+order carries the time it actually had left rather than the time it had when it was struck; miss that and
+you come back with a more generous clock, not with nothing. A customer walking over to collect a BBQ held
+for it on the stand is still owed its order, so it banks as `Accepted` too; the BBQ saves with the stand,
+and the restored customer claims it again before it steps aside. Each entry is cleared in `_recordOutcome`,
+which every outcome funnels through — so a new outcome added later cannot forget to clear it and leave a
+ghost customer returning forever. `_runGuardedVisit` clears only its own visit's entry when a restore never
+gets its customer up or a visit errors, so an order running beside it keeps its save.
+
+On join, every saved order comes back together (`TryRestoreCustomOrders`), whatever the base's concurrency
+cap, since each was already owed; the return stamps `LastCustomOrderVisit` as any arrival does. Until a saved
+order's customer is back, `CanSendAnotherCustomOrder` refuses a fresh one, so a new order can never take a
+saved one's place. That is also why a restore that dies must clear its entry: left behind, it would hold
+every fresh order back for the rest of the file's life.
+
+This map replaced a single `ActiveCustomOrder` key from before orders could overlap.
+`MigrateLegacyActiveOrderOnLoad` folds that key into the map from a post-load callback, and
+`HasSavedCustomOrders` still reads both, because the offline pass is another post-load callback and the two
+run in whatever order their managers registered.
 
 `Phase` is `Pending` (asked, unanswered) or `Accepted` (deal struck, clock running), and it decides where
 the restored visit re-enters: a pending one asks again with a fresh `OFFER_TIMEOUT`, an accepted one goes
@@ -322,7 +334,8 @@ in `TutorialManager`'s `PROGRESS_RESET_KEYS` beside `Employees`.
 opened the hut's own panel is held back for a panel of three candidates, one per role and all
 `Config.FreeWorkers.STARS`, and exactly one of them is kept for nothing.
 
-**The three themselves are not stored.** `Config.FreeWorkers.RollCandidates` walks one `Random.new(userId)`,
+**The three themselves are not stored.** `Config.FreeWorkers.RollCandidates` walks one `Random.new` seeded on
+the UserId (seed and stars are parameters, so a daily reward's worker day rolls its own three the same way),
 so the client draws the same three the server reads the claim against and the same faces come back every
 session — the claim sends a slot number and nothing else. The flag is the whole of the state, and it is what
 makes the offer one-time: `FreeWorkersManager:ClaimFreeWorker` refuses a second claim, and the client reads it
@@ -392,6 +405,36 @@ the sibling project's `OfflineEarningManager` doctrine. Offline sales bump the l
 `LastSaleAt`: the rating window stays the player's own cooking, and a checking customer still reads their
 last *real* sale.
 
+## Daily rewards
+
+**`DailyRewardStreak`** — every daily reward the player has ever claimed. Despite the name it is a **count,
+not a streak**: nothing resets it, so a missed day costs nothing and the week waits where they left it. The
+day on the board is `Config.DailyRewards.GetDay` (the count mod the week's length, plus one) and the week is
+the count divided by it, which is why it never wraps back at seven — a randomized week's rolls are seeded on
+the full count. The name is the template's; the key was already on every live profile at `0`, since nothing
+could claim before this system existed.
+
+**`LastDailyRewardClaim`** — when the last reward was claimed, absolute on `workspace:GetServerTimeNow()` with
+`0` as "never". The next day unlocks `CLAIM_INTERVAL` after it, and `0 + CLAIM_INTERVAL` is long past, so a
+profile that never claimed reads as unlocked with no special case — that is what makes Day 1 ready on a first
+join. The template this replaced stamped `os.time()`; both count seconds from the same epoch, so a stamp
+written either way compares correctly.
+
+`DailyRewardManager:ClaimDailyReward` writes the stamp **before** the count. Each key replicates on its own,
+and the other order would have the client read the new count against the old stamp — the next day unlocked —
+for a moment, badging the top bar and tagging the next tile's rays before snapping back. Both land before the
+grant, as a redeemed code does.
+
+**What it does not save.** The reward itself: `Config.DailyRewards.GetReward` derives it from the UserId and
+the count, which is how a randomized week stays the same on every server and every session without the week
+being written down. A worker day's three candidates come the same way off `GetSeed`, which strides the UserId
+past the count so they never share the free three's faces, and only the picked slot crosses the wire, as the
+free three's cards do. Their portraits are baked into a disabled `DailyRewardWorkerPortraits` ScreenGui on
+handover and destroyed at the claim.
+
+Neither key is in `TutorialManager`'s `PROGRESS_RESET_KEYS`: the manager refuses a claim before
+`TutorialCompleted`, so there is never a tutorial-time claim for the wipe to undo.
+
 ## Tutorial
 
 **`TutorialCompleted`** — the onboarding runs once. Leaving before finishing wipes gameplay progress on the
@@ -405,6 +448,12 @@ index into the funnel of whichever variant they ran, so it doesn't compare acros
 Lifetime counters, only ever climbing, unlike the inventories above. **Flat at the top level** rather than
 nested in a `Stats` table: `IncrementDataKey`, `ToLeaderstats` and the ordered leaderboards all index the
 top level only.
+
+The four the stats panel shows (`Rating.StatDisplay`: `TotalEarned`, `SkewersSold`, `IngredientsBought`,
+`SalesCompleted`) are **mirrored onto the player** as `Stat_<key>` attributes by
+`RatingManager:RefreshPlayerStats`. Player data only reaches its owner, and a *visitor* opening the panel at
+someone's board has to read them too — the same reason the hut's repair deadline is republished onto the base
+model. Adding a counter to `StatDisplay` publishes it as well.
 
 **`CookStateCounts`** — `[cookStateId] = lifetime cooks settled in that state`; a key's presence marks it
 reached at least once (the `IngredientIndex` idiom). Grows on demand, so adding a `CookStates` entry needs

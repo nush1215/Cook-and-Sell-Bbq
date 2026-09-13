@@ -31,6 +31,7 @@ local EmployeeManager
 local EmployeeHutManager
 local FreeWorkersManager
 local OfflineEarningManager
+local DailyRewardManager
 
 -- The one place AnalyticsService is spoken to: subscribes to every manager's signals and turns each into an event. Every call is spawned and pcall'd, so it can't block or error gameplay.
 local AnalyticsManager = {
@@ -51,6 +52,7 @@ local SOURCE_TRANSACTION_TYPES = {
 	StickPurchase = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	SauceDispenserUpgrade = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	BuxPack = Enum.AnalyticsEconomyTransactionType.Shop.Name,
+	DailyReward = Enum.AnalyticsEconomyTransactionType.TimedReward.Name,
 }
 
 -- Fires a custom event behind spawn and pcall, so analytics never blocks or errors gameplay.
@@ -240,6 +242,7 @@ function AnalyticsManager:OnInit()
 	EmployeeHutManager = require(script.Parent.EmployeeHutManager)
 	FreeWorkersManager = require(script.Parent.FreeWorkersManager)
 	OfflineEarningManager = require(script.Parent.OfflineEarningManager)
+	DailyRewardManager = require(script.Parent.DailyRewardManager)
 end
 
 function AnalyticsManager:OnStart()
@@ -483,9 +486,28 @@ function AnalyticsManager:OnStart()
 		)
 	end)
 
-	-- The rating rides a field rather than the value, so opens break down by band instead of averaging out
-	RatingManager.OnStatsPanelOpened:Connect(function(player, stars)
-		logCustom(player, "Stats Panel Opened", 1, getRatingBucket(stars))
+	-- Split by week, so the first week's retention reads apart from the repeats; the Bux claims land as economy events of their own
+	DailyRewardManager.OnDailyRewardClaimed:Connect(function(player, day, week, reward)
+		logCustom(
+			player,
+			"Daily Reward Claimed",
+			1,
+			`Day {day}`,
+			reward.Type,
+			if week == 1 then "First Week" else "Repeat Week"
+		)
+
+		-- No funnel id, so it runs once per player and a repeat week's days never count again. The 1 is versioning
+		task.spawn(function()
+			pcall(function()
+				AnalyticsService:LogFunnelStepEvent(player, "Daily Rewards 1", nil, day, `Claimed Day {day}`)
+			end)
+		end)
+	end)
+
+	-- The viewer's rating rides a field rather than the value, so opens break down by band; the second splits their own panel from a visit
+	RatingManager.OnStatsPanelOpened:Connect(function(player, stars, ownPanel)
+		logCustom(player, "Stats Panel Opened", 1, getRatingBucket(stars), if ownPanel then "Own" else "Other")
 	end)
 
 	-- One funnel per variant, so a rework reports separately. The 2 is versioning -- the cooking beats merged when the knob went

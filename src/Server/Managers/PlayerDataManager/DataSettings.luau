@@ -48,7 +48,9 @@ return {
 		PurchaseLogs = {},
 
 		-- Daily Rewards
+		-- Every daily reward ever claimed; never reset, so the day is this mod the week and a missed day costs nothing -- see docs/player-data.md
 		DailyRewardStreak = 0,
+		-- When the last was claimed, absolute on workspace:GetServerTimeNow(); 0 is never, which reads as unlocked
 		LastDailyRewardClaim = 0,
 
 		-- Ingredient Rolling
@@ -111,8 +113,8 @@ return {
 		LastCustomOrderVisit = 0,
 		-- Whether one has ever visited; the first is given the moment they can fill one, not rolled for
 		SeenCustomOrder = false,
-		-- ActiveCustomOrder is written here while an order is live and cleared when it resolves, so it
-		-- has no template entry: absent is the resting state. See docs/player-data.md for its shape
+		-- The orders they're part-way through, banked as each is owed and cleared as it resolves -- see docs/player-data.md
+		ActiveCustomOrders = {}, -- [funnelId] = { Phase, Ingredients, StickId, Value, Quote, Seconds, SecondsLeft?, TierIndex, FirstVisit?, FunnelId }
 		-- The last Rating.ORDER_WINDOW resolved orders, oldest first. Facts rather than a score -- see docs/player-data.md
 		CustomOrderHistory = {},
 

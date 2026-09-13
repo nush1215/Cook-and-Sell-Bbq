@@ -48,6 +48,7 @@ local StatsManager
 local SoundManager
 local SellNpcManager
 local GrillerManager
+local StickStandManager
 local BaseManager
 
 -- Sends the customer who asks for a named recipe against a clock. Its rig, walk and fade are the sell stand's; what is its own is the order, the timer and the hand-over.
@@ -65,10 +66,9 @@ local CustomOrderNpcManager = {
 	OnCustomOrderResolved = Signal.new(),
 
 	_npcs = {}, -- [player] = { record, ... } spawned instances, for cleanup
-	_orders = {}, -- [player] = the live order, so the rolling stand can bias toward what it wants
 	_delivering = {}, -- [player] = true across the read -> write window, so a spammed prompt can't pay twice
 	_queued = {}, -- [player] = true while a forced Inspect visit waits for their stand to be stocked
-	-- [player] = true from their base being assigned until a saved order has had its chance to come back
+	-- [player] = true from their base being assigned until the join beat has sent their saved orders back
 	_restoring = {},
 	-- [player] = true once their guaranteed first order is sent; the saved key alone yields
 	_grantedFirstOrder = {},
@@ -135,6 +135,21 @@ local function countIngredientsToHand(data): { [string]: number }
 	for _, record in data.SauceDispensers do
 		if record.Skewer then
 			addFrom(record.Skewer)
+		end
+	end
+
+	-- The hut chest and what staff carry are still theirs, so stashing an order's ingredient can't re-arm the steer
+	for _, store in data.HutStorage do
+		for id, amount in store.Ingredients do
+			counts[id] = (counts[id] or 0) + amount
+		end
+	end
+	for _, employee in data.Employees do
+		if employee.Load then
+			addFrom(employee.Load)
+		end
+		if employee.Carrying then
+			addFrom(employee.Carrying)
 		end
 	end
 
@@ -262,17 +277,26 @@ local function restoreOrder(saved)
 	}
 end
 
--- The ordered ingredients the player still hasn't got, so the rolling stand knows what to steer toward.
+-- What the player's waiting orders still need between them, so the rolling stand knows what to steer toward.
 function CustomOrderNpcManager:GetMissingOrderIngredients(player: Player, data): { string }
-	local order = self._orders[player]
-	if not order then
+	-- Summed, so two orders wanting the same ingredient keep steering until there's one for each
+	local wanted = {}
+	for _, record in self._npcs[player] or {} do
+		if record.awaitingDelivery then
+			for id, count in record.order.Counts do
+				wanted[id] = (wanted[id] or 0) + count
+			end
+		end
+	end
+
+	if next(wanted) == nil then
 		return {}
 	end
 
 	local toHand = countIngredientsToHand(data)
 
 	local missing = {}
-	for id, needed in order.Counts do
+	for id, needed in wanted do
 		if (toHand[id] or 0) < needed then
 			table.insert(missing, id)
 		end
@@ -313,11 +337,29 @@ local function buildSavedOrder(record, phase: string)
 	}
 end
 
--- Banks the order the moment it is owed, rather than trusting the way out to do it. Every other
--- persisted value goes through SetPlayerDataKey, so this rides the same auto-save the rest of the
--- profile does and survives a crash, a shutdown, or a last save that never runs.
+-- Banks one order under its funnel id the moment it's owed, so it rides the auto-save rather than trusting the way out.
 function CustomOrderNpcManager:SaveActiveOrder(player: Player, record, phase: string)
-	PlayerDataManager:SetPlayerDataKey(player, "ActiveCustomOrder", buildSavedOrder(record, phase))
+	PlayerDataManager:SetPlayerDataKey(
+		player,
+		{ "ActiveCustomOrders", record.funnelId },
+		buildSavedOrder(record, phase)
+	)
+end
+
+-- Whether the profile has an order saved to come back. Reads the pre-map key too, since the offline pass can run before the fold.
+function CustomOrderNpcManager:HasSavedCustomOrders(data): boolean
+	return next(data.ActiveCustomOrders) ~= nil or data.ActiveCustomOrder ~= nil
+end
+
+-- Folds the one order a profile saved before orders could overlap into ActiveCustomOrders, under the funnel id it carries.
+function CustomOrderNpcManager:MigrateLegacyActiveOrderOnLoad(data)
+	local legacy = data.ActiveCustomOrder
+	if not legacy then
+		return
+	end
+
+	data.ActiveCustomOrders[legacy.FunnelId] = legacy
+	data.ActiveCustomOrder = nil
 end
 
 -- Mirrors the live order onto the rig, so every client draws the card rather than just its owner. A nil phase takes it down.
@@ -338,10 +380,8 @@ function CustomOrderNpcManager:_publishOrder(record, phase: string?, payout: num
 	)
 end
 
--- Restamps the banked clock against the outgoing profile, so an order carries the time it actually had
--- left rather than the time it had when it was struck. Runs against the final save, so it must not
--- yield -- it mutates `data` in place instead of going through SetPlayerDataKey.
-function CustomOrderNpcManager:SaveActiveOrderOnLastSave(player: Player, data)
+-- Restamps every owed order's banked clock on the outgoing profile. Runs inside the final save, so it writes `data` directly rather than yielding.
+function CustomOrderNpcManager:SaveActiveOrdersOnLastSave(player: Player, data)
 	for _, record in self._npcs[player] or {} do
 		-- Only a visit still owed something comes back. One that's eating or walking off is finished,
 		-- and one whose offer was already answered either way has had its outcome recorded
@@ -353,8 +393,7 @@ function CustomOrderNpcManager:SaveActiveOrderOnLastSave(player: Player, data)
 			continue
 		end
 
-		data.ActiveCustomOrder = buildSavedOrder(record, phase)
-		return
+		data.ActiveCustomOrders[record.funnelId] = buildSavedOrder(record, phase)
 	end
 end
 
@@ -418,9 +457,8 @@ function CustomOrderNpcManager:_recordOutcome(player: Player, record, outcome: s
 		Paid = paid,
 	}
 
-	-- Cleared here rather than per outcome: every one of them lands in this method, so a new outcome
-	-- added later can't forget to, and a missed clear would bring a ghost customer back forever
-	PlayerDataManager:SetPlayerDataKey(player, "ActiveCustomOrder", nil)
+	-- Only this order's entry, cleared here since every outcome lands here and a missed clear brings a ghost customer back forever
+	PlayerDataManager:SetPlayerDataKey(player, { "ActiveCustomOrders", record.funnelId }, nil)
 
 	StatsManager:RecordCustomOrderResolved(player, entry)
 	self.OnCustomOrderResolved:Fire(player, entry, record.funnelId)
@@ -503,24 +541,36 @@ function CustomOrderNpcManager:DeliverOrder(player: Player, npc: Model)
 	self._delivering[player] = nil
 end
 
--- Locks the best BBQ in `skewers` for the waiting custom order customer to walk over and collect: cooked, with every ingredient it asked for, fewest extras first. True if it took one.
+-- Locks the best BBQ in `skewers` for each waiting custom order customer to walk over and collect: cooked, with every ingredient it asked for, fewest extras first, never one already held. True if it took any.
 function CustomOrderNpcManager:ClaimStandSkewerForOrder(player: Player, skewers): boolean
 	-- The tutorial's customers are waiting on the skewers it places, so an order restored or forced into it leaves them be
 	if SellNpcManager:AreCustomersGuaranteed(player) then
 		return false
 	end
 
+	local awaiting = {}
 	for _, record in self._npcs[player] or {} do
-		if not record.awaitingDelivery then
-			continue
+		if record.awaitingDelivery then
+			table.insert(awaiting, record)
 		end
+	end
 
+	-- Soonest out first, so a BBQ that fills two orders goes to the customer closest to walking
+	table.sort(awaiting, function(a, b)
+		return a.deadline < b.deadline
+	end)
+
+	-- Grows as this claims, so one BBQ is never sent for twice
+	local held = self:GetHeldStandSkewerUids(player)
+	local claimed = false
+
+	for _, record in awaiting do
 		local order = record.order
 		local best, bestExtras, bestPaid = nil, math.huge, 0
 
 		for _, skewer in skewers do
-			-- Raw isn't theirs to take, and a BBQ with no uid couldn't be held against the other customers
-			if not skewer.Cooked or not skewer.Uid then
+			-- Raw isn't theirs to take, a BBQ with no uid couldn't be held against the other customers, and a held one is spoken for
+			if not skewer.Cooked or not skewer.Uid or held[skewer.Uid] then
 				continue
 			end
 
@@ -535,29 +585,30 @@ function CustomOrderNpcManager:ClaimStandSkewerForOrder(player: Player, skewers)
 			end
 		end
 
-		if not best then
-			return false
+		if best then
+			held[best.Uid] = true
+			claimed = true
+
+			-- Dropping out of the wait is what sends it over, and what stops a hand-over paying for the same order mid-walk
+			record.standSkewerUid = best.Uid
+			record.awaitingDelivery = false
 		end
-
-		-- Dropping out of the wait is what sends it over, and what stops a hand-over paying for the same order mid-walk
-		record.standSkewerUid = best.Uid
-		record.awaitingDelivery = false
-
-		return true
 	end
 
-	return false
+	return claimed
 end
 
--- The uid of the BBQ on the stand held for the player's custom order customer, which no other customer may take.
-function CustomOrderNpcManager:GetHeldStandSkewerUid(player: Player): string?
+-- The uids of every BBQ on the stand held for the player's custom order customers, which no other customer may take.
+function CustomOrderNpcManager:GetHeldStandSkewerUids(player: Player): { [string]: true }
+	local held = {}
+
 	for _, record in self._npcs[player] or {} do
 		if record.standSkewerUid then
-			return record.standSkewerUid
+			held[record.standSkewerUid] = true
 		end
 	end
 
-	return nil
+	return held
 end
 
 -- The payout toast. Graded, so the number is explained by whatever cost them the most -- flat, it read
@@ -656,16 +707,17 @@ function CustomOrderNpcManager:_awaitDelivery(player: Player, npc: Model, record
 	return record.delivered
 end
 
--- The toast that calls the player over. Timed differently per variation, so it's its own method.
-function CustomOrderNpcManager:_notifyArrived(player: Player, firstVisit: boolean?, returning: boolean?)
+-- The toast that calls the player over, or back to `returningCount` restored orders. Timed differently per variation, so it's its own method.
+function CustomOrderNpcManager:_notifyArrived(player: Player, firstVisit: boolean?, returningCount: number?)
 	-- Their first says why it's worth taking, since the recipe card shows what it wants but not that it pays more
 	NotificationManager:NotifyNormal(player, {
-		Text = if returning
-			then "Your customer waited for you! Finish their order"
+		Text = if returningCount and returningCount > 1
+			then "Your customers waited for you! Finish their orders"
+			elseif returningCount then "Your customer waited for you! Finish their order"
 			elseif firstVisit then "Someone's here with a custom order! It pays extra!"
 			else "Someone's here with a custom order!",
-		-- The two that carry a second sentence get the longer read
-		Duration = if firstVisit or returning then 4 else 3,
+		-- The ones that carry a second sentence get the longer read
+		Duration = if firstVisit or returningCount then 4 else 3,
 		Sound = "CustomerArrived",
 	})
 end
@@ -711,9 +763,13 @@ function CustomOrderNpcManager:_offerOrder(player: Player, npc: Model, record)
 	return npc.Parent ~= nil and record.offerResponse == true
 end
 
--- Where it stands once the deal is struck. Its own method, since a restored order is placed straight
--- onto this mark rather than walking to it.
-function CustomOrderNpcManager:_getWaitPosition(spawnPart: BasePart, standPart: BasePart): Vector3
+-- Where it waits once the deal is struck: the side fewer of the player's customers wait on, stepped out past any already there. Marks that side as its own.
+function CustomOrderNpcManager:_claimWaitPosition(
+	player: Player,
+	record,
+	spawnPart: BasePart,
+	standPart: BasePart
+): Vector3
 	-- Off the stand's centre, not the lane it queued in -- measured from the lane, the two could cancel
 	local standCentre = standPart.Position
 
@@ -721,9 +777,25 @@ function CustomOrderNpcManager:_getWaitPosition(spawnPart: BasePart, standPart: 
 	local backDir = ((spawnPart.Position - standCentre) * Vector3.new(1, 0, 1)).Unit
 	local sideDir = Vector3.new(-backDir.Z, 0, backDir.X)
 
+	local waiting = { [-1] = 0, [1] = 0 }
+	for _, other in self._npcs[player] or {} do
+		if other.waitSide then
+			waiting[other.waitSide] += 1
+		end
+	end
+
+	-- The emptier side, so orders running at once don't wait inside each other; a tie is rolled, so a lone one turns up either side
+	record.waitSide = if waiting[-1] < waiting[1]
+		then -1
+		elseif waiting[1] < waiting[-1] then 1
+		elseif self._rng:NextNumber() < 0.5 then -1
+		else 1
+
 	-- Off to one side rather than straight back, so it waits out of the way but stays in sight
-	local side = self._rng:NextNumber(CustomOrderNpc.WAIT_SIDE_DISTANCE_MIN, CustomOrderNpc.WAIT_SIDE_DISTANCE_MAX)
-		* (if self._rng:NextNumber() < 0.5 then -1 else 1)
+	local side = (
+		self._rng:NextNumber(CustomOrderNpc.WAIT_SIDE_DISTANCE_MIN, CustomOrderNpc.WAIT_SIDE_DISTANCE_MAX)
+		+ CustomOrderNpc.WAIT_STEP_OUT * waiting[record.waitSide]
+	) * record.waitSide
 
 	return standCentre + backDir * CustomOrderNpc.WAIT_BACK_DISTANCE + sideDir * side
 end
@@ -775,7 +847,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	local npc = NpcRig.Acquire()
 	local humanoid = npc:FindFirstChildOfClass("Humanoid")
 
-	-- Tracked before the lookup yields, so a mid-lookup cleanup destroys the rig rather than orphaning it
+	-- Tracked before anything yields, so the pacing check counts it and a mid-lookup cleanup destroys the rig rather than orphaning it
 	-- Carried on the record rather than threaded on, since both toasts read it from different beats
 	local record = {
 		npc = npc,
@@ -844,11 +916,9 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	-- Kept for the offer beat, which is where the two openings are worth telling apart
 	record.variation = if inspecting then CustomOrderNpc.VARIATIONS.Inspect else CustomOrderNpc.VARIATIONS.Direct
 
-	-- A Direct one announces itself on arrival; an Inspect one holds its toast for the verdict, or the
-	-- player is called over to watch their stand turned down. A restore says so on the spot, since it
-	-- turns up while they are still finding their feet on a base they only just loaded into
-	if saved or not inspecting then
-		self:_notifyArrived(player, firstVisit, saved ~= nil)
+	-- A Direct one announces itself on arrival and an Inspect one holds its toast for the verdict; restores share the one sent as they're spawned
+	if not saved and not inspecting then
+		self:_notifyArrived(player, firstVisit)
 	end
 
 	-- Picked here, so the client doesn't have to work out which of the three openings this is
@@ -938,8 +1008,6 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 	NpcRig.StopAnimation(record)
 
 	-- Live from here, so the rolling stand can start steering toward what the order still wants
-	self._orders[player] = order
-
 	record.awaitingDelivery = true
 
 	-- Rebanked over the pending one, now that there is a clock on it worth coming back to
@@ -983,7 +1051,7 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 			NpcRig.ReleaseSlot(player, record.slot)
 			record.slot = nil
 
-			waitPosition = waitPosition or self:_getWaitPosition(spawnPart, standPart)
+			waitPosition = waitPosition or self:_claimWaitPosition(player, record, spawnPart, standPart)
 			NpcRig.WalkTo(humanoid, waitPosition)
 
 			if npc.Parent == nil then
@@ -1002,8 +1070,6 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 			end
 		end
 	end
-
-	self._orders[player] = nil
 
 	if npc.Parent == nil then
 		return
@@ -1077,10 +1143,9 @@ function CustomOrderNpcManager:_runGuardedVisit(player: Player, variation: strin
 		return self:_spawnCustomOrderCustomer(player, variation, firstVisit, saved)
 	end, debug.traceback)
 
-	-- A visit that died drops whatever it had banked, or that order sits in the profile for good: both
-	-- the roll and the next restore step over a player who already has one saved
-	if not success or result then
-		PlayerDataManager:SetPlayerDataKey(player, "ActiveCustomOrder", nil)
+	-- A restore that died drops its own entry, or it sits unrestored and holds every fresh order back for good
+	if saved and (not success or result) then
+		PlayerDataManager:SetPlayerDataKey(player, { "ActiveCustomOrders", saved.FunnelId }, nil)
 	end
 
 	if success then
@@ -1094,14 +1159,14 @@ function CustomOrderNpcManager:_runGuardedVisit(player: Player, variation: strin
 
 	warn(`[CustomOrderNpcManager] Custom order visit for {player.Name} failed, releasing its customer:\n{result}`)
 
-	-- Dropped first, or the rolling stand would keep steering toward an order nobody is waiting on
-	self._orders[player] = nil
-
 	-- Snapshotted first: _despawnNpc removes from the tracked list as it goes, and yields through the fade
 	local thread = coroutine.running()
 	local orphaned = {}
 	for _, record in self._npcs[player] or {} do
 		if record.thread == thread then
+			-- Owed nothing from here, so steering, a stand claim and a last save all pass it over during the fade
+			record.offerPending, record.awaitingDelivery, record.standSkewerUid = false, false, nil
+			PlayerDataManager:SetPlayerDataKey(player, { "ActiveCustomOrders", record.funnelId }, nil)
 			table.insert(orphaned, record)
 		end
 	end
@@ -1115,6 +1180,24 @@ end
 function CustomOrderNpcManager:IsUnlocked(data): boolean
 	return GrillerManager:CountPlacedGrillers(data) >= CustomOrderNpc.MIN_GRILLERS
 		or data.Unlocks.RollingStands >= CustomOrderNpc.MIN_ROLLING_STANDS
+end
+
+-- How many custom orders the base can have running at once: the CONCURRENT_ORDER_MARKS rows it clears, in order.
+function CustomOrderNpcManager:GetMaxConcurrentOrders(data): number
+	local grillers = GrillerManager:CountPlacedGrillers(data)
+	local stickStands = StickStandManager:CountPlacedStickStands(data)
+	local count = 0
+
+	for _, mark in CustomOrderNpc.CONCURRENT_ORDER_MARKS do
+		-- Stopped at the first row missed, so a row that doesn't climb in both columns can't be cleared past one that does
+		if grillers < mark.Grillers or stickStands < mark.StickStands then
+			break
+		end
+
+		count += 1
+	end
+
+	return count
 end
 
 -- Sends the one guaranteed order if the player has just reached the requirement. Returns true if it sent one.
@@ -1149,17 +1232,17 @@ function CustomOrderNpcManager:TrySendFirstCustomOrder(player: Player): boolean
 	return true
 end
 
--- Their join beat: an order left standing comes back first, and only if there wasn't one does the
--- guaranteed first order get its chance. Yields, so callers spawn it with the restoring latch set.
+-- Their join beat: orders left standing come back first, and only if there were none does the guaranteed first order get its chance. Yields, so callers spawn it with the restoring latch set.
 function CustomOrderNpcManager:ResumeCustomOrdersForPlayer(player: Player)
-	-- Only a short wait on the restore: an order they left standing should be there as they load in, not
-	-- turn up a quarter of a minute later. It drops the latch itself, since it holds it past this call
-	local restored = self:TryRestoreCustomOrder(player)
+	-- Only a short wait on the restore, so an order they left standing is there as they load in rather than a quarter of a minute later
+	local restored = self:TryRestoreCustomOrders(player)
+
+	-- Dropped once the restore has spawned: those customers are tracked and not waiting yet, so the pacing check holds fresh ones back
+	self._restoring[player] = nil
+
 	if restored then
 		return
 	end
-
-	self._restoring[player] = nil
 
 	-- A customer's ordinary wait, so a fresh one doesn't materialise the instant they load in -- and so
 	-- the base has finished building the spawn and stand parts the visit reads off it
@@ -1167,30 +1250,41 @@ function CustomOrderNpcManager:ResumeCustomOrdersForPlayer(player: Player)
 	self:TrySendFirstCustomOrder(player)
 end
 
--- Brings back an order the player left part-way through, if they have one saved. True if it sent one,
--- and it yields for that whole visit -- so a true means the latch has been dropped for the caller too.
-function CustomOrderNpcManager:TryRestoreCustomOrder(player: Player): boolean
-	-- Spelled out rather than HasCustomOrder, since the restoring latch that guard counts is this
-	-- call's own and would refuse it
-	if not validatePlayer(player) or self._queued[player] or #(self._npcs[player] or {}) > 0 then
+-- Brings back every order the player left part-way through, together, each a fresh rig wearing its deal. True if they had any saved.
+function CustomOrderNpcManager:TryRestoreCustomOrders(player: Player): boolean
+	if not validatePlayer(player) then
 		return false
 	end
 
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
-	if not hasData or not data.ActiveCustomOrder then
+	if not hasData or next(data.ActiveCustomOrders) == nil then
 		return false
 	end
 
-	-- A fresh rig wearing the same order: the pool hands out whichever is free, so what survives a
-	-- rejoin is the deal rather than the actor
-	local saved = data.ActiveCustomOrder
-
-	-- A beat before it turns up, rather than materialising on a client still loading its base in
+	-- A beat before they turn up, rather than materialising on a client still loading its base in
 	task.wait(CustomOrderNpc.RESTORE_DELAY)
 
-	-- The caller's latch is held across the wait and the visit both, or a first order lands in the gap
-	self:_runGuardedVisit(player, nil, nil, saved)
-	self._restoring[player] = nil
+	-- Read after the wait, so customers a second join beat already brought back aren't sent twice
+	local unrestored = self:_getUnrestoredOrders(player, data)
+	if not validatePlayer(player) or next(unrestored) == nil then
+		return true
+	end
+
+	-- Counted as an arrival, so the next fresh order is spaced from these as it would be from any other
+	PlayerDataManager:SetPlayerDataKey(player, "LastCustomOrderVisit", workspace:GetServerTimeNow())
+
+	local count = 0
+	for _, saved in unrestored do
+		count += 1
+
+		-- Each on its own thread, since a visit's orphans are found by the thread it ran on
+		task.spawn(function()
+			self:_runGuardedVisit(player, nil, nil, saved)
+		end)
+	end
+
+	-- One toast however many came back, since they turn up together
+	self:_notifyArrived(player, nil, count)
 
 	return true
 end
@@ -1198,8 +1292,7 @@ end
 -- One pass of the custom-order roll, cheapest checks first so the data reads are rare.
 function CustomOrderNpcManager:_rollCustomOrderVisits()
 	for _, player in Players:GetPlayers() do
-		-- Read off the tracked customers rather than a flag, so an errored visit can't leave it stuck set
-		if not validatePlayer(player) or self:HasCustomOrder(player) then
+		if not validatePlayer(player) then
 			continue
 		end
 
@@ -1217,8 +1310,8 @@ function CustomOrderNpcManager:_rollCustomOrderVisits()
 			continue
 		end
 
-		-- One they left part-way through is theirs to come back to, so a fresh one can't take its place
-		if data.ActiveCustomOrder then
+		-- Read off the tracked customers rather than a flag, so an errored visit can't leave it stuck set
+		if not self:CanSendAnotherCustomOrder(player, data) then
 			continue
 		end
 
@@ -1242,8 +1335,9 @@ function CustomOrderNpcManager:ForceCustomOrderVisit(player: Player, variation: 
 		return false, `{player.Name} has no base to send a customer to.`
 	end
 
-	if self:HasCustomOrder(player) then
-		return false, `{player.Name} already has a custom order customer.`
+	if not self:CanSendAnotherCustomOrder(player, PlayerDataManager:GetLoadedPlayerData(player)) then
+		return false,
+			`{player.Name} can't take another custom order yet: one is still on its way, or their base has no room.`
 	end
 
 	-- Stamped as the roll stamps it, but not read, so the command can still be re-run straight away
@@ -1277,11 +1371,44 @@ function CustomOrderNpcManager:ForceCustomOrderVisit(player: Player, variation: 
 	return true
 end
 
--- Whether one is already with them, or still waiting to be sent. Either way a second would crowd it.
+-- Whether any customer is with them or still on its way, which the guaranteed first order waits out so it lands alone.
 function CustomOrderNpcManager:HasCustomOrder(player: Player): boolean
 	return self._queued[player] == true
 		or self._restoring[player] == true
 		or #(self._npcs[player] or {}) > 0
+end
+
+-- The saved orders whose customer isn't with the player yet, by funnel id. A copy, so a restore can walk it while visits clear their entries.
+function CustomOrderNpcManager:_getUnrestoredOrders(player: Player, data)
+	local unrestored = table.clone(data.ActiveCustomOrders)
+
+	for _, record in self._npcs[player] or {} do
+		unrestored[record.funnelId] = nil
+	end
+
+	return unrestored
+end
+
+-- Whether a fresh custom order customer may come in now: every one already here is stood waiting on its BBQ, and the base has room for another.
+function CustomOrderNpcManager:CanSendAnotherCustomOrder(player: Player, data): boolean
+	if self._restoring[player] or self._queued[player] then
+		return false
+	end
+
+	local tracked = self._npcs[player] or {}
+	for _, record in tracked do
+		-- One through the door at a time: anyone arriving, asking, collecting or leaving holds the next back, and the introduction is never joined
+		if not record.awaitingDelivery or record.firstVisit then
+			return false
+		end
+	end
+
+	-- A saved order not back yet is the join beat's to bring, so a fresh one can't take its place
+	if next(self:_getUnrestoredOrders(player, data)) ~= nil then
+		return false
+	end
+
+	return #tracked < self:GetMaxConcurrentOrders(data)
 end
 
 -- Waits until the player has something on their stand to look over. Yields, possibly for a long time.
@@ -1308,7 +1435,6 @@ function CustomOrderNpcManager:_cleanupPlayer(player: Player)
 		self._npcs[player] = nil
 	end
 
-	self._orders[player] = nil
 	self._delivering[player] = nil
 	self._queued[player] = nil
 	self._restoring[player] = nil
@@ -1327,7 +1453,13 @@ function CustomOrderNpcManager:OnInit()
 	SoundManager = require(script.Parent.SoundManager)
 	SellNpcManager = require(script.Parent.SellNpcManager)
 	GrillerManager = require(script.Parent.GrillerManager)
+	StickStandManager = require(script.Parent.StickStandManager)
 	BaseManager = require(script.Parent.BaseManager)
+
+	-- On Init, so the fold is in place before any profile can finish loading
+	PlayerDataManager:RegisterPostLoadCallback(function(_, data)
+		self:MigrateLegacyActiveOrderOnLoad(data)
+	end)
 end
 
 function CustomOrderNpcManager:OnStart()
@@ -1373,10 +1505,7 @@ function CustomOrderNpcManager:OnStart()
 
 	-- Catches anyone who crossed the requirement in an earlier session, since they'll never place again
 	BaseManager.OnBaseAssigned:Connect(function(player: Player)
-		-- Latched here rather than inside the thread, so it is set before the roll's next sweep can run.
-		-- The sweep fires every CHECK_INTERVAL and the wait in there is longer than that, so without this
-		-- a fresh order lands in the gap, the restore is refused as a duplicate, and the saved one is
-		-- cleared by that fresh order's own outcome
+		-- Latched here rather than inside the thread, so the roll's next sweep can't land a fresh order before the saved ones are back
 		self._restoring[player] = true
 
 		task.spawn(function()
@@ -1406,7 +1535,7 @@ function CustomOrderNpcManager:OnStart()
 	-- The last save runs inside PlayerDataManager's PlayerRemoving, which is connected on Init against
 	-- this one's on Start -- so the record below is read before the teardown further down clears it
 	PlayerDataManager:RegisterPreCleanupCallback(function(player: Player, data)
-		self:SaveActiveOrderOnLastSave(player, data)
+		self:SaveActiveOrdersOnLastSave(player, data)
 	end)
 
 	Players.PlayerRemoving:Connect(function(player: Player)

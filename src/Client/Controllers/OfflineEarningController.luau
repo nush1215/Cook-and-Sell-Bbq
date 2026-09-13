@@ -49,7 +49,8 @@ function OfflineEarningController:ShowOfflineEarnings(data)
 		else `${GuiUtil.ConvertNumberWithCommas(amount)}`
 	holder.BbqSoldAmount.Text = GuiUtil.ConvertNumberWithCommas(data.BbqSold)
 
-	UIController:OpenFrame(holder)
+	-- Queued behind a panel already up, as the daily rewards' is, so neither join panel closes the other unclaimed
+	UIController:OpenFrameWhenFree(holder)
 end
 
 -- Asks the server to pay the claim out. Freed by its answer, or by the timeout if none comes.

@@ -70,6 +70,19 @@ local function getEquippedStickPlacement(player: Player, data)
 	return nil
 end
 
+-- How many stick stands the player has placed on their base, the measure of how many skewers they can build side by side.
+function StickStandManager:CountPlacedStickStands(data): number
+	local count = 0
+
+	for _, structure in data.Structures do
+		if Structures.IsCategory(structure.Type, STAND_CATEGORY) then
+			count += 1
+		end
+	end
+
+	return count
+end
+
 -- Mirrors the player's stand records onto each clone's attributes so the client can render them.
 function StickStandManager:_renderStands(player: Player)
 	local stands = self._stands[player]
@@ -238,6 +251,9 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 
 	-- Not holding an ingredient: take the stick off
 	self:ReturnContentsToPlayer(player, data, uid, record)
+
+	-- Cleared before the write, whose change wakes the staff: an emptied stand has no build of theirs left to protect
+	touched[uid] = nil
 	PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid }, nil)
 
 	self._toggling[player] = nil

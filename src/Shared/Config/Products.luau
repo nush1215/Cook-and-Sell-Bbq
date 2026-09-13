@@ -244,6 +244,25 @@ table.insert(Products.Data, {
 	end,
 })
 
+-- Unlocks the buyer's next daily reward now. The day still has to be claimed off its tile.
+table.insert(Products.Data, {
+	Id = "SkipDay",
+	Name = "Skip Day",
+	Type = "Core",
+	Description = "Unlock your next daily reward now",
+	PurchaseOnce = false,
+	ProductId = 3712747217,
+	Callback = function(player: Player)
+		if RunService:IsClient() then
+			return
+		end
+
+		-- Lazy require, to avoid pulling DailyRewardManager's dependency graph at module load
+		local DailyRewardManager = require(ServerScriptService.Server.Managers.DailyRewardManager)
+		DailyRewardManager:SkipDailyRewardWait(player)
+	end,
+})
+
 table.insert(Products.Data, {
 	Id = "StickShopRestock",
 	Name = "Stick Shop Restock",

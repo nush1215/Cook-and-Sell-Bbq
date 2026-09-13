@@ -197,7 +197,7 @@ function SkewerStandManager:RemoveSkewer(player: Player, index: number)
 	self._toggling[player] = nil
 end
 
--- How many skewers on the player's stand are up for sale, read without taking anything off it. One held for a custom order isn't.
+-- How many skewers on the player's stand are up for sale, read without taking anything off it. Those held for custom orders aren't.
 function SkewerStandManager:GetPlacedSkewerCount(player: Player): number
 	if not validatePlayer(player) then
 		return 0
@@ -208,11 +208,11 @@ function SkewerStandManager:GetPlacedSkewerCount(player: Player): number
 		return 0
 	end
 
-	local heldUid = CustomOrderNpcManager:GetHeldStandSkewerUid(player)
+	local held = CustomOrderNpcManager:GetHeldStandSkewerUids(player)
 	local count = 0
 
 	for _, record in data.SkewerStand do
-		if heldUid == nil or record.Uid ~= heldUid then
+		if not held[record.Uid] then
 			count += 1
 		end
 	end
@@ -232,13 +232,13 @@ function SkewerStandManager:TakeSkewer(player: Player, uid: string?)
 	end
 
 	local skewers = data.SkewerStand
-	local heldUid = CustomOrderNpcManager:GetHeldStandSkewerUid(player)
+	local held = CustomOrderNpcManager:GetHeldStandSkewerUids(player)
 
 	-- Top down, so an ordinary customer still takes the newest one it's allowed to
 	local index = nil
 	for candidate = #skewers, 1, -1 do
 		local candidateUid = skewers[candidate].Uid
-		local takeable = if uid then candidateUid == uid else (heldUid == nil or candidateUid ~= heldUid)
+		local takeable = if uid then candidateUid == uid else not held[candidateUid]
 
 		if takeable then
 			index = candidate
@@ -267,7 +267,7 @@ function SkewerStandManager:TakeSkewer(player: Player, uid: string?)
 	}
 end
 
--- Clears the stand for a rich customer, in one read and write so it can't be half-emptied. One held for a custom order stays put.
+-- Clears the stand for a rich customer, in one read and write so it can't be half-emptied. Any held for a custom order stay put.
 function SkewerStandManager:TakeAllSkewers(player: Player)
 	if not validatePlayer(player) then
 		return {}
@@ -278,11 +278,11 @@ function SkewerStandManager:TakeAllSkewers(player: Player)
 		return {}
 	end
 
-	local heldUid = CustomOrderNpcManager:GetHeldStandSkewerUid(player)
+	local held = CustomOrderNpcManager:GetHeldStandSkewerUids(player)
 	local taken, kept = {}, {}
 
 	for _, record in data.SkewerStand do
-		if heldUid and record.Uid == heldUid then
+		if held[record.Uid] then
 			table.insert(kept, record)
 			continue
 		end

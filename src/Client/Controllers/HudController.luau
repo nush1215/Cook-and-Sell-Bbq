@@ -51,6 +51,14 @@ local HIDE_HUD_FOR_UI = {
 		"BottomRight",
 	},
 
+	DailyRewardUI = {
+		"Top",
+		"Left",
+		"Right",
+		"BottomLeft",
+		"BottomRight",
+	},
+
 	ShopUI = {
 		"Top",
 		"Left",

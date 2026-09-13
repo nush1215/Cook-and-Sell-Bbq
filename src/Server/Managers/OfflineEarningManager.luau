@@ -27,6 +27,7 @@ local PlayerDataManager
 local CurrencyManager
 local GrillerManager
 local SkewerStandManager
+local CustomOrderNpcManager
 local BaseManager
 local BbqMaker
 local Cooker
@@ -455,7 +456,7 @@ function OfflineEarningManager:SimulateOfflineEarnings(data, horizon: number)
 	local stopped = nil
 
 	-- The BBQ left on display sells first, unless a custom order's customer is on its way for one of them
-	if data.ActiveCustomOrder == nil then
+	if not CustomOrderNpcManager:HasSavedCustomOrders(data) then
 		for index, record in data.SkewerStand do
 			local item = { Source = "SellStand", Index = index, Record = record }
 			sell(item, 0)
@@ -825,6 +826,7 @@ function OfflineEarningManager:OnInit()
 	CurrencyManager = require(script.Parent.CurrencyManager)
 	GrillerManager = require(script.Parent.GrillerManager)
 	SkewerStandManager = require(script.Parent.SkewerStandManager)
+	CustomOrderNpcManager = require(script.Parent.CustomOrderNpcManager)
 	BaseManager = require(script.Parent.BaseManager)
 	BbqMaker = require(script.Parent.EmployeeManager.Roles.BbqMaker)
 	Cooker = require(script.Parent.EmployeeManager.Roles.Cooker)

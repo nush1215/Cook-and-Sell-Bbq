@@ -13,13 +13,28 @@ local UI = ReplicatedStorage.Assets.UI
 local Shared = ReplicatedStorage.Shared
 local Rating = require(Shared.Config.Rating)
 
+-- Controllers
+local ShopRatingController = require(script.Parent.ShopRatingController)
+
 -- Local Player
 local LocalPlayer = Players.LocalPlayer
 
--- How long a streamed-in base gets to finish replicating the folder its sign sits in
+-- How long a streamed-in base gets to finish replicating the folder its sign and prompt sit in
 local CHILD_TIMEOUT = 10
 
 local SIGN_TEMPLATE = "SignRatingUI"
+
+-- Where the prompt's attachment hangs off the base's rating folder
+local PROMPT_ATTACHMENT = "StatPromptAttachment"
+
+-- Where the board sits, matched to the other fixed props rather than the roomier NPC prompts
+local PROMPT_DISTANCE = 10
+
+-- Held rather than tapped, so brushing past the board doesn't throw the panel up
+local PROMPT_HOLD = 0.3
+
+local PROMPT_ACTION_TEXT = "View Stats"
+local PROMPT_OWN_SHOP_TEXT = "Your Shop"
 
 -- The signs' ScreenGui. In PlayerGui adorned back onto the world board, the way the upgrade boards mount.
 local function getScreenGui(): ScreenGui
@@ -36,9 +51,9 @@ local function getScreenGui(): ScreenGui
 	return screenGui
 end
 
--- The star sign on every base, showing that base owner's overall rating rather than the local player's -- a visitor walking past a stall sees how good it is.
+-- The star sign and View Stats prompt on every base, showing that base owner's rating rather than the local player's -- a visitor walking past a stall sees how good it is, and can open the owner's stats.
 local RatingSignController = {
-	-- [baseModel] = { Board, Ui?, Cleaner? }; the sign is built only while the base has an owner
+	-- [baseModel] = { Board, Attachment?, Ui?, Prompt?, Cleaner? }; the sign and its prompt are built only while the base has an owner
 	_signs = {},
 	_cleaner = Trove.new(),
 }
@@ -61,7 +76,7 @@ function RatingSignController:RefreshSigns()
 	end
 end
 
--- Builds, repaints or drops one base's sign against who owns it now.
+-- Builds, repaints or drops one base's sign and prompt against who owns it now.
 function RatingSignController:_refreshSign(baseModel: Model, sign)
 	local owner = self:GetBaseOwner(baseModel.Name)
 
@@ -71,6 +86,7 @@ function RatingSignController:_refreshSign(baseModel: Model, sign)
 			self._cleaner:Remove(sign.Cleaner)
 			sign.Cleaner = nil
 			sign.Ui = nil
+			sign.Prompt = nil
 		end
 
 		return
@@ -86,6 +102,28 @@ function RatingSignController:_refreshSign(baseModel: Model, sign)
 
 		sign.Ui = ui
 		sign.Cleaner = signCleaner
+
+		-- Nil on a base model missing the attachment, which keeps its sign and goes without the prompt
+		if sign.Attachment then
+			-- On the attachment rather than the model, since a prompt parented to a Model never fires at all
+			local prompt = signCleaner:Add(Instance.new("ProximityPrompt"))
+			prompt.ActionText = PROMPT_ACTION_TEXT
+			prompt.HoldDuration = PROMPT_HOLD
+			prompt.MaxActivationDistance = PROMPT_DISTANCE
+			prompt.RequiresLineOfSight = false
+			prompt.Style = Enum.ProximityPromptStyle.Custom
+			prompt.Parent = sign.Attachment
+
+			signCleaner:Connect(prompt.Triggered, function()
+				-- Looked up at the press, since the owner can have left in the moment before the sign comes down
+				local currentOwner = self:GetBaseOwner(baseModel.Name)
+				if currentOwner then
+					ShopRatingController:OpenPlayerStats(currentOwner)
+				end
+			end)
+
+			sign.Prompt = prompt
+		end
 	end
 
 	-- Nil while they're too new to be scored, which reads as an empty row rather than no sign at all
@@ -93,16 +131,23 @@ function RatingSignController:_refreshSign(baseModel: Model, sign)
 
 	sign.Ui.Title.Text = Rating.FormatTitle(Rating.SIGN_TITLE, stars)
 	Rating.DrawStars(sign.Ui.Stars, stars)
+
+	-- Relabelled on every repaint, so a base that changes hands names its new owner
+	if sign.Prompt then
+		sign.Prompt.ObjectText = if owner == LocalPlayer then PROMPT_OWN_SHOP_TEXT else `{owner.DisplayName}'s Shop`
+	end
 end
 
--- Registers a base once its sign board has replicated, and paints it against whoever owns it.
+-- Registers a base once its sign board and prompt attachment have replicated, and paints it against whoever owns it.
 function RatingSignController:_setupBase(baseModel: Model)
 	if self._signs[baseModel] then
 		return
 	end
 
+	local ratingFolder = baseModel:WaitForChild(Rating.BASE_FOLDER, CHILD_TIMEOUT)
+
 	-- Walked a level at a time, each guarded, so a base missing any of them gives up rather than erroring
-	local board: Instance? = baseModel:WaitForChild(Rating.BASE_FOLDER, CHILD_TIMEOUT)
+	local board: Instance? = ratingFolder
 	for _, childName in Rating.SIGN_PATH do
 		board = board and board:WaitForChild(childName, CHILD_TIMEOUT)
 	end
@@ -112,12 +157,17 @@ function RatingSignController:_setupBase(baseModel: Model)
 		return
 	end
 
+	local attachment = ratingFolder:WaitForChild(PROMPT_ATTACHMENT, CHILD_TIMEOUT)
+	if not attachment then
+		warn(`[RatingSign] {baseModel.Name} has no {Rating.BASE_FOLDER}.{PROMPT_ATTACHMENT}, so it gets no {PROMPT_ACTION_TEXT} prompt`)
+	end
+
 	-- Waiting above yields, so the base can have streamed out or been built by a racing thread
 	if not baseModel.Parent or self._signs[baseModel] then
 		return
 	end
 
-	local sign = { Board = board }
+	local sign = { Board = board, Attachment = attachment }
 	self._signs[baseModel] = sign
 	self:_refreshSign(baseModel, sign)
 end

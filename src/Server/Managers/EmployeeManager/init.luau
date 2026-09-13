@@ -26,6 +26,14 @@ local EmployeeHut = require(Shared.Config.EmployeeHut)
 -- Assets
 local EmployeeFolder = ServerStorage.Assets:FindFirstChild("Employees")
 
+-- Top-level data keys whose change can hand an idle employee work: a stand or grill filling or emptying, hut stock, a station placed or picked up
+local WAKE_KEYS = {
+	StickStands = true,
+	Grillers = true,
+	HutStorage = true,
+	Structures = true,
+}
+
 --
 local PlayerDataManager
 local BaseManager
@@ -116,6 +124,8 @@ function EmployeeManager:ReleaseStation(player: Player, role: string, uid: strin
 	if claims then
 		claims[`{role}:{uid}`] = nil
 	end
+
+	self:WakePlayerEmployees(player)
 end
 
 -- Drops every station one employee holds, so an abandoned run never strands a grill nobody can use.
@@ -129,6 +139,22 @@ function EmployeeManager:ReleaseStations(player: Player, employeeUid: string)
 		if holder == employeeUid then
 			claims[uid] = nil
 		end
+	end
+
+	self:WakePlayerEmployees(player)
+end
+
+-- Nudges every one of a player's employees to look for work within its notice delay, for a change to the base worth reacting to.
+function EmployeeManager:WakePlayerEmployees(player: Player)
+	local employees = self._employees[player]
+	if not employees then
+		return
+	end
+
+	local now = workspace:GetServerTimeNow()
+
+	for _, employee in employees do
+		employee:WakePoll(now)
 	end
 end
 
@@ -466,6 +492,12 @@ function EmployeeManager:OnStart()
 
 	Players.PlayerRemoving:Connect(function(player: Player)
 		self:_cleanupPlayer(player)
+	end)
+
+	PlayerDataManager.OnDataChanged:Connect(function(player: Player, changedKey: string)
+		if WAKE_KEYS[changedKey] then
+			self:WakePlayerEmployees(player)
+		end
 	end)
 
 	-- One loop for every employee in the server. A step can yield, so each guards itself and is skipped while busy

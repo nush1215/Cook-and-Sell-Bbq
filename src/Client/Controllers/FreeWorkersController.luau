@@ -60,10 +60,19 @@ local CARD_PRESS_MULTIPLIER = 0.93
 local STAMP_START_SCALE = 1.4
 local STAMP_SCALE_TWEEN = TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out)
 
--- How long the stamp is left up before the panel hands over to the hut's own
+-- How long the stamp is left up before the panel hands over to the next one
 local CLOSE_DELAY = 0.7
 
--- The three workers given away on the first open of a repaired hut: one per role, face-down until each is turned over, and one of them theirs for nothing. Who they are is derived from their own UserId rather than sent, so this draws the same three the server reads the claim against; the portraits are baked by the server into this player's own PlayerGui.
+export type Offer = {
+	Candidates: { FreeWorkers.Candidate }, -- the three on the cards, one per FreeWorkers.SLOT_ROLES slot
+	PortraitFolder: string, -- the PlayerGui ScreenGui the server bakes their faces into, each named by slot
+	RequestHire: (slot: number) -> (), -- sends the pick to whichever manager grants it
+	OnHired: () -> (), -- where the player is taken once the Hired stamp has been read
+}
+
+-- Three workers on cards: one per role, face-down until each is turned over, and one of them theirs for nothing. The free three on a repaired hut's first open are this panel's own offer; another, like a daily reward's, is handed in whole. Who they are is derived from a seed rather than sent, so the cards draw the same three the server reads the pick against; the portraits are baked by the server into this player's own PlayerGui.
+
+--
 local FreeWorkersController = {
 	ClaimFreeWorkerEvent = Network.Event("ClaimFreeWorker"),
 	ClaimFreeWorkerResultEvent = Network.Event("ClaimFreeWorkerResult"),
@@ -71,10 +80,12 @@ local FreeWorkersController = {
 	FreeWorkerLookedAtEvent = Network.Event("FreeWorkerLookedAt"), -- client -> server (slotIndex)
 
 	_slots = {}, -- [slot] = { Frame, Scale, StampScale, Revealed, PortraitCleaner, EffectCleaner }
-	_candidates = {}, -- this player's three, rolled once on start
+	_freeOffer = nil :: Offer?, -- this player's free three, rolled once on start
+	_offer = nil :: Offer?, -- the three on the cards now
 	_selected = nil, -- the card standing forward, the only one Hire is offered on
 	_claiming = false, -- the client half of the debounce; the server holds the authoritative one
 	_cleaner = Trove.new(),
+	_offerCleaner = Trove.new(), -- the watch on the offer's portrait folder, replaced with the offer
 }
 
 -- Whether the three are still on the table, which is what puts this panel up in place of the hut's own.
@@ -82,10 +93,10 @@ function FreeWorkersController:ShouldOffer(): boolean
 	return not PlayerDataController:GetKey("FreeWorkersClaimed")
 end
 
--- Writes one candidate onto its card. Drawn once and left under the Mystery frame, so turning a card over reveals rather than paints.
+-- Writes one of the offer's candidates onto its card. Drawn as the offer goes up and left under the Mystery frame, so turning a card over reveals rather than paints.
 function FreeWorkersController:_drawCard(slot: number)
 	local state = self._slots[slot]
-	local candidate = self._candidates[slot]
+	local candidate = self._offer.Candidates[slot]
 	local frame = state.Frame
 
 	frame.EmployeeName.Text = candidate.Name
@@ -98,8 +109,8 @@ function FreeWorkersController:_drawCard(slot: number)
 
 	state.PortraitCleaner:Clean()
 
-	-- Baked on handover, so a missing one is normal and the folder's ChildAdded repaints it
-	local portraits = PlayerGui:FindFirstChild(FreeWorkers.PORTRAIT_FOLDER)
+	-- Baked by the server, so a missing one is normal and the folder's ChildAdded repaints it
+	local portraits = PlayerGui:FindFirstChild(self._offer.PortraitFolder)
 	local portrait = portraits and portraits:FindFirstChild(tostring(slot))
 	if portrait then
 		state.PortraitCleaner:Add(ViewportPortrait.Show(frame.ViewportFrame, portrait))
@@ -171,7 +182,11 @@ function FreeWorkersController:SelectSlot(slot: number)
 	-- Reported the first time each card is turned over; the server counts them, so this only says which
 	if not state.Revealed then
 		state.Revealed = true
-		self.FreeWorkerLookedAtEvent:FireServer(slot)
+
+		-- The funnel is the free three's own, so another offer's cards would only inflate it
+		if self._offer == self._freeOffer then
+			self.FreeWorkerLookedAtEvent:FireServer(slot)
+		end
 	end
 
 	local frame = state.Frame
@@ -187,7 +202,7 @@ function FreeWorkersController:SelectSlot(slot: number)
 	Spr.target(state.Scale, CARD_REVEAL_DAMPING, CARD_REVEAL_FREQUENCY, { Scale = 1 })
 end
 
--- Asks for the worker on `slot`, once every card has been looked at. Which one they took is all that goes out -- the server derives the three itself.
+-- Asks for the worker on `slot`, once every card has been looked at. Which one they took is all that goes out, to whichever manager the offer names -- the server derives the three itself.
 function FreeWorkersController:RequestClaim(slot: number)
 	if self._claiming then
 		return
@@ -207,7 +222,7 @@ function FreeWorkersController:RequestClaim(slot: number)
 	end
 
 	self._claiming = true
-	self.ClaimFreeWorkerEvent:FireServer(slot)
+	self._offer.RequestHire(slot)
 
 	-- Cleared by the result; this is only the backstop for one the server never answered
 	task.delay(REQUEST_TIMEOUT, function()
@@ -227,8 +242,35 @@ function FreeWorkersController:_stampHired(state)
 	SoundController:PlaySound("Stamp")
 end
 
--- Puts the three up: the backdrop fades in behind them while they spring up from under the screen.
-function FreeWorkersController:Open()
+-- Lands the server's answer to a pick: the Hired stamp on the card they took, then the offer's next panel. A result landing after the cards were shut stamps nothing, as there's no panel left to hand over from.
+function FreeWorkersController:ResolveClaim(success: boolean, slot: number)
+	self._claiming = false
+
+	local holder = self.UI.Holder
+	local state = self._slots[slot]
+	if not success or not state or not holder.Visible then
+		return
+	end
+
+	self:_stampHired(state)
+
+	-- Held, since another offer could be put up before the delay runs out
+	local offer = self._offer
+
+	-- Left up long enough to read as taken, then wherever the offer sends them
+	task.delay(CLOSE_DELAY, function()
+		UIController:CloseFrame(holder)
+		offer.OnHired()
+
+		-- These three are spoken for, so their faces in the viewports go with them
+		for _, cardState in self._slots do
+			cardState.PortraitCleaner:Clean()
+		end
+	end)
+end
+
+-- Puts `offer`'s three up: the cards drawn for it, then the backdrop fading in behind them while they spring up from under the screen.
+function FreeWorkersController:OpenOffer(offer: Offer)
 	if not self.UI then
 		return
 	end
@@ -236,7 +278,36 @@ function FreeWorkersController:Open()
 	local holder = self.UI.Holder
 	local container = holder.Container
 
+	-- Set before OpenFrame, whose opened signal is what reports the free three's funnel
+	self._offer = offer
+
+	local function redrawCards()
+		for slot in self._slots do
+			self:_drawCard(slot)
+		end
+	end
+
+	-- The server makes the folder on its first bake and can remake it between offers, so both arrivals repaint
+	self._offerCleaner:Clean()
+
+	local function watchFolder(folder: Instance)
+		self._offerCleaner:Connect(folder.ChildAdded, redrawCards)
+	end
+
+	local portraits = PlayerGui:FindFirstChild(offer.PortraitFolder)
+	if portraits then
+		watchFolder(portraits)
+	end
+
+	self._offerCleaner:Connect(PlayerGui.ChildAdded, function(child: Instance)
+		if child.Name == offer.PortraitFolder then
+			watchFolder(child)
+			redrawCards()
+		end
+	end)
+
 	self:_closeCards()
+	redrawCards()
 
 	-- Through UIController, so it shuts whatever else was up and the pad gets its cursor on the cards
 	UIController:OpenFrame(holder)
@@ -255,6 +326,11 @@ function FreeWorkersController:Open()
 	Spr.stop(container)
 	container.Position = CONTAINER_CLOSED_POSITION
 	Spr.target(container, CONTAINER_DAMPING, CONTAINER_FREQUENCY, { Position = CONTAINER_OPEN_POSITION })
+end
+
+-- Puts the free three up.
+function FreeWorkersController:Open()
+	self:OpenOffer(self._freeOffer)
 end
 
 function FreeWorkersController:OnInit()
@@ -284,10 +360,20 @@ function FreeWorkersController:OnStart()
 		self._holderScale.Parent = holder
 	end
 
-	self._candidates = FreeWorkers.RollCandidates(LocalPlayer.UserId)
+	self._freeOffer = {
+		Candidates = FreeWorkers.RollCandidates(LocalPlayer.UserId),
+		PortraitFolder = FreeWorkers.PORTRAIT_FOLDER,
+		RequestHire = function(slot: number)
+			self.ClaimFreeWorkerEvent:FireServer(slot)
+		end,
+		-- The hut's own panel, where their first worker is equipped
+		OnHired = function()
+			WorkerHutController:Open()
+		end,
+	}
 
 	-- Bound once here rather than per open: a hidden button can't be pressed, so the bindings stay live
-	for slot, candidate in self._candidates do
+	for slot, role in FreeWorkers.SLOT_ROLES do
 		local frame = holder.Container[tostring(slot)]
 
 		-- The stamp is the Icon inside the Hired frame where the art carries one, as the hiring board's cards do
@@ -320,21 +406,20 @@ function FreeWorkersController:OnStart()
 			self:RequestClaim(slot)
 		end, true)
 
+		-- The slot fixes the role whatever the offer, so the guide it opens never changes with the faces
 		UIController:BindButtonClick(frame.Info, function()
-			WorkerGuideController:OpenRoleGuide(candidate.Role)
+			WorkerGuideController:OpenRoleGuide(role)
 		end, true)
 
 		-- A viewport measures zero until it's been laid out once, so the first framing waits for a size
 		frame.ViewportFrame:GetPropertyChangedSignal("AbsoluteSize"):Connect(function()
 			ViewportPortrait.Reframe(frame.ViewportFrame)
 		end)
-
-		self:_drawCard(slot)
 	end
 
-	-- Reported off the signal rather than Open, which toggles -- calling it on an open panel shuts it
+	-- Reported off the signal rather than Open, which toggles -- calling it on an open panel shuts it. The funnel is the free three's alone
 	UIController.OnFrameOpened:Connect(function(frame)
-		if frame == holder then
+		if frame == holder and self._offer == self._freeOffer then
 			self.FreeWorkersOpenedEvent:FireServer()
 		end
 	end)
@@ -346,52 +431,8 @@ function FreeWorkersController:OnStart()
 		end
 	end)
 
-	-- Made by the server on the first portrait it bakes, so it can land after this runs
-	local function watchPortraits(folder: Instance)
-		folder.ChildAdded:Connect(function()
-			for slot in self._slots do
-				self:_drawCard(slot)
-			end
-		end)
-
-		for slot in self._slots do
-			self:_drawCard(slot)
-		end
-	end
-
-	local portraits = PlayerGui:FindFirstChild(FreeWorkers.PORTRAIT_FOLDER)
-	if portraits then
-		watchPortraits(portraits)
-	else
-		local connection
-		connection = PlayerGui.ChildAdded:Connect(function(child)
-			if child.Name == FreeWorkers.PORTRAIT_FOLDER then
-				connection:Disconnect()
-				watchPortraits(child)
-			end
-		end)
-	end
-
 	self.ClaimFreeWorkerResultEvent:OnClientEvent(function(success: boolean, slot: number)
-		self._claiming = false
-
-		local state = self._slots[slot]
-		if not success or not state then
-			return
-		end
-
-		self:_stampHired(state)
-
-		-- Left up long enough to read as taken, then the hut's own panel, where they are equipped
-		task.delay(CLOSE_DELAY, function()
-			UIController:CloseFrame(holder)
-			WorkerHutController:Open()
-
-			-- This panel is done for good, so the three faces in its viewports go with it
-			for _, cardState in self._slots do
-				cardState.PortraitCleaner:Clean()
-			end
-		end)
+		self:ResolveClaim(success, slot)
 	end)
 end
 

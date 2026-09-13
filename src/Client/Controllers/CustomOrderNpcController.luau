@@ -192,14 +192,19 @@ function CustomOrderNpcController:_findOrderTarget(): Model?
 
 	local held = HttpService:JSONDecode(skewer:GetAttribute("Ingredients"))
 
-	-- One order runs at a time, so the first match is the answer rather than the nearest of several
+	-- Two can want the same recipe, so it's for whichever of them runs out first
+	local target, targetDeadline = nil, math.huge
 	for npc, state in self._active do
-		if state.orderIngredients and ingredientsMatch(state.orderIngredients, held) then
-			return npc
+		if
+			state.orderIngredients
+			and state.orderDeadline < targetDeadline
+			and ingredientsMatch(state.orderIngredients, held)
+		then
+			target, targetDeadline = npc, state.orderDeadline
 		end
 	end
 
-	return nil
+	return target
 end
 
 -- Moves the glow and the beam onto whichever customer the held BBQ is for, and says so if that moved.
@@ -468,6 +473,7 @@ function CustomOrderNpcController:_startTimer(state, npc: Model, order, owned: b
 	-- Owner only: the glow, the beam and the hand-over are all things nobody else can act on
 	if owned then
 		state.orderIngredients = order.Ingredients
+		state.orderDeadline = order.Deadline
 		self:_showDeliverPrompt(state, npc)
 	end
 

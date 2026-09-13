@@ -535,6 +535,12 @@ function Employee:SetState(state: string)
 	self._faced = false
 	self._countdownUntil = 0
 
+	-- Back between jobs looks around on the next tick, or the sign reads the generic idle line for a whole notice gap
+	local states = Roles[self.Record.Role]
+	if state == (states and states.Initial or "Idle") then
+		self._nextPollAt = 0
+	end
+
 	self:SetVariant(nil)
 
 	if self._rig then
@@ -687,6 +693,14 @@ end
 -- Holds off the next look for work, for a poll that found something it can't act on yet. Not a Dwell: an idle wait has no countdown worth showing, and it should keep strolling rather than stand frozen.
 function Employee:DelayPoll(now: number, seconds: number)
 	self._nextPollAt = math.max(self._nextPollAt, now + seconds)
+end
+
+-- Brings the next look for work forward to its own notice delay from now, for a change to the base it should react to rather than stumble on. Only ever sooner, never later.
+function Employee:WakePoll(now: number)
+	self._nextPollAt = math.min(
+		self._nextPollAt,
+		now + self:GetCurveValue(Employees.NOTICE_WORST, Employees.NOTICE_BEST, Employees.NOTICE_GAMMA)
+	)
 end
 
 -- Runs one step of this employee's role. Guarded, since a state can yield on a data read and a throw would strand the rig.

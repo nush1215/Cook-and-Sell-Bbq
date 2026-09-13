@@ -38,9 +38,9 @@ table.freeze(FreeWorkers.SLOT_ROLES)
 -- well short of what the board's own top end sells for
 FreeWorkers.STARS = 2.5
 
--- The three on offer to `userId`. Walked in the same fixed order the hiring board's roll takes, so the client and the server each derive the same three without a word passing between them.
-function FreeWorkers.RollCandidates(userId: number): { Candidate }
-	local rng = Random.new(userId)
+-- The three on offer off `seed`, at `stars` or the free three's rating. Walked in the same fixed order the hiring board's roll takes, so the client and the server each derive the same three without a word passing between them.
+function FreeWorkers.RollCandidates(seed: number, stars: number?): { Candidate }
+	local rng = Random.new(seed)
 	local candidates = {}
 
 	-- No two of the three share a name, though each draws from the pool that suits its own body
@@ -75,7 +75,7 @@ function FreeWorkers.RollCandidates(userId: number): { Candidate }
 
 		table.insert(candidates, {
 			Role = role,
-			Stars = FreeWorkers.STARS,
+			Stars = stars or FreeWorkers.STARS,
 			Body = body,
 			Name = name,
 			Cosmetics = {

@@ -177,7 +177,7 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 	-- Cloned and written once -- a pull moves every counter, and one write beats one per tier per stand
 	local pity = table.clone(data.Pity)
 
-	-- What a live custom order still wants. A steer rather than a reweighting, so the labels stay the odds
+	-- What the live custom orders still want between them. A steer rather than a reweighting, so the labels stay the odds
 	local wanted = {}
 	local wantedIds = CustomOrderNpcManager:GetMissingOrderIngredients(player, data)
 	for _, id in wantedIds do

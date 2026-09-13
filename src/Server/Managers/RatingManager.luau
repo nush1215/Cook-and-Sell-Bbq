@@ -16,15 +16,15 @@ local PlayerDataManager
 local SellNpcManager
 local GrillerManager
 
--- The player's star reputation, scored off the rolling windows and the build they've put up. Nothing here is saved: the rating is derived, so retuning Config.Rating re-rates everyone's existing history rather than leaving old entries priced by old rules.
+-- The player's star reputation, scored off the rolling windows and the build they've put up. Nothing here is saved: the rating is derived, so retuning Config.Rating re-rates everyone's existing history rather than leaving old entries priced by old rules. The stats panel's counters are mirrored onto the player beside it, so a visitor at their board can read those too.
 local RatingManager = {
-	-- Carries nothing: the rating it reports is read back off the player here, not taken from the client
+	-- Carries whose panel was opened; the rating it reports is still read back off the player here, not taken from the client
 	StatsPanelOpenedEvent = Network.Event("StatsPanelOpened", {
 		Direction = "ClientToServer",
 		RateLimit = { MaxPerSecond = 2 },
 	}),
 
-	OnStatsPanelOpened = Signal.new(), -- (player, stars?)
+	OnStatsPanelOpened = Signal.new(), -- (player, stars?, ownPanel)
 }
 
 -- The data keys that move a trait. Anything else writing to a profile doesn't need a re-score
@@ -79,9 +79,21 @@ function RatingManager:RefreshPlayerRating(player: Player)
 	end
 end
 
--- Announces that the player opened their stats panel, with what they were rated at the time.
-function RatingManager:RecordStatsPanelOpened(player: Player)
-	self.OnStatsPanelOpened:Fire(player, player:GetAttribute(Rating.OVERALL_ATTRIBUTE))
+-- Mirrors the stats panel's counters onto the player, since their data only replicates to them and a visitor's panel reads these. Doesn't yield.
+function RatingManager:RefreshPlayerStats(player: Player)
+	local data = PlayerDataManager:GetLoadedPlayerData(player)
+	if not data then
+		return
+	end
+
+	for dataKey in Rating.StatDisplay do
+		player:SetAttribute(Rating.GetStatAttribute(dataKey), data[dataKey])
+	end
+end
+
+-- Announces that the player opened a stats panel, with what they were rated at the time and whether it was their own.
+function RatingManager:RecordStatsPanelOpened(player: Player, ownPanel: boolean)
+	self.OnStatsPanelOpened:Fire(player, player:GetAttribute(Rating.OVERALL_ATTRIBUTE), ownPanel)
 end
 
 function RatingManager:OnInit()
@@ -91,12 +103,17 @@ function RatingManager:OnInit()
 end
 
 function RatingManager:OnStart()
-	self.StatsPanelOpenedEvent:OnServerEvent(function(player: Player)
-		self:RecordStatsPanelOpened(player)
+	self.StatsPanelOpenedEvent:OnServerEvent(function(player: Player, viewedPlayer: Player?)
+		-- Compared rather than passed on, since anything can arrive over the remote
+		self:RecordStatsPanelOpened(player, viewedPlayer == player)
 	end)
 
 	-- Hooked on the data rather than each system's own signal, so a command-bar write re-scores like a sale
 	PlayerDataManager.OnDataChanged:Connect(function(player: Player, key: string)
+		if Rating.StatDisplay[key] then
+			self:RefreshPlayerStats(player)
+		end
+
 		if not WATCHED_KEYS[key] then
 			return
 		end
@@ -111,6 +128,8 @@ function RatingManager:OnStart()
 		task.spawn(function()
 			local hasData = PlayerDataManager:GetPlayerData(player):await()
 			if hasData and player:IsDescendantOf(Players) then
+				-- Ahead of the rating, which yields on the refusal read
+				self:RefreshPlayerStats(player)
 				self:RefreshPlayerRating(player)
 			end
 		end)

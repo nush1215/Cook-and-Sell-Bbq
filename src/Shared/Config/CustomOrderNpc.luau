@@ -14,6 +14,12 @@ CustomOrderNpc.COOLDOWN = 100
 CustomOrderNpc.MIN_GRILLERS = 2
 CustomOrderNpc.MIN_ROLLING_STANDS = 2
 
+-- Placed builds per order a base can have running at once; it runs as many as the rows it clears, in order
+CustomOrderNpc.CONCURRENT_ORDER_MARKS = {
+	{ Grillers = 0, StickStands = 0 },
+	{ Grillers = 3, StickStands = 2 },
+}
+
 -- The two ways a visit opens. Named rather than a boolean, so the command bar can ask for one by name
 CustomOrderNpc.VARIATIONS = {
 	Inspect = "Inspect",
@@ -84,6 +90,9 @@ CustomOrderNpc.ROLL_PITY_THRESHOLD = 2
 CustomOrderNpc.WAIT_SIDE_DISTANCE_MIN = 12
 CustomOrderNpc.WAIT_SIDE_DISTANCE_MAX = 15
 CustomOrderNpc.WAIT_BACK_DISTANCE = 4
+
+-- Studs further out per customer already waiting on that side. Wider than the spread above, or they overlap
+CustomOrderNpc.WAIT_STEP_OUT = 8
 
 -- Seconds between empty-handed scoldings, so leaning on the prompt can't stack bubbles on themselves
 CustomOrderNpc.EMPTY_HANDED_INTERVAL = 1.5
