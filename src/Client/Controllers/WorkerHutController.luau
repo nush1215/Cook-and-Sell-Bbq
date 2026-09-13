@@ -42,6 +42,7 @@ local WorkerHutController = {
 	PurchaseHutSlotEvent = Network.Event("PurchaseHutSlot"),
 	EquipEmployeeEvent = Network.Event("EquipEmployee"),
 	UnequipEmployeeEvent = Network.Event("UnequipEmployee"),
+	HutSlotSelectedEvent = Network.Event("HutSlotSelected"), -- client -> server (no args)
 
 	_slots = {}, -- [slot] = { Frame, BuyRobux?, PortraitCleaner, Uid? }
 	_selectingSlot = nil, -- the slot the worker list is picking for, while it's up
@@ -295,6 +296,7 @@ function WorkerHutController:OnStart()
 
 		-- Select is an invisible button laid over the slot, so the slot itself springs under the press
 		UIController:BindButtonClick(frame.Select, function()
+			self.HutSlotSelectedEvent:FireServer()
 			self:ShowWorkerList(slot)
 		end, true, false, { ShowFrame = frame })
 

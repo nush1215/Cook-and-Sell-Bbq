@@ -63,8 +63,22 @@ local EmployeeHutManager = {
 		RateLimit = { MaxPerSecond = 2 },
 	}),
 
+	-- Carries nothing: whether the hut is repaired yet is read back off their data here, not taken from the client
+	WorkerHutOpenedEvent = Network.Event("WorkerHutOpened", {
+		Direction = "ClientToServer",
+		RateLimit = { MaxPerSecond = 2 },
+	}),
+
 	OnRepairPanelOpened = Signal.new(), -- (player)
 	OnHutRepairPurchased = Signal.new(), -- (player, cost)
+	-- Carries nothing: pressing an empty slot to pick who goes in it is the whole of what it reports
+	HutSlotSelectedEvent = Network.Event("HutSlotSelected", {
+		Direction = "ClientToServer",
+		RateLimit = { MaxPerSecond = 2 },
+	}),
+
+	OnWorkerHutOpened = Signal.new(), -- (player, freeWorkersClaimed); only once the hut is repaired
+	OnHutSlotSelected = Signal.new(), -- (player)
 	OnHutSlotPurchased = Signal.new(), -- (player, slot, cost, method); a Robux receipt's cost is 0
 	OnHutItemStored = Signal.new(), -- (player, kind, itemId, amount, storeAll?)
 	OnHutItemWithdrawn = Signal.new(), -- (player, kind, itemId); an employee taking from the store isn't one
@@ -106,6 +120,21 @@ end
 -- Announces that the player opened the hut's repair panel.
 function EmployeeHutManager:RecordRepairPanelOpened(player: Player)
 	self.OnRepairPanelOpened:Fire(player)
+end
+
+-- Announces that the player opened their repaired hut. Read without waiting, since the remote can land before their data has.
+function EmployeeHutManager:RecordWorkerHutOpened(player: Player)
+	local data = PlayerDataManager:GetLoadedPlayerData(player)
+	if not data or not data.HutRepaired then
+		return
+	end
+
+	self.OnWorkerHutOpened:Fire(player, data.FreeWorkersClaimed)
+end
+
+-- Announces that the player pressed an empty hut slot to pick a worker for it.
+function EmployeeHutManager:RecordHutSlotSelected(player: Player)
+	self.OnHutSlotSelected:Fire(player)
 end
 
 -- Repairs the player's hut and hands them the structure, dropped on the marker it was standing on.
@@ -699,6 +728,14 @@ function EmployeeHutManager:OnStart()
 
 	self.RepairPanelOpenedEvent:OnServerEvent(function(player: Player)
 		self:RecordRepairPanelOpened(player)
+	end)
+
+	self.WorkerHutOpenedEvent:OnServerEvent(function(player: Player)
+		self:RecordWorkerHutOpened(player)
+	end)
+
+	self.HutSlotSelectedEvent:OnServerEvent(function(player: Player)
+		self:RecordHutSlotSelected(player)
 	end)
 
 	self.StoreItemEvent:OnServerEvent(function(player: Player, uid: string, storeAll: boolean?)

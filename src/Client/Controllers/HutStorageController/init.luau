@@ -43,6 +43,7 @@ local REQUEST_TIMEOUT = 3
 local HutStorageController = {
 	StoreItemEvent = Network.Event("StoreHutItem"),
 	WithdrawItemEvent = Network.Event("WithdrawHutItem"),
+	WorkerHutOpenedEvent = Network.Event("WorkerHutOpened"), -- client -> server (no args)
 
 	_huts = {}, -- [model: Model] = HutStorage
 	_viewingUid = nil, -- the hut whose store the panel is showing
@@ -207,6 +208,9 @@ end
 
 -- Opens the Worker Hut panel, where the hut's slots are bought and its workers equipped. The first open goes to the three free Workers instead, and the hut's own panel follows once one has been taken.
 function HutStorageController:RequestOpenWorkerHut()
+	-- Off the press rather than either panel's opened signal, since which of the two comes up is beside the point
+	self.WorkerHutOpenedEvent:FireServer()
+
 	if FreeWorkersController:ShouldOffer() then
 		FreeWorkersController:Open()
 		return

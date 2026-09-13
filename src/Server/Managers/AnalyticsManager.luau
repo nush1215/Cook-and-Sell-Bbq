@@ -37,6 +37,8 @@ local DailyRewardManager
 local AnalyticsManager = {
 	-- [player] = lever pulls this session. Not dropped on PlayerRemoving, which fires before the summary
 	_sessionRolls = {},
+	-- [player] = true once they opened a newly repaired hut this session, so the later steps only count off that open
+	_repairedHutRuns = {},
 }
 
 local CustomFields = Enum.AnalyticsCustomFieldKeys
@@ -99,6 +101,20 @@ local function logFreeWorkerFunnelStep(player: Player, stepIndex: number, stepNa
 	task.spawn(function()
 		pcall(function()
 			AnalyticsService:LogFunnelStepEvent(player, "Free Workers 1", nil, stepIndex, stepName)
+		end)
+	end)
+end
+
+-- Logs one step of the repaired hut funnel, only for a player whose run started this session. Once per player, so a repeat only counts the first time.
+function AnalyticsManager:_logRepairedHutStep(player: Player, stepIndex: number, stepName: string)
+	-- A skipped step counts as done, so a step with no open ahead of it would pull a veteran into the funnel
+	if not self._repairedHutRuns[player] then
+		return
+	end
+
+	task.spawn(function()
+		pcall(function()
+			AnalyticsService:LogFunnelStepEvent(player, "Repaired Hut", nil, stepIndex, stepName)
 		end)
 	end)
 end
@@ -389,6 +405,24 @@ function AnalyticsManager:OnStart()
 		logWorkerFunnelStep(player, 2, "Bought Repair")
 	end)
 	-- Only once the hut stands: a look before then would auto-complete the repair steps ahead of it
+	-- Repaired hut, first open to first equip: opened it, turned each card, took one, pressed a slot, equipped. Unclaimed
+	-- free workers is what marks the hut as newly repaired, so a veteran opening theirs never starts a run
+	EmployeeHutManager.OnWorkerHutOpened:Connect(function(player, freeWorkersClaimed)
+		if not freeWorkersClaimed then
+			self._repairedHutRuns[player] = true
+			self:_logRepairedHutStep(player, 1, "Opened Hut")
+		end
+	end)
+	-- By how many are turned rather than which, since they can be turned in any order. Steps 2-4
+	FreeWorkersManager.OnFreeWorkerLookedAt:Connect(function(player, seen)
+		self:_logRepairedHutStep(player, 1 + seen, `Turned Card {seen}`)
+	end)
+	FreeWorkersManager.OnFreeWorkerClaimed:Connect(function(player)
+		self:_logRepairedHutStep(player, 5, "Selected Worker")
+	end)
+	EmployeeHutManager.OnHutSlotSelected:Connect(function(player)
+		self:_logRepairedHutStep(player, 6, "Clicked Equip Frame")
+	end)
 	HiringBoardManager.OnHiringBoardOpened:Connect(function(player, hutRepaired)
 		logCustom(player, "Hiring Board Opened", 1, if hutRepaired then "Repaired" else "Broken")
 
@@ -444,6 +478,7 @@ function AnalyticsManager:OnStart()
 
 		if slot then
 			logWorkerFunnelStep(player, 5, "Equipped Worker")
+			self:_logRepairedHutStep(player, 7, "Equipped Worker")
 
 			-- The hut panel is the only place a worker is equipped, and the free three stand in front of it until
 			-- one is taken -- so a first equip always follows the claim, whichever worker it turns out to be
@@ -529,6 +564,7 @@ function AnalyticsManager:OnStart()
 		-- Sessions that never rolled are logged too, or the average biases up and hides who never reached the lever
 		local rolls = self._sessionRolls[player] or 0
 		self._sessionRolls[player] = nil
+		self._repairedHutRuns[player] = nil
 
 		logCustom(player, "Session Rolls", rolls, getSessionLengthBucket(sessionLength))
 	end)
