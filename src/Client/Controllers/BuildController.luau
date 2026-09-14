@@ -16,7 +16,6 @@ local Network = require(Shared.Network)
 local Structures = require(Shared.Config.Structures)
 local Plots = require(Shared.Config.Plots)
 local GridUtil = require(Shared.GridUtil)
-local GlobalUtil = require(Shared.GlobalUtil)
 
 -- Controllers
 local PlayerDataController = require(script.Parent.PlayerDataController)
@@ -25,9 +24,7 @@ local InputController = require(script.Parent.InputController)
 
 -- Modules
 local Modules = script.Parent.Parent.Modules
-
--- Required on first use -- on touch it yields at require time, which would hold the client boot
-local ContextActionUtility
+local ContextActionUtility = require(Modules.ContextActionUtlity)
 
 --
 local LocalPlayer = Players.LocalPlayer
@@ -66,8 +63,6 @@ local PICKUP_REFRESH_INTERVAL = 0.2
 local RAY_LENGTH = 1000
 local ROTATE_KEY = Enum.KeyCode.R
 local ROTATE_GAMEPAD_KEY = Enum.KeyCode.ButtonL2
--- What Tool.Activated fires on, so the guide can show it; nothing binds it
-local PLACE_GAMEPAD_KEY = Enum.KeyCode.ButtonR2
 
 -- Which way round a model is built, in quarter-turns from -Z. Turn this for a backwards template
 local FACING_FRONT_OFFSET = 0
@@ -105,12 +100,16 @@ local GUIDE_PLACE_ENTRY = "Place"
 local GUIDE_ROTATE_ENTRY = "Rotate"
 local GUIDE_TIMEOUT = 10
 
--- The authored key label inside each entry, and the pad glyph laid over it in its place
-local GUIDE_KEY_NAME = "Key"
-local GUIDE_GLYPH_NAME = "GamepadKey"
-local GUIDE_GAMEPAD_KEYS = {
-	[GUIDE_PLACE_ENTRY] = PLACE_GAMEPAD_KEY,
-	[GUIDE_ROTATE_ENTRY] = ROTATE_GAMEPAD_KEY,
+-- The authored icon inside each entry, and the art it wears on PC and on a pad
+local GUIDE_ICON_NAME = "Icon"
+local GUIDE_PC_ICONS = {
+	[GUIDE_PLACE_ENTRY] = "rbxassetid://135423052634167",
+	[GUIDE_ROTATE_ENTRY] = "rbxassetid://83998004482006",
+}
+-- R2 places (it's what Tool.Activated fires on, so nothing binds it) and L2 rotates
+local GUIDE_GAMEPAD_ICONS = {
+	[GUIDE_PLACE_ENTRY] = "rbxassetid://115414206594849",
+	[GUIDE_ROTATE_ENTRY] = "rbxassetid://105414054644481",
 }
 
 -- Stands in for the guide when there's nowhere to build. Its own frame, so it can show on a phone too
@@ -453,7 +452,7 @@ end
 
 -- The ray the ghost is aimed down. The cursorless one (touch or pad) points straight down, so a level camera doesn't skid.
 function BuildController:_getAimRay(): Ray?
-	if not GlobalUtil.IsTouchOnly() then
+	if not InputController:IsCursorless() then
 		local mouse = self._mouse
 		return mouse and mouse.UnitRay
 	end
@@ -654,8 +653,8 @@ end
 function BuildController:_getStructureUnderCursor(): (Model?, string?)
 	local ray = self._mouse.UnitRay
 
-	-- A pad has no cursor, so it aims from the middle of the screen and the hover outline is its reticle
-	if InputController:IsGamepad() then
+	-- A pad has no cursor, so it aims from the middle of the screen and the hover outline is its reticle. A tap picks what it hit
+	if InputController:IsGamepad() and not InputController:WasLastInputTouch() then
 		local camera = workspace.CurrentCamera
 		local viewport = camera.ViewportSize
 		ray = camera:ViewportPointToRay(viewport.X / 2, viewport.Y / 2)
@@ -837,8 +836,8 @@ function BuildController:_getGuideScale(entryName: string): UIScale?
 	return entry and entry:FindFirstChildOfClass("UIScale")
 end
 
--- Shows each entry's pad glyph over its authored key on a pad, and the key itself otherwise.
-function BuildController:_refreshGuideKeys()
+-- Shows each entry's PC icon, or its pad icon on a controller. Only the icon; the rest is Studio's.
+function BuildController:_refreshGuideIcons()
 	local guide = self:_getGuide()
 	if not guide then
 		return
@@ -846,43 +845,26 @@ function BuildController:_refreshGuideKeys()
 
 	local gamepad = InputController:IsGamepad()
 
-	for entryName, keyCode in GUIDE_GAMEPAD_KEYS do
+	for entryName, pcIcon in GUIDE_PC_ICONS do
 		local entry = guide:FindFirstChild(entryName)
-		local key = entry and entry:FindFirstChild(GUIDE_KEY_NAME)
+		local icon = entry and entry:FindFirstChild(GUIDE_ICON_NAME) :: ImageLabel?
 
-		-- Authored in the place file, so a missing label is a name mismatch worth saying once
-		if not key then
-			if not self._warnedGuideKeys then
-				self._warnedGuideKeys = true
-				warn(`[Build] {GUIDE_FRAME_NAME}.{entryName} has no {GUIDE_KEY_NAME}, so a pad gets no glyph on it`)
+		-- Authored in the place file, so a missing icon is a name mismatch worth saying once
+		if not icon then
+			if not self._warnedGuideIcons then
+				self._warnedGuideIcons = true
+				warn(`[Build] {GUIDE_FRAME_NAME}.{entryName} has no {GUIDE_ICON_NAME}, so its button art can't be set`)
 			end
 			continue
 		end
 
-		-- Laid over the label rather than written into it, so the authored key comes back with a Visible flip
-		local glyph = entry:FindFirstChild(GUIDE_GLYPH_NAME)
-		if not glyph then
-			glyph = Instance.new("ImageLabel")
-			glyph.Name = GUIDE_GLYPH_NAME
-			glyph.BackgroundTransparency = 1
-			glyph.ScaleType = Enum.ScaleType.Fit
-			glyph.Size = key.Size
-			glyph.Position = key.Position
-			glyph.AnchorPoint = key.AnchorPoint
-			glyph.SizeConstraint = key.SizeConstraint
-			glyph.ZIndex = key.ZIndex
-			glyph.Parent = entry
-		end
-
-		glyph.Image = UserInputService:GetImageForKeyCode(keyCode)
-		glyph.Visible = gamepad
-		key.Visible = not gamepad
+		icon.Image = if gamepad then GUIDE_GAMEPAD_ICONS[entryName] else pcIcon
 	end
 end
 
--- Puts up the guide or the invalid badge, never both. Not on a phone, which has the touch buttons; a pad wants it.
+-- Puts up the guide or the invalid badge, never both. Not on touch, which has the touch buttons; a pad wants it.
 function BuildController:_refreshGuide()
-	local placing = self._guidePlacing and not GlobalUtil.IsTouchOnly()
+	local placing = self._guidePlacing and not InputController:IsTouch()
 	local guide = self:_getGuide()
 	local invalid = self:_getInvalid()
 
@@ -911,7 +893,7 @@ end
 function BuildController:_pressGuideEntry(entryName: string, pressed: boolean)
 	local uiScale = self:_getGuideScale(entryName)
 
-	-- No guide up: no frame in the place file, a phone, or the tool put away mid-press.
+	-- No guide up: no frame in the place file, a touch player, or the tool put away mid-press.
 	if not uiScale then
 		return
 	end
@@ -934,7 +916,7 @@ function BuildController:_showGuide(shown: boolean)
 			end
 		end
 
-		self:_refreshGuideKeys()
+		self:_refreshGuideIcons()
 	end
 
 	self._guidePlacing = shown
@@ -985,8 +967,6 @@ end
 
 -- Binds place and rotate for the placement's length, each with a touch button. Only rotate takes keys; a pad places off the tool.
 function BuildController:_bindPlacementActions()
-	ContextActionUtility = ContextActionUtility or require(Modules.ContextActionUtlity)
-
 	-- Touch buttons report press, drag and release alike, so without the Begin check a tap counts twice.
 	local function onPlace(_actionName: string, inputState: Enum.UserInputState)
 		if inputState == Enum.UserInputState.Begin then
@@ -1047,9 +1027,10 @@ function BuildController:_enterPlacement(structure: Structures.Structure, mouse:
 	-- Building only: the pickup tool has nothing to rotate, so _enterPickup leaves the guide down.
 	self:_showGuide(true)
 
-	-- A pad picked up mid-placement swaps the guide's keys for glyphs, and one put down swaps them back
+	-- A device switch mid-placement swaps the guide's icons for pad glyphs and back, and takes it down for touch
 	self._placementCleaner:Connect(InputController.OnPreferredInputChanged, function()
-		self:_refreshGuideKeys()
+		self:_refreshGuideIcons()
+		self:_refreshGuide()
 	end)
 
 	-- On the cleaner rather than in _exitPlacement, so it also runs when the tool is destroyed.
@@ -1200,8 +1181,8 @@ function BuildController:_hookTool(tool: Tool)
 			return
 		end
 
-		-- On a phone any tap fires this, so placing belongs to the Place button alone
-		if GlobalUtil.IsTouchOnly() then
+		-- Any tap fires this, so touch places with the Place button alone. Judged by the input, as the preference lags a tap
+		if InputController:WasLastInputTouch() then
 			return
 		end
 

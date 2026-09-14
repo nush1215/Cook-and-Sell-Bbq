@@ -31,9 +31,19 @@ function InputController:IsGamepad(): boolean
 	return UserInputService.PreferredInput == Enum.PreferredInput.Gamepad
 end
 
--- Whether there's no pointer to aim a tool with. TouchEnabled rather than the preference, so the touch path's trigger is unchanged.
+-- Whether the player is on touch, which is also exactly when Roblox's own touch controls are up.
+function InputController:IsTouch(): boolean
+	return UserInputService.PreferredInput == Enum.PreferredInput.Touch
+end
+
+-- Whether the latest input was a tap. Judges taps, since the preference takes up to ten seconds to hand back to touch.
+function InputController:WasLastInputTouch(): boolean
+	return UserInputService:GetLastInputType() == Enum.UserInputType.Touch
+end
+
+-- Whether there's no pointer to aim a tool with: touch or a pad.
 function InputController:IsCursorless(): boolean
-	return UserInputService.TouchEnabled or self:IsGamepad()
+	return UserInputService.PreferredInput ~= Enum.PreferredInput.KeyboardAndMouse
 end
 
 -- "Click", "Tap" or "Press", for copy that names the action.

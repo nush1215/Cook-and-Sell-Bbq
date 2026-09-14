@@ -179,6 +179,8 @@ Crates.TUTORIAL_TIMER_DURATION = 15 * 60
 Crates.METEOR_FOCUS_ALPHA = 0.25
 -- Slack past the fall before the camera is released regardless, covering a crate lost mid-flight
 Crates.METEOR_CAMERA_RELEASE_SLACK = 0.4
+-- Studs the camera zooms back out to after the crash, if the player was already closer in than this
+Crates.METEOR_RELEASE_MIN_ZOOM = 12
 
 -- The impact: rock debris, a crater, and a shake.
 Crates.METEOR_EXPLOSION_ROCKS = 18

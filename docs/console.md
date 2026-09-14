@@ -22,9 +22,17 @@ about a pad crosses the wire, since every action a pad takes lands on an event t
 | Menu (Start) | The Roblox menu |
 
 `InputController` owns which device the player is on (`UserInputService.PreferredInput`) and fires
-`OnPreferredInputChanged` when it changes. Anything device-specific reads it rather than `TouchEnabled`; the
-touch-only paths a phone still needs (the on-screen Place and Rotate buttons, the hidden build hint) keep
-`TouchEnabled`, and `InputController:IsCursorless()` is the "touch or pad" question.
+`OnPreferredInputChanged` when it changes. Anything that picks controls reads it rather than `TouchEnabled`, and
+swaps live when the player changes device: `IsGamepad()`, `IsTouch()`, and `IsCursorless()` for "touch or pad".
+Roblox's own touch controls follow the same property, and the on-screen Place and Rotate buttons hang off its jump
+button, so they show exactly when the thumbstick does.
+
+Roblox switches to Gamepad or KeyboardAndMouse on the first input from one, but back to Touch only on a tap in the
+3D world at least ten seconds after the last keyboard, mouse or pad input. Taps are judged by
+`WasLastInputTouch()` instead: a tap never places a structure (the Place button does), and in that window the
+pickup hammer takes what was tapped rather than the middle of the screen. `GlobalUtil.IsTouchOnly()` is left to
+layouts sized to a phone (the HUD's top offset, the hotbar's slot count), which shouldn't move when a phone player
+picks up a pad.
 
 ## Menus
 
@@ -44,8 +52,8 @@ one does, so nothing per-button was needed beyond the press spring releasing on 
 
 A pad aims the ghost the way a phone does: off the camera, clamped near the player, dropped straight down
 (`BuildController:_getAimRay`). The pickup hammer aims from the middle of the screen, with the hover outline
-as the reticle. The `PCGuide` hint follows the ghost instead of the cursor and shows the R2 / L2 glyphs over
-its authored key labels.
+as the reticle. The `PCGuide` hint follows the ghost instead of the cursor, and each entry's `Icon` swaps from the
+PC art to the game's own R2 / L2 art (set in `BuildController`, not Roblox's per-controller glyphs).
 
 ## Customers
 
@@ -58,8 +66,8 @@ hides Decline on its one offer; an employee seller hides the whole row) can't be
 
 - `StarterGui.VirtualCursorMode = Enabled` — without it View can't summon the cursor, and the HUD buttons
   are unreachable with no menu up.
-- `BuildingUI.PCGuide.Place` and `.Rotate` each need a child named `Key` holding the key label; the code
-  warns once and skips the glyph if it's missing.
+- `BuildingUI.PCGuide.Place` and `.Rotate` each need an image named `Icon`, whose image the code sets per device
+  (it warns once if one is missing). Their `Action` labels are Studio's and the code never touches them.
 - If selene flags `Enum.PreferredInput`, regenerate the Roblox std (`selene generate-roblox-std`).
 
 ## Known limits

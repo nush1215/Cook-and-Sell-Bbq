@@ -39,7 +39,7 @@ function GlobalUtil.WeldModel(model: Model, anchorPrimary: boolean?)
 	primaryPart.Anchored = anchorPrimary
 end
 
--- Whether the touch path applies: a touchscreen with no mouse. A touchscreen PC still has a pointer to aim with
+-- Whether this is a touchscreen with no mouse, for layouts sized to a phone. Controls follow InputController instead
 function GlobalUtil.IsTouchOnly(): boolean
 	return UserInputService.TouchEnabled and not UserInputService.MouseEnabled
 end

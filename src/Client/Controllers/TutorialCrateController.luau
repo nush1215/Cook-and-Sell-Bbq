@@ -193,6 +193,25 @@ function TutorialCrateController:PlayCrash(uniqueId: string, duration: number, l
 	local baseId = LocalPlayer:GetAttribute("BaseId")
 	local baseModel = baseId and workspace.Base:FindFirstChild(baseId)
 
+	local previousMinZoom = LocalPlayer.CameraMinZoomDistance
+	local previousZoom = (Camera.CFrame.Position - Camera.Focus.Position).Magnitude
+	local cameraReleased = false
+
+	-- Hands the camera back in third person at the zoom the player had before the crash.
+	local function releaseCamera()
+		if cameraReleased then
+			return
+		end
+		cameraReleased = true
+
+		LocalPlayer.CameraMode = Enum.CameraMode.Classic
+		-- Classic alone stays zoomed all the way in, so push the min zoom out for a frame to pop the camera back
+		LocalPlayer.CameraMinZoomDistance = math.max(previousZoom, CratesConfig.METEOR_RELEASE_MIN_ZOOM)
+		task.defer(function()
+			LocalPlayer.CameraMinZoomDistance = previousMinZoom
+		end)
+	end
+
 	LocalPlayer.CameraMode = Enum.CameraMode.LockFirstPerson
 
 	local cancel = MeteorFall.Play(model, {
@@ -210,7 +229,7 @@ function TutorialCrateController:PlayCrash(uniqueId: string, duration: number, l
 		OnLanded = function()
 			-- Settled, so the bob can take the pivot now without fighting the fall for it
 			CrateController:IdleCrate(model)
-			LocalPlayer.CameraMode = Enum.CameraMode.Classic
+			releaseCamera()
 
 			if baseModel then
 				tagInvisibleBaseParts(baseModel)
@@ -249,7 +268,7 @@ function TutorialCrateController:PlayCrash(uniqueId: string, duration: number, l
 	-- Handed back whatever happened -- a crate destroyed mid-fall never reaches OnLanded
 	task.delay(duration + CratesConfig.METEOR_CAMERA_RELEASE_SLACK, function()
 		cancel()
-		LocalPlayer.CameraMode = Enum.CameraMode.Classic
+		releaseCamera()
 	end)
 end
 

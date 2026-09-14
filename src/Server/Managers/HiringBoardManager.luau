@@ -75,8 +75,19 @@ function HiringBoardManager:_rollWorkers(seed: number): { HiringBoard.Worker }
 	-- No two on one board share a name, though each draws from the pool that suits its own body
 	local used = {}
 
-	for _ = 1, HiringBoard.ENTRY_COUNT do
-		local role = Employees.ROLE_ORDER[rng:NextInteger(1, #Employees.ROLE_ORDER)]
+	-- One of every role on each board, the spare slots drawn at random, then shuffled so none owns a slot
+	local roles = table.clone(Employees.ROLE_ORDER)
+	while #roles < HiringBoard.ENTRY_COUNT do
+		table.insert(roles, Employees.ROLE_ORDER[rng:NextInteger(1, #Employees.ROLE_ORDER)])
+	end
+
+	for i = #roles, 2, -1 do
+		local j = rng:NextInteger(1, i)
+		roles[i], roles[j] = roles[j], roles[i]
+	end
+
+	for index = 1, HiringBoard.ENTRY_COUNT do
+		local role = roles[index]
 		local tier = HiringBoard.GetTierFromId(RandomUtil.GetResultFromWeight(TIER_WEIGHTS, rng))
 		local stars = HiringBoard.RollStars(tier, rng)
 		local body = Employees.BODIES[rng:NextInteger(1, #Employees.BODIES)]

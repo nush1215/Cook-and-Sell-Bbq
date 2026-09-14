@@ -114,28 +114,15 @@ local ContextActionUtility = {}
 --// 𝐒𝐞𝐫𝐯𝐢𝐜𝐞𝐬 //--
 local ContextActionService = game:GetService("ContextActionService")
 local GuiService = game:GetService("GuiService")
-local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local Players = game:GetService("Players")
-
---// 𝐒𝐡𝐚𝐫𝐞𝐝 //--
-local GlobalUtil = require(ReplicatedStorage.Shared.GlobalUtil)
 
 --// 𝐕𝐚𝐫𝐢𝐚𝐛𝐥𝐞𝐬 //--
 --player
 local Player = Players.LocalPlayer
 local PlayerGui = Player:WaitForChild("PlayerGui")
-local TouchGui
-local TouchControlFrame
+-- Nil until Roblox's touch controls build it, the first time the player is on touch
 local JumpButton
-
---mobile
-local isMobile = GlobalUtil.IsTouchOnly()
-if isMobile then
-	TouchGui = PlayerGui:WaitForChild("TouchGui")
-	TouchControlFrame = TouchGui:WaitForChild("TouchControlFrame")
-	JumpButton = TouchControlFrame:WaitForChild("JumpButton")
-end
 
 --{actionName = {Name, Button, Slot, Connections}}
 local Buttons = {}
@@ -304,6 +291,9 @@ end
 
 local function DisableButton(actionName)
 	local data = Buttons[actionName]
+	if not data then
+		return
+	end
 	DisconnectButton(actionName)
 
 	local button = data.Button
@@ -321,7 +311,31 @@ local function FixDefaultJumpButton()
 	uiCorner.CornerRadius = UDim.new(0.5, 0)
 	uiCorner.Parent = JumpButton
 end
-FixDefaultJumpButton() --Little unorganized to call this here but ¯\_(ツ)_/¯
+
+-- Takes the jump button once the touch controls build it and hangs every button off it, to show and hide with it
+local function OnJumpButtonAdded(jumpButton)
+	JumpButton = jumpButton
+	FixDefaultJumpButton()
+
+	for _, data in pairs(Buttons) do
+		data.Button.Parent = JumpButton
+	end
+end
+
+-- Matched by parent too, so an action named "Jump" (whose button is also called JumpButton) isn't taken for Roblox's
+PlayerGui.DescendantAdded:Connect(function(descendant)
+	if descendant.Name == "JumpButton" and descendant.Parent.Name == "TouchControlFrame" then
+		OnJumpButtonAdded(descendant)
+	end
+end)
+
+-- Covers a jump button already built before this module was required
+local touchGui = PlayerGui:FindFirstChild("TouchGui")
+local touchControlFrame = touchGui and touchGui:FindFirstChild("TouchControlFrame")
+local jumpButton = touchControlFrame and touchControlFrame:FindFirstChild("JumpButton")
+if jumpButton then
+	OnJumpButtonAdded(jumpButton)
+end
 
 --// 𝐌𝐨𝐝𝐮𝐥𝐞 𝐕𝐚𝐫𝐢𝐚𝐛𝐥𝐞𝐬 //--
 --Properties
@@ -335,33 +349,30 @@ ContextActionUtility.LocalToolEquipped = ContextActionService.LocalToolEquipped
 ContextActionUtility.LocalToolUnequipped = ContextActionService.LocalToolUnequipped
 
 --// 𝐌𝐨𝐝𝐮𝐥𝐞 𝐅𝐮𝐧𝐜𝐭𝐢𝐨𝐧𝐬 //--
+-- The touch button is made on every device and parented once the jump button exists, so it follows the player onto touch
 function ContextActionUtility:BindAction(actionName, functionToBind, createTouchButton, ...)
 	ContextActionService:BindAction(actionName, functionToBind, false, ...)
-	if createTouchButton and isMobile then
+	if createTouchButton then
 		BindButton(actionName, functionToBind)
 	end
 end
 
 function ContextActionUtility:BindActionAtPriority(actionName, functionToBind, createTouchButton, priorityLevel, ...)
 	ContextActionService:BindAction(actionName, functionToBind, false, priorityLevel, ...)
-	if createTouchButton and isMobile then
+	if createTouchButton then
 		BindButton(actionName, functionToBind)
 	end
 end
 
 function ContextActionUtility:UnbindAction(actionName)
 	ContextActionService:UnbindAction(actionName)
-	if isMobile then
-		UnbindButton(actionName)
-	end
+	UnbindButton(actionName)
 end
 
 --Added functionality: Disconnects events but the button stays. Effects that can be chosen: Shrink alpha, Fade alpha, Darken alpha
 function ContextActionUtility:DisableAction(actionName, effectList)
 	ContextActionService:UnbindAction(actionName)
-	if isMobile then
-		DisableButton(actionName, effectList)
-	end
+	DisableButton(actionName, effectList)
 end
 
 function ContextActionUtility:SetTitle(actionName, title)
