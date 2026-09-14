@@ -162,6 +162,12 @@ their first rather than one who has drifted off, and so leaves alone. Wall-clock
 Wall-clock for the same reason as `LastRichVisit`, and stamped *before* the visit runs, so a long wait
 can't let another be rolled the moment this one leaves.
 
+**`LastWizardVisit`** — when the last wizard was sent. Wall-clock for the same reason as `LastRichVisit`,
+and stamped *before* the visit runs. **0 means the clock hasn't started yet.** The first roll check writes the
+current time instead of reading it as "forever ago", so neither a new player nor a live save reconciled
+onto this key gets a pity wizard on their first check. Reset along with the rest of the sell stall when a
+tutorial restarts.
+
 ## Custom orders
 
 **`LastCustomOrderVisit`** — when the last order was put to the player. Wall-clock rather than

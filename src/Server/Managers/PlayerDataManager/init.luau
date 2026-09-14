@@ -483,18 +483,19 @@ function PlayerDataManager:_setupLeaderstats(player: Player, playerData: any): {
 
 	local connections = {}
 
-	for dataKey, leaderstatSetting in DataSettings.ToLeaderstats do
+	for _, leaderstatSetting in DataSettings.ToLeaderstats do
+		local dataKey = leaderstatSetting.DataKey
 		if not DataSettings.PlayerDataTemplate[dataKey] then
 			warn(`{dataKey} not found in PlayerDataTemplate`)
 			continue
 		end
 
-		local useSuffix = type(leaderstatSetting) == "table" and leaderstatSetting.UseSuffix
+		local useSuffix = leaderstatSetting.UseSuffix
 		-- A Prefix ("$" for currency) forces the string form, since an IntValue can't carry it
-		local prefix = type(leaderstatSetting) == "table" and leaderstatSetting.Prefix or nil
+		local prefix = leaderstatSetting.Prefix
 		local asString = useSuffix or prefix ~= nil
 		local statValue = Instance.new(if asString then "StringValue" else "IntValue")
-		statValue.Name = if type(leaderstatSetting) == "table" then leaderstatSetting.Name else leaderstatSetting
+		statValue.Name = leaderstatSetting.Name
 
 		local function formatStat(value: number)
 			if not asString then

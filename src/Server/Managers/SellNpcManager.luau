@@ -24,6 +24,7 @@ local Structures = require(Shared.Config.Structures)
 local SellNpc = require(Shared.Config.SellNpc)
 local RichNpc = require(Shared.Config.RichNpc)
 local CheckingNpc = require(Shared.Config.CheckingNpc)
+local WizardNpc = require(Shared.Config.WizardNpc)
 local Employees = require(Shared.Config.Employees)
 local CookStates = require(Shared.Config.CookStates)
 local EarlyBoost = require(Shared.Config.EarlyBoost)
@@ -32,8 +33,10 @@ local EarlyBoost = require(Shared.Config.EarlyBoost)
 local RichNpcFolder = ServerStorage.Assets.RichNPC
 local RichUiTemplate = ReplicatedStorage.Assets.UI.RichUI
 local RichParticlesTemplate = ReplicatedStorage.Assets.Particles.RichParticles
+local WizardNpcTemplate = ServerStorage.Assets.Wizard
 
 local RICH_LABEL = `<font color="#ffd400">RICH</font>`
+local WIZARD_LABEL = `<font color="#b57bff">WIZARD</font>`
 
 -- A pool rather than one string, since this fires on every offer until the refusals decay
 local REFUSED_ARRIVAL_TEXTS = {
@@ -67,6 +70,7 @@ local EffectManager
 local BaseManager
 local StatsManager
 local SoundManager
+local BoostManager
 
 -- Sends customer NPCs to a base's sell stand: one visit thread per placed skewer, retrying until it sells
 local SellNpcManager = {
@@ -79,6 +83,12 @@ local SellNpcManager = {
 	OnSaleDeclined = Signal.new(),
 	-- (player, converted, waited) when a checking customer's wait ends, either way
 	OnCheckingVisitEnded = Signal.new(),
+	-- (player, trigger, sinceLast, funnelId) when a wizard sets off; trigger is "Roll", "Pity" or "Forced"
+	OnWizardVisitSent = Signal.new(),
+	-- (player, luck, duration, skewerRecord, funnelId) once a wizard puts its luck offer up
+	OnWizardOfferMade = Signal.new(),
+	-- (player, outcome, luck, duration, skewerValue, funnelId) once per wizard visit; outcome is "Accepted", "Declined", "TimedOut" or "StandEmpty"
+	OnWizardVisitResolved = Signal.new(),
 
 	_npcs = {}, -- [player] = { { npc = Model, tool = Tool }, ... } spawned instances, for cleanup
 	_rng = ServerRandom.MakeRNG("SellNpc"),
@@ -256,7 +266,7 @@ end
 function SellNpcManager:_publishVisit(record, phase: string, fields)
 	local visit = fields or {}
 	visit.Phase = phase
-	visit.Prefix = if record.isRich then "RichNPC" else "NPC"
+	visit.Prefix = if record.isRich then "RichNPC" elseif record.isWizard then "WizardNPC" else "NPC"
 	visit.Variant = record.dialogueVariant
 
 	record.npc:SetAttribute(SellNpc.VISIT_ATTRIBUTE, HttpService:JSONEncode(visit))
@@ -287,8 +297,8 @@ function SellNpcManager:_despawnNpc(player: Player, record)
 		return
 	end
 
-	-- A rich rig is its own model -- pooling it would repaint it as the template for the next customer
-	if record.isRich then
+	-- A rich or wizard rig is its own model -- pooling it would repaint it as the template for the next customer
+	if record.isRich or record.isWizard then
 		record.npc:Destroy()
 	else
 		NpcRig.Release(record.npc)
@@ -337,7 +347,8 @@ end
 -- A customer waiting on an answer that no employee has taken on, for a seller looking for work. Carries the live negotiation state, so the caller can weigh a push without recomputing the price.
 function SellNpcManager:GetPendingOffer(player: Player, employeeUid: string?)
 	for _, record in self._npcs[player] or {} do
-		if not record.offerPending then
+		-- A wizard's luck is the player's own call, and a seller has no price to weigh it on
+		if not record.offerPending or record.isWizard then
 			continue
 		end
 
@@ -712,9 +723,23 @@ function SellNpcManager:_negotiateSale(
 	})
 	self.NpcSayEvent:FireAllClients(npc, `{prefix}PlayerAccepted`)
 
+	self:_eatAndLeave(player, npc, record, humanoid, spawnPart, standPosition, prefix)
+	return true
+end
+
+-- Walks a customer that bought to an eat spot, eats what it holds, then walks it out and despawns it.
+function SellNpcManager:_eatAndLeave(
+	player: Player,
+	npc: Model,
+	record,
+	humanoid: Humanoid,
+	spawnPart: BasePart,
+	standPosition: Vector3,
+	prefix: string
+)
 	NpcRig.WalkTo(humanoid, NpcRig.GetEatPosition(spawnPart, standPosition, self._rng))
 	if npc.Parent == nil then
-		return true
+		return
 	end
 
 	-- Face a random direction while eating, so eaters don't all stare the same way.
@@ -730,7 +755,7 @@ function SellNpcManager:_negotiateSale(
 		task.wait(SellNpc.EAT_DURATION)
 	end
 	if npc.Parent == nil then
-		return true
+		return
 	end
 
 	if record.skewerModel then
@@ -746,7 +771,6 @@ function SellNpcManager:_negotiateSale(
 	NpcRig.StopAnimation(record)
 	NpcRig.WalkTo(humanoid, spawnPart.Position)
 	self:_despawnNpc(player, record)
-	return true
 end
 
 -- Runs one visit with its failure contained, releasing the rig, tool, slot and skewers a throw would strand.
@@ -1026,6 +1050,326 @@ function SellNpcManager:ForceRichVisit(player: Player): (boolean, string?)
 			self:_spawnRichCustomer(player)
 		end)
 	end)
+
+	return true
+end
+
+-- Sends one wizard, which buys a single skewer for a luck boost. No retry -- the roll must come round again.
+function SellNpcManager:_spawnWizardCustomer(player: Player, trigger: string, sinceLast: number)
+	local spawnPart, standPart = NpcRig.GetBaseParts(player)
+	if not spawnPart or not standPart then
+		return
+	end
+
+	local tracked = self._npcs[player]
+	if not tracked then
+		tracked = {}
+		self._npcs[player] = tracked
+	end
+
+	-- The ordinary customers' slot allocator, so the wizard lines up beside them rather than inside them.
+	local slot, standPosition = NpcRig.ClaimStandPosition(player, spawnPart, standPart)
+
+	-- Not pooled -- it's its own character, and NpcRig.Release would repaint it as the template
+	local npc = WizardNpcTemplate:Clone()
+	CollisionManager:SetModelGroup(npc, CollisionManager.NPC)
+
+	-- Whole or not at all: under default mode the tag lands on the client long before the head the billboards hang off
+	npc.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
+	npc.Parent = NpcRig.PoolFolder
+
+	local humanoid = npc:FindFirstChildOfClass("Humanoid")
+
+	-- Tracked before anything yields, so the roll, cleanup and guarded-visit release all see it
+	local record = {
+		npc = npc,
+		tool = nil,
+		slot = slot,
+		isWizard = true,
+		funnelId = HttpService:GenerateGUID(false),
+		thread = coroutine.running(),
+	}
+	table.insert(tracked, record)
+
+	NpcRig.Fade(npc, true, SellNpc.FADE_IN_DURATION)
+
+	local point = NpcRig.RandomPointOn(spawnPart, self._rng)
+	npc:PivotTo(CFrame.lookAt(point + Vector3.new(0, 3, 0), standPosition))
+
+	-- Stamped before it lands, so it arrives with the rig rather than a frame behind it
+	npc:SetAttribute(Structures.OWNER_ATTRIBUTE, player.UserId)
+	npc.Parent = workspace
+
+	-- Server-driven movement, so hand the root to the server rather than a nearby client.
+	local rootPart = npc:FindFirstChild("HumanoidRootPart")
+	if rootPart and not rootPart.Anchored then
+		rootPart:SetNetworkOwner(nil)
+	end
+
+	self.OnWizardVisitSent:Fire(player, trigger, sinceLast, record.funnelId)
+
+	NotificationManager:NotifyNormal(player, {
+		Text = `A {WIZARD_LABEL} has spawned!`,
+		Duration = 3,
+		Sound = "CustomerArrived",
+	})
+
+	NpcRig.WalkTo(humanoid, standPosition)
+	if npc.Parent == nil then
+		return
+	end
+
+	-- The stand was stocked when the roll landed, but can have emptied during the walk
+	local taken = SkewerStandManager:TakeSkewer(player)
+	if not taken then
+		self.OnWizardVisitResolved:Fire(player, "StandEmpty", 0, 0, 0, record.funnelId)
+		NpcRig.WalkTo(humanoid, spawnPart.Position)
+		self:_despawnNpc(player, record)
+		return
+	end
+	record.skewerRecords = { taken }
+	record.tool, record.skewerModel = NpcRig.GiveSkewer(npc, taken)
+
+	NpcRig.PlayAnimation(record, "Inspect", self._rng)
+
+	-- No decide beat -- a walk-off would burn a long roll. Published anyway, since that builds its billboards
+	self:_publishVisit(record, SellNpc.PHASES.Arrived)
+	self.NpcSayEvent:FireAllClients(npc, "WizardNPCArrived")
+	task.wait(self._rng:NextNumber(WizardNpc.APPRAISE_DURATION_MIN, WizardNpc.APPRAISE_DURATION_MAX))
+
+	if npc.Parent == nil then
+		return
+	end
+
+	-- The returned skewer lands on a stand whose visit threads may all have resolved, so one is resent for it
+	if not self:_offerLuckTrade(player, npc, record, humanoid, spawnPart, standPosition) then
+		task.spawn(function()
+			self:_runVisit(player)
+		end)
+	end
+end
+
+-- Offers a luck boost for the skewer the wizard holds, one round with no haggle. Returns false if the skewer went back.
+function SellNpcManager:_offerLuckTrade(
+	player: Player,
+	npc: Model,
+	record,
+	humanoid: Humanoid,
+	spawnPart: BasePart,
+	standPosition: Vector3
+): boolean
+	local taken = record.skewerRecords[1]
+	local skewerValue = StickModel.GetSellValue(taken)
+
+	-- Rounded so the offer, the toast and the boost icon all read the same figure
+	local luck = math.round(self._rng:NextNumber(WizardNpc.LUCK_MIN, WizardNpc.LUCK_MAX) * 100) / 100
+	-- Rounded up to whole minutes, so the offer and toast read "4m" rather than "3m 27s"
+	local duration = math.ceil(self._rng:NextNumber(WizardNpc.DURATION_MIN, WizardNpc.DURATION_MAX) / 60) * 60
+
+	record.offerResponse = nil
+	record.offerPending = true
+	self:_publishVisit(record, SellNpc.PHASES.Offering, { Luck = luck, Duration = duration })
+	self.OnWizardOfferMade:Fire(player, luck, duration, taken, record.funnelId)
+
+	NotificationManager:NotifyNormal(player, {
+		Text = `A {WIZARD_LABEL} is offering luck for your BBQ!`,
+		Duration = 3,
+		Sound = "CustomerArrived",
+	})
+
+	local deadline = os.clock() + WizardNpc.OFFER_TIMEOUT
+	local nudgeAt = os.clock() + SellNpc.OFFER_NUDGE_INTERVAL
+	while record.offerResponse == nil and os.clock() < deadline and npc.Parent ~= nil do
+		if os.clock() >= nudgeAt then
+			nudgeAt = os.clock() + SellNpc.OFFER_NUDGE_INTERVAL
+
+			NotificationManager:NotifyNormal(player, {
+				Text = `The {WIZARD_LABEL} is still waiting!`,
+				Duration = 3,
+				Sound = "CustomerPinged",
+				Effect = "Error",
+			})
+
+			EffectManager:RunEffect({ Type = "Player", Player = player }, "HighlightPulse", {
+				npc,
+				SellNpc.NUDGE_PULSE_COLOR,
+				SellNpc.NUDGE_PULSE_DURATION,
+				SellNpc.NUDGE_PULSE_START_TRANSPARENCY,
+				SellNpc.NUDGE_PULSE_COUNT,
+			})
+		end
+
+		task.wait()
+	end
+	record.offerPending = false
+
+	if npc.Parent == nil then
+		return true
+	end
+
+	self:_publishVisit(record, SellNpc.PHASES.Settled)
+
+	-- No refusal is charged: turning down luck shouldn't price down the next cash offer
+	if record.offerResponse ~= true then
+		local timedOut = record.offerResponse == nil
+		self.OnWizardVisitResolved:Fire(
+			player,
+			if timedOut then "TimedOut" else "Declined",
+			luck,
+			duration,
+			skewerValue,
+			record.funnelId
+		)
+		self.NpcSayEvent:FireAllClients(npc, "WizardNPCPlayerDeclined")
+
+		if timedOut then
+			NotificationManager:NotifyNormal(player, {
+				Text = "The wizard got tired of waiting!",
+				Duration = 3,
+				Sound = "Reject",
+			})
+		end
+
+		task.wait(SellNpc.LEAVE_DELAY)
+		if npc.Parent == nil then
+			return true
+		end
+
+		SkewerStandManager:ReturnSkewers(player, record.skewerRecords)
+		record.skewerRecords = nil
+
+		if record.skewerModel then
+			record.skewerModel:Destroy()
+			record.skewerModel = nil
+		end
+		if record.tool then
+			record.tool:Destroy()
+			record.tool = nil
+		end
+
+		NpcRig.StopAnimation(record)
+		NpcRig.WalkTo(humanoid, spawnPart.Position)
+		self:_despawnNpc(player, record)
+		return false
+	end
+
+	-- The commit point -- clearing after the eat would let a mid-eat leave return what was just paid for
+	local soldRecords = record.skewerRecords
+	record.skewerRecords = nil
+
+	-- GrantBoost carries its own "Luck 1.25x for 4m" toast
+	BoostManager:GrantBoost(player, "Luck", luck, duration)
+	self.OnWizardVisitResolved:Fire(player, "Accepted", luck, duration, skewerValue, record.funnelId)
+
+	-- Still a sale for the stats and rating, just not one that paid cash
+	StatsManager:RecordSaleCompleted(player, soldRecords)
+
+	self.NpcSayEvent:FireAllClients(npc, "WizardNPCPlayerAccepted")
+	self:_eatAndLeave(player, npc, record, humanoid, spawnPart, standPosition, "WizardNPC")
+	return true
+end
+
+-- One pass of the wizard roll: never before MIN_GAP, a chance after it, always by MAX_GAP.
+function SellNpcManager:_rollWizardVisits()
+	for _, player in Players:GetPlayers() do
+		if not validatePlayer(player) then
+			continue
+		end
+
+		-- Not during the tutorial, whose sequence expects one customer per placement and nothing else
+		if self._guaranteed[player] == true then
+			continue
+		end
+
+		-- In their data on the synced clock, so rejoining neither resets the gap nor hands out a fresh one
+		local hasStamp, lastWizardVisit = PlayerDataManager:GetPlayerDataKey(player, "LastWizardVisit"):await()
+		if not hasStamp then
+			continue
+		end
+
+		local now = workspace:GetServerTimeNow()
+
+		-- A zero stamp starts the clock rather than reading as forever ago, or the first check would be a pity visit
+		if lastWizardVisit == 0 then
+			PlayerDataManager:SetPlayerDataKey(player, "LastWizardVisit", now)
+			continue
+		end
+
+		local sinceLast = now - lastWizardVisit
+		if sinceLast < WizardNpc.MIN_GAP then
+			continue
+		end
+
+		-- Read off the tracked customers rather than a flag, so an errored visit can't leave it stuck set
+		local busy = false
+		for _, record in self._npcs[player] or {} do
+			if record.isWizard then
+				busy = true
+				break
+			end
+		end
+		if busy then
+			continue
+		end
+
+		-- The biggest luck boost wins rather than adding, so a wizard now would be paying with nothing
+		if BoostManager:GetBoostMultiplier(player, "Luck") > 1 then
+			continue
+		end
+
+		if SkewerStandManager:GetPlacedSkewerCount(player) == 0 then
+			continue
+		end
+
+		local pity = sinceLast >= WizardNpc.MAX_GAP
+		if not pity and not RandomUtil.RollChance(WizardNpc.SPAWN_CHANCE, self._rng) then
+			continue
+		end
+
+		-- Stamped before the visit, so a slow answer can't let another be rolled the moment this one leaves.
+		PlayerDataManager:SetPlayerDataKey(player, "LastWizardVisit", now)
+
+		task.spawn(function()
+			self:_runGuardedVisit(player, function()
+				self:_spawnWizardCustomer(player, if pity then "Pity" else "Roll", sinceLast)
+			end)
+		end)
+	end
+end
+
+-- Sends a wizard now off the command bar, keeping only the checks that would leave it meaningless.
+function SellNpcManager:ForceWizardVisit(player: Player): (boolean, string?)
+	if not validatePlayer(player) then
+		return false, `{player.Name} has no base to send a customer to.`
+	end
+
+	for _, record in self._npcs[player] or {} do
+		if record.isWizard then
+			return false, `{player.Name} already has a wizard at their stand.`
+		end
+	end
+
+	if SkewerStandManager:GetPlacedSkewerCount(player) == 0 then
+		return false, `{player.Name}'s stand is empty, so there's nothing to buy.`
+	end
+
+	local now = workspace:GetServerTimeNow()
+	local hasStamp, lastWizardVisit = PlayerDataManager:GetPlayerDataKey(player, "LastWizardVisit"):await()
+	local sinceLast = if hasStamp and lastWizardVisit > 0 then now - lastWizardVisit else 0
+
+	-- Stamped as the roll stamps it, but not read, so the command can still be re-run straight away
+	PlayerDataManager:SetPlayerDataKey(player, "LastWizardVisit", now)
+
+	task.spawn(function()
+		self:_runGuardedVisit(player, function()
+			self:_spawnWizardCustomer(player, "Forced", sinceLast)
+		end)
+	end)
+
+	-- The luck gate is being skipped, so say it rather than let a boost that doesn't apply look like a bug
+	if BoostManager:GetBoostMultiplier(player, "Luck") > 1 then
+		return true, `Sent a wizard to {player.Name}. They already have luck active, so a weaker boost won't apply.`
+	end
 
 	return true
 end
@@ -1342,6 +1686,7 @@ function SellNpcManager:OnInit()
 	BaseManager = require(script.Parent.BaseManager)
 	StatsManager = require(script.Parent.StatsManager)
 	SoundManager = require(script.Parent.SoundManager)
+	BoostManager = require(script.Parent.BoostManager)
 end
 
 function SellNpcManager:OnStart()
@@ -1390,6 +1735,14 @@ function SellNpcManager:OnStart()
 		while true do
 			task.wait(CheckingNpc.CHECK_INTERVAL)
 			self:_rollCheckingVisits()
+		end
+	end)
+
+	-- Its own clock, so the wizard's floor and pity pace it rather than the rich or checking cadence
+	task.spawn(function()
+		while true do
+			task.wait(WizardNpc.CHECK_INTERVAL)
+			self:_rollWizardVisits()
 		end
 	end)
 

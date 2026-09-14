@@ -20,6 +20,7 @@ local Structures = require(Shared.Config.Structures)
 local SellNpc = require(Shared.Config.SellNpc)
 local Employees = require(Shared.Config.Employees)
 local NpcDialogue = require(Shared.Config.NpcDialogue)
+local Boosts = require(Shared.Config.Boosts)
 
 -- Modules
 local Modules = script.Parent.Parent.Modules
@@ -212,12 +213,20 @@ function SellNpcController:_showOffer(state, npc: Model, visit)
 
 	local offerFrame = state.offerFrame
 
-	-- From the cook state's own set, so a lowball on a burnt skewer says why; the last line is skipped
-	local amount = `<font color="{OFFER_AMOUNT_COLOR}">${GuiUtil.ConvertNumberWithSuffix(visit.Payout)}</font>`
+	-- A wizard pays in luck, so its offer is the boost it grants rather than a price
+	local amount
+	if visit.Luck then
+		local luck = `<font color="{OFFER_BONUS_COLOR}">{Boosts.GetLabel("Luck", visit.Luck)}</font>`
+		local duration = `<font color="{OFFER_AMOUNT_COLOR}">{GuiUtil.ConvertSecondsToDHMS(visit.Duration)}</font>`
+		amount = `{luck} for {duration}`
+	else
+		-- From the cook state's own set, so a lowball on a burnt skewer says why; the last line is skipped
+		amount = `<font color="{OFFER_AMOUNT_COLOR}">${GuiUtil.ConvertNumberWithSuffix(visit.Payout)}</font>`
 
-	-- Only shown when there's something to show -- "[+0%]" says less than no badge at all
-	if visit.Bonus > 0 then
-		amount ..= ` <font color="{OFFER_BONUS_COLOR}">[+{visit.Bonus}%]</font>`
+		-- Only shown when there's something to show -- "[+0%]" says less than no badge at all
+		if visit.Bonus > 0 then
+			amount ..= ` <font color="{OFFER_BONUS_COLOR}">[+{visit.Bonus}%]</font>`
+		end
 	end
 
 	local category = `{state.dialoguePrefix}Offer`

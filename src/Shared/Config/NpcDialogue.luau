@@ -2045,6 +2045,96 @@ local NpcDialogue = {
 		"You've earned my loyalty",
 	},
 
+	-- The wizard. No cook-state variants -- it's after the trade, not the quality
+
+	-- An entrance rather than a verdict, standing in for the Deciding and Interested beats both
+	WizardNPCArrived = {
+		"The stars said you'd have one",
+		"I smelled this from three realms away",
+		"Ah, a skewer of destiny",
+		"My crystal ball led me here",
+		"Hmm, this one hums with promise",
+		"The runes spoke of your grill",
+		"I sense great fortune in this",
+		"Don't mind the robe, I'm hungry",
+		"A humble wizard needs lunch too",
+		"The omens pointed to your stand",
+		"I foresaw this very skewer",
+		"Coin? No, I deal in fortune",
+	},
+
+	-- The wizard's offer frame line: {amount} is the luck boost, swapped in by the controller
+	WizardNPCOffer = {
+		"This skewer for {amount}?",
+		"I'll trade you {amount} for it",
+		"No coins, but {amount}",
+		"A fair swap: {amount}",
+		"Fortune for food: {amount}",
+		"I can grant you {amount}",
+		"{amount}, sealed with a spell",
+		"How about {amount} instead of cash?",
+		"One skewer, {amount}. Deal?",
+		"My price is {amount}",
+		"Let me enchant you: {amount}",
+		"I pay in luck. {amount}",
+	},
+
+	-- The player turned the trade down.
+	WizardNPCPlayerDeclined = {
+		"The stars will remember this",
+		"Fortune favours the bold, not you",
+		"Very well, I'll vanish then",
+		"A pity, the omens were good",
+		"Your luck stays as it is",
+		"I shall seek a wiser chef",
+		"Hmph, cash-minded mortals",
+		"The runes warned me of this",
+		"So be it, farewell",
+		"Your loss, truly",
+	},
+
+	-- The player took the trade.
+	WizardNPCPlayerAccepted = {
+		"The spell is cast!",
+		"May fortune find you",
+		"Luck be with your rolls",
+		"A wise choice, chef",
+		"Feel that? That's luck",
+		"Your fortunes rise!",
+		"Enchantment complete",
+		"The stars smile on you now",
+		"Go roll something rare",
+		"A pleasure, mortal",
+	},
+
+	-- Eating the skewer it traded luck for.
+	WizardNPCEating = {
+		"Magnificent, even without magic",
+		"No spell could make this better",
+		"This is real sorcery",
+		"My tower has nothing like this",
+		"Worth every ounce of fortune",
+		"Mmm, tastes like prophecy",
+		"The grill is your wand, chef",
+		"Delicious, truly enchanting",
+		"I'll brew a potion of this",
+		"Better than any feast in the realm",
+	},
+
+	-- Heading back out.
+	WizardNPCLeaving = {
+		"Until the stars align again",
+		"I'll return when the moon is right",
+		"Farewell, lucky chef",
+		"Spend that fortune wisely",
+		"Poof... well, walking works too",
+		"The realm awaits",
+		"May your rolls be rare",
+		"I shall wander back someday",
+		"Keep that grill enchanted",
+		"Off to my tower",
+	},
+
 	-- Looking the stand over on the way in, before it turns any of it down
 	CustomNPCInspecting = {
 		"Let me see what you've got",

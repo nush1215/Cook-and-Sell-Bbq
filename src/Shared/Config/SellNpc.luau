@@ -8,7 +8,7 @@ SellNpc.SPAWN_DELAY_MIN = 6
 SellNpc.SPAWN_DELAY_MAX = 12
 
 -- What a guaranteed customer waits: pacing rather than balance, so it's its own number
-SellNpc.GUARANTEED_SPAWN_DELAY = 3
+SellNpc.GUARANTEED_SPAWN_DELAY = 2
 
 -- The floor on the retry wait; REFUSAL_RETRY_DELAY adds to it for a player who's been declining
 SellNpc.RETRY_DELAY_MIN = 4

@@ -107,6 +107,8 @@ return {
 		LastSaleAt = 0,
 		-- When the last checking customer was sent. Wall-clock, so a rejoin can't hand out a fresh one
 		LastCheckingVisit = 0,
+		-- When the last wizard was sent. Wall-clock; 0 means its clock hasn't started, so it isn't a pity visit on join
+		LastWizardVisit = 0,
 
 		-- Custom Orders
 		-- When the last custom order was put to them. Wall-clock, so a rejoin can't hand out a fresh one
@@ -162,8 +164,9 @@ return {
 		RecentSales = {},
 	},
 
+	-- An array so the player list shows stats in this order
 	ToLeaderstats = {
-		Currency = { UseSuffix = true, Name = "Bux", Prefix = "$" },
-		SkewersSold = "Bbq Sold",
+		{ DataKey = "Currency", Name = "Bux", UseSuffix = true, Prefix = "$" },
+		{ DataKey = "SkewersSold", Name = "Bbq Sold" },
 	},
 }

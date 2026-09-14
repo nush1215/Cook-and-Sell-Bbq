@@ -472,6 +472,49 @@ instead, and a haul that opened high has least left to gain — the same way a w
 | `OFFER_CAP_FACTOR` | a lucky haggle pays enormously, every round jumps further | pushing flattens out early |
 | `OFFER_TIMEOUT` | players can wander off and still come back | the stand frees sooner, slow players lose the biggest sale |
 
+## Selling — wizard customers
+
+`Shared/Config/WizardNpc.luau`. The one customer that doesn't pay money. It walks over, takes a single
+skewer, and offers a **Luck boost** for it instead of cash: a multiplier rolled in `LUCK_MIN..LUCK_MAX`
+(1.25–1.5x) lasting `DURATION_MIN..DURATION_MAX` seconds (3–5 minutes). Both are rolled on arrival, so the offer
+shows exact numbers. The player takes it or leaves it. There is no haggle, and a seller employee never
+answers it, since a seller has no price to weigh luck against. Accepting calls `BoostManager:GrantBoost`, which
+supplies the toast and the HUD icon. The skewer still counts as sold for stats and the rating.
+Declining or timing out puts the skewer back and sends an ordinary customer for it. **Declining charges no
+refusal**: turning luck down shouldn't price down the next cash offer.
+
+**Pacing is "random, but not too random."** Every `CHECK_INTERVAL` the server looks at each player, and
+`LastWizardVisit` decides:
+- under `MIN_GAP` since the last visit: never
+- between `MIN_GAP` and `MAX_GAP`: a `SPAWN_CHANCE` roll
+- past `MAX_GAP`: sent without a roll, as a pity visit
+
+At today's numbers (30s, 30%, 5m, 7m), visits land about 6.5 minutes apart on average, and never more
+than 7 minutes apart while its gates are open. The stamp is wall-clock, so a rejoin neither resets the gap nor
+hands out a fresh one. **A zero stamp starts the clock** instead of reading as "forever ago", so a new
+player, or a live player seeing the feature for the first time, doesn't get a pity visit on their first check.
+
+**It never comes while any Luck boost is active.** Boosts don't add together (the biggest one applies), so a
+1.3x arriving under the 1.5x reclaim gift would pay with nothing. The gap keeps running underneath, which
+is why a wizard often turns up soon after a boost ends. It also needs at least one skewer on the stand, and
+stays out of the tutorial.
+
+Luck only moves ingredient rolls, and at this range it moves Epic far more than Legendary (see Luck
+below), so the trade is "one skewer's cash for a few minutes of better Epic odds". `Wizard Luck Used` in
+analytics counts the pulls each boost actually covered. A low number means players take the luck but don't
+roll while it's active, so a longer duration or a lower `MAX_GAP` won't help.
+
+Not simulated offline, same as rich and checking customers.
+
+| Knob | Higher | Lower |
+|---|---|---|
+| `SPAWN_CHANCE` | visits bunch up just after `MIN_GAP` and the pity never fires | most visits are pity visits and it feels scheduled |
+| `MIN_GAP` | a guaranteed quiet stretch, rarer feature | it can chain right after the last one |
+| `MAX_GAP` | long dry streaks are possible | reliable, almost a timer |
+| `LUCK_MAX` | the trade is a no-brainer | barely worth a skewer |
+| `DURATION` | more rolls per boost, and the luck gate holds the next wizard back longer | ends before the player gets to a stand |
+| `OFFER_TIMEOUT` | the skewer sits off the stand longer | a player at the grill misses it |
+
 ## Selling — checking customers
 
 `Shared/Config/CheckingNpc.luau`. The only customer sent *because* there's nothing to sell. Every

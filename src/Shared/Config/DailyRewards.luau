@@ -54,7 +54,7 @@ DailyRewards.RANDOMIZE_AFTER_FIRST_WEEK = false
 
 -- One entry per day in order; the length is the week
 DailyRewards.Days = {
-	{ Type = "Bux", Amount = 1_000 },
+	{ Type = "Bux", Amount = 500 },
 	{ Type = "Crate", Id = "MeatCrate", Amount = 1, Icon = "rbxassetid://115216469222978" },
 	{ Type = "Stick", Id = "GoldStick", Amount = 3 },
 	{ Type = "Worker", Stars = 3 },

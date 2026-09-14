@@ -39,6 +39,8 @@ local AnalyticsManager = {
 	_sessionRolls = {},
 	-- [player] = true once they opened a newly repaired hut this session, so the later steps only count off that open
 	_repairedHutRuns = {},
+	-- [player] = { ExpiresAt, Rolls, Luck } for the wizard boost they took, counting the pulls it covered
+	_wizardLuck = {},
 }
 
 local CustomFields = Enum.AnalyticsCustomFieldKeys
@@ -84,6 +86,28 @@ local function logOrderFunnelStep(player: Player, funnelId: string, stepIndex: n
 			AnalyticsService:LogFunnelStepEvent(player, "Custom Order 1", funnelId, stepIndex, stepName)
 		end)
 	end)
+end
+
+-- Logs one step of a wizard visit's funnel. The id is per-visit, so each wizard is its own run.
+local function logWizardFunnelStep(player: Player, funnelId: string, stepIndex: number, stepName: string)
+	task.spawn(function()
+		pcall(function()
+			AnalyticsService:LogFunnelStepEvent(player, "Wizard Visit 1", funnelId, stepIndex, stepName)
+		end)
+	end)
+end
+
+-- Returns a luck multiplier snapped to the nearest 0.05 as text, so the field breaks down into a few bands.
+local function getLuckBucket(luck: number): string
+	return string.format("%.2f", math.round(luck * 20) / 20)
+end
+
+-- Logs how many pulls a wizard boost covered and clears it; `ending` says whether it ran out or the player left.
+function AnalyticsManager:_logWizardLuckUsed(player: Player, ending: string)
+	local entry = self._wizardLuck[player]
+	self._wizardLuck[player] = nil
+
+	logCustom(player, "Wizard Luck Used", entry.Rolls, ending, getLuckBucket(entry.Luck))
 end
 
 -- Logs one step of the worker hut funnel. It runs once per player, so a repeated step only ever counts the first time.
@@ -295,6 +319,16 @@ function AnalyticsManager:OnStart()
 	-- Off the per-pull signal, or a pull would count once per unlocked stand. One event per session
 	IngredientRollingManager.OnRollPerformed:Connect(function(player)
 		self._sessionRolls[player] = (self._sessionRolls[player] or 0) + 1
+
+		-- A pull after the wizard boost ran out closes its count rather than joining it
+		local wizardLuck = self._wizardLuck[player]
+		if wizardLuck then
+			if workspace:GetServerTimeNow() < wizardLuck.ExpiresAt then
+				wizardLuck.Rolls += 1
+			else
+				self:_logWizardLuckUsed(player, "Expired")
+			end
+		end
 	end)
 	-- Only three fields exist, so payment shares the last with discovery: "Currency", "Currency New", "Robux", "Robux New"
 	IngredientRollingManager.OnIngredientPurchased:Connect(function(player, ingredientId, price, discovered, method)
@@ -376,6 +410,48 @@ function AnalyticsManager:OnStart()
 		if entry.Outcome == "Delivered" then
 			logOrderFunnelStep(player, funnelId, 3, "Delivered")
 		end
+	end)
+	-- Wizard: sent -> offered -> accepted. How it was sent splits the pity from the roll, so the pacing can be read
+	SellNpcManager.OnWizardVisitSent:Connect(function(player, trigger, sinceLast, funnelId)
+		logCustom(player, "Wizard Visit Sent", math.round(sinceLast), trigger)
+		logWizardFunnelStep(player, funnelId, 1, "Arrived")
+	end)
+	SellNpcManager.OnWizardOfferMade:Connect(function(player, luck, duration, skewerRecord, funnelId)
+		logCustom(
+			player,
+			"Wizard Offer Made",
+			luck,
+			getLuckBucket(luck),
+			`{math.round(duration / 60)}m`,
+			StickModel.GetCookStateId(skewerRecord)
+		)
+		logWizardFunnelStep(player, funnelId, 2, "Offered")
+	end)
+	-- The value is the skewer's worth, so the dashboard reads what a boost cost them in cash
+	SellNpcManager.OnWizardVisitResolved:Connect(function(player, outcome, luck, duration, skewerValue, funnelId)
+		logCustom(
+			player,
+			"Wizard Visit Resolved",
+			skewerValue,
+			outcome,
+			getLuckBucket(luck),
+			`{math.round(duration / 60)}m`
+		)
+
+		if outcome ~= "Accepted" then
+			return
+		end
+		logWizardFunnelStep(player, funnelId, 3, "Accepted")
+
+		-- One at a time: the roll never sends a wizard under live luck, so a forced one is all this closes early
+		if self._wizardLuck[player] then
+			self:_logWizardLuckUsed(player, "Replaced")
+		end
+		self._wizardLuck[player] = {
+			ExpiresAt = workspace:GetServerTimeNow() + duration,
+			Rolls = 0,
+			Luck = luck,
+		}
 	end)
 	IndexManager.OnIngredientDiscovered:Connect(function(player, ingredientId)
 		logCustom(player, "Ingredient Discovered", 1, ingredientId, getIngredientTier(ingredientId))
@@ -565,6 +641,15 @@ function AnalyticsManager:OnStart()
 		local rolls = self._sessionRolls[player] or 0
 		self._sessionRolls[player] = nil
 		self._repairedHutRuns[player] = nil
+
+		-- A boost still running when they leave counts down offline, so its pulls are only what this session saw
+		local wizardLuck = self._wizardLuck[player]
+		if wizardLuck then
+			self:_logWizardLuckUsed(
+				player,
+				if workspace:GetServerTimeNow() < wizardLuck.ExpiresAt then "Left" else "Expired"
+			)
+		end
 
 		logCustom(player, "Session Rolls", rolls, getSessionLengthBucket(sessionLength))
 	end)
