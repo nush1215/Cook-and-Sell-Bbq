@@ -65,7 +65,7 @@ EmployeeHut.WORKER_PROMPT_MAX_DISTANCE = 12
 EmployeeHut.SLOTS_UI_NAME = "HutUI"
 
 -- What each slot costs, by slot number. Slot 1 comes with the repair; the length is how many slots there are
-EmployeeHut.SLOT_PRICES = { 0, 50_000, 100_000 }
+EmployeeHut.SLOT_PRICES = { 0, 10_000, 20_000 }
 
 table.freeze(EmployeeHut.SLOT_PRICES)
 
