@@ -26,6 +26,8 @@ local LocalPlayer = Players.LocalPlayer
 -- How long a streamed-in base gets to finish replicating the pieces Base.new indexes (see _addBase).
 local ROLLING_TIMEOUT = 10
 local CHILD_TIMEOUT = 10
+-- Seconds between Robux prompt requests, so a mashed key raises one dialog
+local ROBUX_PROMPT_COOLDOWN = 1
 
 -- Tracks every base's rolling setup, drives their per-frame work, and owns the shared silhouette container the cycles black out under.
 
@@ -35,6 +37,7 @@ local IngredientRollingController = {
 	PurchaseIngredientEvent = Network.Event("PurchaseIngredient"),
 	OnPurchasedEvent = Network.Event("OnIngredientPurchased"),
 	PurchaseAllIngredientsFunction = Network.Function("PurchaseAllIngredients"),
+	PromptIngredientRobuxPurchaseEvent = Network.Event("PromptIngredientRobuxPurchase"),
 
 	-- Fires once per lever pull the server accepted.
 	OnRollPerformed = Signal.new(),
@@ -45,8 +48,10 @@ local IngredientRollingController = {
 	_bases = {}, -- [model: Model] = Base
 	_purchasing = {}, -- [standId] = the ingredient it was showing while a purchase is in flight
 	_purchasingAll = false,
+	_robuxPromptNextAt = 0, -- the clock the next Robux prompt request is allowed at
 
 	_rollLocked = false, -- while true, no base offers its lever (see SetRollLocked)
+	_robuxPurchaseLocked = false, -- while true, no stand shows its Robux buy (see SetRobuxPurchaseLocked)
 
 	-- Every cycling ingredient in the place, under the one Highlight that blacks them out
 	_silhouetteContainer = nil,
@@ -84,6 +89,16 @@ function IngredientRollingController:RequestPurchase(standId: string, ingredient
 
 	self._purchasing[standId] = ingredientId
 	self.PurchaseIngredientEvent:FireServer(standId)
+end
+
+-- Asks the server to raise the Robux product for a stand's ingredient, which is where the stand is remembered.
+function IngredientRollingController:RequestIngredientRobuxPurchase(standId: string)
+	if os.clock() < self._robuxPromptNextAt then
+		return
+	end
+	self._robuxPromptNextAt = os.clock() + ROBUX_PROMPT_COOLDOWN
+
+	self.PromptIngredientRobuxPurchaseEvent:FireServer(standId)
 end
 
 -- Buys every landed ingredient on the owner's stands under one charge.
@@ -140,6 +155,21 @@ function IngredientRollingController:IsRollLocked(): boolean
 	return self._rollLocked
 end
 
+-- Holds every stand's Robux buy off. Set for the tutorial's whole run, like the grill skip.
+function IngredientRollingController:SetRobuxPurchaseLocked(locked: boolean)
+	if self._robuxPurchaseLocked == locked then
+		return
+	end
+
+	self._robuxPurchaseLocked = locked
+	self:RefreshInteractions()
+end
+
+-- Whether the Robux buy is held off. Read by Stand when it works out what to offer.
+function IngredientRollingController:IsRobuxPurchaseLocked(): boolean
+	return self._robuxPurchaseLocked
+end
+
 -- Watches the local character's tools so the lever goes dark as soon as they pick something up.
 function IngredientRollingController:_watchCharacter(character: Model)
 	self._characterCleaner:Clean()
@@ -178,9 +208,8 @@ function IngredientRollingController:_addBase(baseModel: Model)
 	local lever = rollingFolder:WaitForChild("Lever", CHILD_TIMEOUT)
 	local leverHandle = lever and lever:WaitForChild("Handle", CHILD_TIMEOUT)
 	local rollAttachment = lever and lever:WaitForChild("RollAttachment", CHILD_TIMEOUT)
-	local bulkPurchaseAttachment = lever and lever:WaitForChild("BulkPurchaseAttachment", CHILD_TIMEOUT)
 	local standsFolder = rollingFolder:WaitForChild("Stands", CHILD_TIMEOUT)
-	if not leverHandle or not rollAttachment or not bulkPurchaseAttachment or not standsFolder then
+	if not leverHandle or not rollAttachment or not standsFolder then
 		warn(`[IngredientRolling] {baseModel.Name}'s rolling setup is incomplete, it won't render`)
 		return
 	end

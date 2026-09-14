@@ -124,6 +124,7 @@ function TutorialController:Start(variant: string)
 
 	-- Held start to finish: on a shared lock it returned during the very cook it was hidden through
 	GrillerController:SetSkipLocked(true)
+	IngredientRollingController:SetRobuxPurchaseLocked(true)
 
 	-- Shut until the beat that asks for it -- the guaranteed roll burns on the first pull, wherever it lands
 	IngredientRollingController:SetRollLocked(true)
@@ -173,6 +174,7 @@ function TutorialController:Start(variant: string)
 	-- Both held from the top of the run, so they come off here with the HUD
 	GrillStandShopController:SetLocked(false)
 	GrillerController:SetSkipLocked(false)
+	IngredientRollingController:SetRobuxPurchaseLocked(false)
 
 	-- Released here, so the griller beat doesn't have to know about a lock it has no reason to hold
 	StickStandController:SetPlaceLocked(false)

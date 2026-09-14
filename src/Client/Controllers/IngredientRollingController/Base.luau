@@ -41,6 +41,8 @@ local BULK_PROMPT_HOLD = 0.6
 local BULK_PROMPT_KEY = Enum.KeyCode.F
 local BULK_PROMPT_GAMEPAD_KEY = Enum.KeyCode.ButtonY
 local BULK_PROMPT_MIN_INGREDIENTS = 2
+-- Pixels up from the roll prompt they share an attachment with -- one 72px prompt plus a gap
+local BULK_PROMPT_UI_OFFSET = Vector2.new(0, 60)
 
 -- Past the 14 studs the tutorial's pull step treats as arrived, so the prompt is up when it points
 local PROMPT_DISTANCE = 15
@@ -89,7 +91,6 @@ function Base.new(model: Model)
 		_lever = lever,
 		_leverHandle = leverHandle,
 		_rollAttachment = lever.RollAttachment,
-		_bulkPurchaseAttachment = lever.BulkPurchaseAttachment,
 		_leverSpring = leverSpring,
 		_leverRestCFrame = leverRestCFrame,
 		_soundEmitter = soundEmitter,
@@ -328,12 +329,7 @@ function Base:_refreshLeverHighlight()
 	IngredientRollingController = IngredientRollingController or require(script.Parent)
 
 	-- On the cue as well as the prompt -- a lit lever over a shut one sends the player to press nothing
-	if
-		self._rolling
-		or not self:IsOwned()
-		or EquippedItem.GetTool()
-		or IngredientRollingController:IsRollLocked()
-	then
+	if self._rolling or not self:IsOwned() or EquippedItem.GetTool() or IngredientRollingController:IsRollLocked() then
 		self._lever:RemoveTag(Highlights.TAG)
 	else
 		self._lever:AddTag(Highlights.TAG)
@@ -376,7 +372,7 @@ function Base:RefreshInteraction()
 		prompt.RequiresLineOfSight = false
 		prompt.HoldDuration = PROMPT_HOLD
 		prompt.MaxActivationDistance = PROMPT_DISTANCE
-		prompt.ActionText = "Roll Ingredients"
+		prompt.ActionText = "Roll!"
 		prompt.Style = Enum.ProximityPromptStyle.Custom
 		prompt.Parent = self._rollAttachment
 
@@ -386,20 +382,21 @@ function Base:RefreshInteraction()
 			self:RollIngredients()
 		end)
 
-		-- AlwaysShow so it stays up beside any other F prompt nearby
+		-- AlwaysShow so it stacks above the roll prompt rather than one hiding the other
 		local bulkPrompt = Instance.new("ProximityPrompt")
 		bulkPrompt.RequiresLineOfSight = false
 		bulkPrompt.HoldDuration = BULK_PROMPT_HOLD
 		bulkPrompt.MaxActivationDistance = PROMPT_DISTANCE
-		bulkPrompt.ObjectText = "Buy all Ingredients"
+		bulkPrompt.ObjectText = "Buy All"
 		bulkPrompt.KeyboardKeyCode = BULK_PROMPT_KEY
 		bulkPrompt.GamepadKeyCode = BULK_PROMPT_GAMEPAD_KEY
 		bulkPrompt.Exclusivity = Enum.ProximityPromptExclusivity.AlwaysShow
 		bulkPrompt.Style = Enum.ProximityPromptStyle.Custom
+		bulkPrompt.UIOffset = BULK_PROMPT_UI_OFFSET
 		bulkPrompt:SetAttribute("ObjectTextColor", Color3.new(1, 1, 1))
 		bulkPrompt:SetAttribute("ActionTextColor", Colors.Currency)
 		bulkPrompt.Enabled = false
-		bulkPrompt.Parent = self._bulkPurchaseAttachment
+		bulkPrompt.Parent = self._rollAttachment
 
 		self._bulkPrompt = bulkPrompt
 		self._promptCleaner:Add(bulkPrompt)

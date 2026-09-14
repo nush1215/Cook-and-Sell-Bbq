@@ -38,6 +38,7 @@ local IngredientRollingManager = {
 	PurchaseIngredientEvent = Network.Event("PurchaseIngredient"),
 	OnPurchasedEvent = Network.Event("OnIngredientPurchased"),
 	PurchaseAllIngredientsFunction = Network.Function("PurchaseAllIngredients"),
+	PromptIngredientRobuxPurchaseEvent = Network.Event("PromptIngredientRobuxPurchase"),
 
 	-- (player, standId, ingredientId) once per stand on every pull.
 	OnIngredientRolled = Signal.new(),
@@ -57,6 +58,7 @@ local IngredientRollingManager = {
 	_orderRolls = {},
 	-- [player] = { StandId, IngredientId } the open Robux prompt was raised for, so a new pull can't reprice it
 	_pendingRobuxStand = {},
+	_promptingRobux = {}, -- [player] = true across the Robux prompt's read -> prompt window, so a mash raises one
 }
 
 --
@@ -356,9 +358,7 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 				Effect = "Error",
 			})
 
-			-- Which stand is remembered here, since a band is shared and its receipt names only the buyer
-			self._pendingRobuxStand[player] = { StandId = standId, IngredientId = roll.IngredientId }
-			ShopManager:AttemptProductPurchase(player, Ingredients.GetProductStringIdForPrice(ingredient.Price))
+			task.spawn(self.PromptIngredientRobuxPurchase, self, player, standId)
 			return false
 		end
 
@@ -380,6 +380,30 @@ function IngredientRollingManager:PurchaseIngredientFromStand(
 	self:WritePendingRollsToBase(player, data.PendingRolls)
 	self._purchasing[player] = nil
 	return true, discovered
+end
+
+-- Raises the Robux product for a stand's finished roll, remembering the stand so the receipt claims that one.
+function IngredientRollingManager:PromptIngredientRobuxPurchase(player: Player, standId: string)
+	if not validatePlayer(player) or self._promptingRobux[player] then
+		return
+	end
+	self._promptingRobux[player] = true
+
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	local roll = hasData and data.PendingRolls[standId]
+	local ingredient = roll and Ingredients.GetIngredientFromId(roll.IngredientId)
+
+	-- Held to what the client offers: a landed, still-configured roll
+	if
+		ingredient
+		and (workspace:GetServerTimeNow() - roll.RolledAt) >= RollingConfig.GetRollDuration(roll.SpeedLevel)
+	then
+		-- Which stand is remembered here, since a band is shared and its receipt names only the buyer
+		self._pendingRobuxStand[player] = { StandId = standId, IngredientId = roll.IngredientId }
+		ShopManager:AttemptProductPurchase(player, Ingredients.GetProductStringIdForPrice(ingredient.Price))
+	end
+
+	self._promptingRobux[player] = nil
 end
 
 -- Claims every finished pending roll under one charge. Returns the bought ingredient ids and whether any was new, or nil.
@@ -541,6 +565,10 @@ function IngredientRollingManager:OnStart()
 		return self:PurchaseAllIngredientsFromStands(player)
 	end)
 
+	self.PromptIngredientRobuxPurchaseEvent:OnServerEvent(function(player: Player, standId: string)
+		self:PromptIngredientRobuxPurchase(player, standId)
+	end)
+
 	-- The base rebuilds its stands on assignment, so last session's rolls have to be stamped back on.
 	BaseManager.OnBaseAssigned:Connect(function(player: Player)
 		self:RestorePendingRollsToBase(player)
@@ -560,6 +588,7 @@ function IngredientRollingManager:OnStart()
 		self._orderRolls[player] = nil
 		self._forcedTeasers[player] = nil
 		self._pendingRobuxStand[player] = nil
+		self._promptingRobux[player] = nil
 	end)
 end
 

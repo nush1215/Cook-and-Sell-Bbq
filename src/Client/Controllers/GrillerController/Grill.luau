@@ -19,8 +19,6 @@ local GuiUtil = require(Shared.GuiUtil)
 -- Controllers
 local Controllers = script.Parent.Parent
 local SoundController = require(Controllers.SoundController)
-local ShopController = require(Controllers.ShopController)
-local UIController = require(Controllers.UIController)
 
 -- Modules
 local Modules = script.Parent.Parent.Parent.Modules
@@ -41,10 +39,16 @@ local TAKE_PROMPT_DISTANCE = 15
 -- The same E as every other prompt -- OnePerButton means standing close to the skewer wins it
 local TAKE_PROMPT_KEY = Enum.KeyCode.E
 local TAKE_PROMPT_GAMEPAD_KEY = Enum.KeyCode.ButtonY
-local SKIP_COOK_PRODUCT = "SkipCook" -- the Products entry the skip button is priced from and buys
--- A short cook isn't worth buying out of, and an instant offer reads as a shakedown
+-- F rather than E, so it stacks above the take instead of competing with it
+local SKIP_PROMPT_KEY = Enum.KeyCode.F
+local SKIP_PROMPT_GAMEPAD_KEY = Enum.KeyCode.ButtonX
+local SKIP_PROMPT_HOLD = 0.3
+-- Pixels up from the take prompt it shares a part with, matching the lever's bulk buy
+local SKIP_PROMPT_UI_OFFSET = Vector2.new(0, 60)
+-- A warm, saturated gold, so the paid offer stands out from the take
+local SKIP_PROMPT_TEXT_COLOR = Color3.fromRGB(255, 195, 35)
+-- A short cook isn't worth buying out of
 local SKIP_MIN_COOK_TIME = 10 -- seconds of bar below which the skip is never offered
-local SKIP_REVEAL_DELAY = 5 -- seconds into a cook before it is
 -- Matches the PromptSubjectHighlight component's file name, which is what it registers under.
 local PROMPT_HIGHLIGHT_TAG = "PromptSubjectHighlight"
 local GHOST_TRANSPARENCY = 0.3 -- same figure the build ghost uses, so ghosting reads alike everywhere
@@ -211,14 +215,12 @@ function Grill.new(slot: Instance)
 		_prompt = nil,
 		_takeSkewerPrompt = nil,
 		_takeSkewerModel = nil, -- the skewer model the take prompt was built on, so a swap rebuilds it
+		_skipCookPrompt = nil,
 
 		-- The ghost preview; _ghostTool records what it was built from so an unchanged refresh doesn't rebuild
 		_ghostSource = nil,
 		_promptShown = false,
 		_ghostTool = nil,
-
-		-- [id] = true per Robux price already asked for, so an empty lookup isn't retried on every repaint.
-		_requestedPrices = {},
 
 		_cleaner = cleaner,
 		_promptCleaner = cleaner:Construct(Trove),
@@ -565,7 +567,7 @@ function Grill:_showCookingUI()
 	cookingUI.Timer.RichText = true
 	cookingUI.Timer.Visible = false
 
-	-- Left to RefreshInteraction, so the first frame doesn't show a visitor an owner-only offer
+	-- Offered as a prompt stacked on the take now, so the authored button stays down
 	cookingUI.SkipCooking.Visible = false
 
 	-- Adorned to the attachment's part -- an Attachment adornee breaks billboard buttons on touch
@@ -578,20 +580,6 @@ function Grill:_showCookingUI()
 	cookingUI.Parent = getScreenGui()
 
 	self._cookingUICleaner:Add(cookingUI)
-
-	-- On release like every other button; the griller is anchored, so it can't drift out from a finger
-	self._cookingUICleaner:Add(UIController:BindButtonClick(cookingUI.SkipCooking, function()
-		GrillerController = GrillerController or require(script.Parent)
-		GrillerController:RequestSkipCook(self._uid)
-	end, true).Disconnect)
-
-	-- Re-enters RefreshInteraction when the reveal lands; on the bar's cleaner, so ending the cook cancels it
-	local untilReveal = SKIP_REVEAL_DELAY - self:_elapsed()
-	if self._cookTime >= SKIP_MIN_COOK_TIME and untilReveal > 0 then
-		self._cookingUICleaner:Add(task.delay(untilReveal, function()
-			self:RefreshInteraction()
-		end))
-	end
 
 	self._cookingUI = cookingUI
 	self._cookingFillSize = cookingUI.Bar.BarContainer.Bar.Size
@@ -918,22 +906,6 @@ function Grill:Update()
 	end
 end
 
--- A Robux price for a label, "-" until the lookup lands. Asked once per id, on its own thread.
-function Grill:_robuxPriceText(id: string): string
-	local price = ShopController:GetCachedPrice(id)
-
-	if not price and not self._requestedPrices[id] then
-		self._requestedPrices[id] = true
-
-		task.spawn(function()
-			ShopController:GetPrice(id)
-			self:RefreshInteraction()
-		end)
-	end
-
-	return `{GuiUtil.ROBUX_ICON}{price or "-"}`
-end
-
 -- Seats a see-through copy of the held BBQ where the real one would land, rebuilt only when it changes.
 function Grill:_refreshGhost()
 	local tool = if self._promptShown then self._ghostSource else nil
@@ -1013,6 +985,7 @@ function Grill:RefreshInteraction()
 	if takeModel ~= self._takeSkewerModel then
 		self._takeSkewerCleaner:Clean()
 		self._takeSkewerPrompt = nil
+		self._skipCookPrompt = nil
 		self._takeSkewerModel = nil
 
 		-- On a part, not the model -- a BillboardGui can't adorn a Model. Hence the PrimaryPart fallback
@@ -1037,6 +1010,28 @@ function Grill:RefreshInteraction()
 			self._takeSkewerCleaner:Connect(prompt.Triggered, function()
 				GrillerController = GrillerController or require(script.Parent)
 				GrillerController:RequestToggle(self._uid)
+			end)
+
+			-- AlwaysShow so it stacks above the take rather than one hiding the other
+			local skipPrompt = Instance.new("ProximityPrompt")
+			skipPrompt.RequiresLineOfSight = false
+			skipPrompt.Style = Enum.ProximityPromptStyle.Custom
+			skipPrompt.MaxActivationDistance = TAKE_PROMPT_DISTANCE
+			skipPrompt.HoldDuration = SKIP_PROMPT_HOLD
+			skipPrompt.KeyboardKeyCode = SKIP_PROMPT_KEY
+			skipPrompt.GamepadKeyCode = SKIP_PROMPT_GAMEPAD_KEY
+			skipPrompt.Exclusivity = Enum.ProximityPromptExclusivity.AlwaysShow
+			skipPrompt.UIOffset = SKIP_PROMPT_UI_OFFSET
+			skipPrompt.ActionText = "Skip Cooking"
+			skipPrompt:SetAttribute("ActionTextColor", SKIP_PROMPT_TEXT_COLOR)
+			skipPrompt.Enabled = false
+			skipPrompt.Parent = host
+
+			self._skipCookPrompt = skipPrompt
+			self._takeSkewerCleaner:Add(skipPrompt)
+			self._takeSkewerCleaner:Connect(skipPrompt.Triggered, function()
+				GrillerController = GrillerController or require(script.Parent)
+				GrillerController:RequestSkipCook(self._uid)
 			end)
 		elseif takeModel then
 			-- Parts can trail the model under streaming, and this prompt is the only way off the grill, so retry
@@ -1106,18 +1101,11 @@ function Grill:RefreshInteraction()
 	end
 
 	-- Owner only and locked through the tutorial. Not a second stop -- it buys the result outright
-	if self._cookingUI then
-		local skip = self._cookingUI.SkipCooking
-		local canSkip = owned
+	-- Only over a live bar, and held off for the tutorial's whole run
+	if self._skipCookPrompt then
+		self._skipCookPrompt.Enabled = self._cookingUI ~= nil
 			and not GrillerController:IsSkipLocked()
 			and self._cookTime >= SKIP_MIN_COOK_TIME
-			and self:_elapsed() >= SKIP_REVEAL_DELAY
-
-		skip.Visible = canSkip
-		-- Only priced when actually offered -- the lookup is a MarketplaceService round trip.
-		if canSkip then
-			skip.Price.Text = self:_robuxPriceText(SKIP_COOK_PRODUCT)
-		end
 	end
 
 	-- Authored in the place file, so a slot without the cue goes without

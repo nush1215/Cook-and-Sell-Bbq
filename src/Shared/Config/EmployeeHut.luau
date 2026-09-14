@@ -24,9 +24,8 @@ EmployeeHut.STRUCTURE_ID = "RepairedHut"
 -- The attachment under the broken hut's Hitbox the repair prompt hangs off; one parented to a Model never fires
 EmployeeHut.PROMPT_ATTACHMENT = "PromptAttachment"
 
--- The attachments under a repaired hut's Hitbox its storage prompts hang off; one parented to a Model never fires
+-- The attachments under a repaired hut's Hitbox its storage prompts hang off; one parented to a Model never fires. Store all shares the store one's
 EmployeeHut.STORE_ONE_ATTACHMENT = "StoreOneAttachment"
-EmployeeHut.STORE_ALL_ATTACHMENT = "StoreAllAttachment"
 EmployeeHut.VIEW_STORAGE_ATTACHMENT = "ViewStorageAttachment"
 
 -- Where a stored item flies to on its way into the hut
@@ -43,6 +42,8 @@ EmployeeHut.STORAGE_MAX_DISTANCE = 12
 EmployeeHut.STORE_ALL_HOLD_DURATION = 0.5
 EmployeeHut.STORE_ALL_KEY = Enum.KeyCode.F
 EmployeeHut.STORE_ALL_GAMEPAD_KEY = Enum.KeyCode.ButtonY
+-- Pixels up from the store one prompt it shares an attachment with, matching the lever's bulk buy
+EmployeeHut.STORE_ALL_UI_OFFSET = Vector2.new(0, 60)
 
 -- Below this, "all" is just the one the E prompt already stores
 EmployeeHut.STORE_ALL_MIN_AMOUNT = 2

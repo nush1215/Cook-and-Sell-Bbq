@@ -11,6 +11,7 @@ local Spr = require(Packages.Spr)
 local Shared = ReplicatedStorage.Shared
 local RandomUtil = require(Shared.RandomUtil)
 local GuiUtil = require(Shared.GuiUtil)
+local Colors = require(Shared.Colors)
 local Ingredients = require(Shared.Config.Ingredients)
 local Rarity = require(Shared.Config.Rarity)
 local RollingConfig = require(Shared.Config.Rolling)
@@ -18,6 +19,7 @@ local RollingConfig = require(Shared.Config.Rolling)
 -- Controllers
 local EffectController = require(script.Parent.Parent.EffectController)
 local SoundController = require(script.Parent.Parent.SoundController)
+local ShopController = require(script.Parent.Parent.ShopController)
 
 -- Assets
 local Assets = ReplicatedStorage.Assets
@@ -46,6 +48,14 @@ local RESULT_HOVER_SPEED = 3 -- radians/sec the bob cycles
 local RESULT_FLOAT_DELAY = 0.1 -- lets the landing spring settle before the float takes the pivot
 local RESULT_HIGHLIGHT_DELAY = 0.7
 local PROMPT_DISTANCE = 13
+
+-- Shares F with the lever's bulk buy, which is AlwaysShow, so within reach of both one press fires both
+local ROBUX_PROMPT_KEY = Enum.KeyCode.F
+local ROBUX_PROMPT_GAMEPAD_KEY = Enum.KeyCode.DPadUp
+local ROBUX_PROMPT_HOLD = 0.3
+-- Pixels down from the Buy prompt it shares a part with, the same spacing as the other stacks
+local ROBUX_PROMPT_UI_OFFSET = Vector2.new(0, -60)
+local ROBUX_PROMPT_REVEAL_DELAY = 0.25 -- seconds Buy must be up before the Robux buy joins it
 
 -- One rolling stand on a base: cycles ingredients off the server's stamp, lands on the result, and hands it to the buy prompt.
 
@@ -130,8 +140,11 @@ function Stand.new(model: Model, owningBase: any)
 		-- Bumped by anything taking the stand back, so a yielding cycle knows it's been cancelled
 		_rollToken = 0,
 
-		-- The buy prompt, up only on the owner's own stands.
+		-- The buy prompts, up only on the owner's own stands.
 		_prompt = nil,
+		_robuxPrompt = nil,
+		_robuxRevealed = false, -- whether Buy has been showing long enough for the Robux buy to join it
+		_robuxRevealToken = 0, -- bumped on every Buy show/hide, so a stale reveal delay knows to stand down
 
 		_board = board,
 		-- An offset from the base, so the board rides a slot slide. Recaptured at roll start (see PlayRoll)
@@ -263,6 +276,7 @@ function Stand:PlayRoll(ingredientId: string, speedLevel: number?)
 	self._rollCleaner:Clean()
 	self._promptCleaner:Clean()
 	self._prompt = nil
+	self._robuxPrompt = nil
 	self._currentModel = nil
 	self._rollingModel = nil
 	self._resultFloating = false
@@ -452,6 +466,7 @@ function Stand:RefreshInteraction()
 	if not owned then
 		self._promptCleaner:Clean()
 		self._prompt = nil
+		self._robuxPrompt = nil
 
 		if model then
 			model:RemoveTag("PromptSubjectHighlight")
@@ -475,7 +490,63 @@ function Stand:RefreshInteraction()
 			IngredientRollingController = IngredientRollingController or require(script.Parent)
 			IngredientRollingController:RequestPurchase(self._id, self._model:GetAttribute("RolledIngredient"))
 		end)
+
+		local robuxPrompt = Instance.new("ProximityPrompt")
+		robuxPrompt.RequiresLineOfSight = false
+		robuxPrompt.HoldDuration = ROBUX_PROMPT_HOLD
+		robuxPrompt.Style = Enum.ProximityPromptStyle.Custom
+		robuxPrompt.MaxActivationDistance = PROMPT_DISTANCE
+		robuxPrompt.KeyboardKeyCode = ROBUX_PROMPT_KEY
+		robuxPrompt.GamepadKeyCode = ROBUX_PROMPT_GAMEPAD_KEY
+		robuxPrompt.UIOffset = ROBUX_PROMPT_UI_OFFSET
+		robuxPrompt:SetAttribute("ActionTextColor", Colors.Currency)
+		robuxPrompt.Parent = model.PrimaryPart
+
+		self._robuxPrompt = robuxPrompt
+		self._robuxRevealed = false
+		self._promptCleaner:Add(robuxPrompt)
+
+		-- Revealed a beat after Buy shows; the token drops a pending reveal once Buy hides, e.g. walking to the next stand
+		self._promptCleaner:Connect(prompt.PromptShown, function()
+			self._robuxRevealToken += 1
+			local token = self._robuxRevealToken
+
+			self._promptCleaner:Add(task.delay(ROBUX_PROMPT_REVEAL_DELAY, function()
+				if self._robuxRevealToken ~= token or self._robuxPrompt ~= robuxPrompt then
+					return
+				end
+
+				IngredientRollingController = IngredientRollingController or require(script.Parent)
+				self._robuxRevealed = true
+				robuxPrompt.Enabled = not IngredientRollingController:IsRobuxPurchaseLocked()
+			end))
+		end)
+		-- Written directly rather than through RefreshInteraction, which a hide mid-clean would re-enter
+		self._promptCleaner:Connect(prompt.PromptHidden, function()
+			self._robuxRevealToken += 1
+			self._robuxRevealed = false
+			robuxPrompt.Enabled = false
+		end)
+
+		self._promptCleaner:Connect(robuxPrompt.Triggered, function()
+			IngredientRollingController = IngredientRollingController or require(script.Parent)
+			IngredientRollingController:RequestIngredientRobuxPurchase(self._id)
+		end)
+
+		-- "-" until the lookup lands; on the prompt's cleaner, so a stand bought mid-lookup doesn't write a dead one
+		local productId = Ingredients.GetProductStringIdForPrice(self:GetLandedIngredient().Price)
+		local price = ShopController:GetCachedPrice(productId)
+		robuxPrompt.ActionText = `{GuiUtil.ROBUX_ICON}{price or "-"}`
+
+		if not price then
+			self._promptCleaner:Add(task.spawn(function()
+				robuxPrompt.ActionText = `{GuiUtil.ROBUX_ICON}{ShopController:GetPrice(productId)}`
+			end))
+		end
 	end
+
+	IngredientRollingController = IngredientRollingController or require(script.Parent)
+	self._robuxPrompt.Enabled = self._robuxRevealed and not IngredientRollingController:IsRobuxPurchaseLocked()
 
 	-- Held until the landing settles -- two Highlights on one model render in no defined order
 	if self._resultSettled then
@@ -572,6 +643,7 @@ function Stand:Purchase(targetPlayer: Player?)
 	-- The prompt is destroyed below, so drop our handle rather than pointing at one that's flown off.
 	self._promptCleaner:Clean()
 	self._prompt = nil
+	self._robuxPrompt = nil
 
 	model:RemoveTag("PromptSubjectHighlight")
 
@@ -598,6 +670,7 @@ function Stand:Clear()
 	self._promptCleaner:Clean()
 
 	self._prompt = nil
+	self._robuxPrompt = nil
 	self._currentModel = nil
 	self._rollingModel = nil
 	self._rolling = false

@@ -134,12 +134,14 @@ function HutStorage:RefreshPrompt()
 			HutStorageController:RequestStore(self._uid)
 		end)
 
-		local storeAllPrompt = self:_createPrompt(EmployeeHut.STORE_ALL_ATTACHMENT, function()
+		-- Stacked above the store one on its attachment, which works since the two are on different keys
+		local storeAllPrompt = self:_createPrompt(EmployeeHut.STORE_ONE_ATTACHMENT, function()
 			HutStorageController:RequestStore(self._uid, true)
 		end)
 		storeAllPrompt.HoldDuration = EmployeeHut.STORE_ALL_HOLD_DURATION
 		storeAllPrompt.KeyboardKeyCode = EmployeeHut.STORE_ALL_KEY
 		storeAllPrompt.GamepadKeyCode = EmployeeHut.STORE_ALL_GAMEPAD_KEY
+		storeAllPrompt.UIOffset = EmployeeHut.STORE_ALL_UI_OFFSET
 		self._storeAllPrompt = storeAllPrompt
 
 		local viewPrompt = self:_createPrompt(EmployeeHut.VIEW_STORAGE_ATTACHMENT, function()
