@@ -37,7 +37,7 @@ local StickShopToken = Replica.Token("StickShop")
 
 -- Stock is deterministic per window so every server agrees; the Restock product is the one thing that steps this server off it, which is why _stockSeed is tracked here.
 local StickShopManager = {
-	PurchaseStickEvent = Network.Event("PurchaseStick"), -- client -> server (stickId)
+	PurchaseStickEvent = Network.Event("PurchaseStick"), -- client -> server (stickId, buyAll)
 	StickPurchaseResultEvent = Network.Event("StickPurchaseResult"), -- server -> client (success, stickId)
 
 	-- (player, stickId, price, method) on a grant; price is 0 on a Robux buy
@@ -89,8 +89,8 @@ function StickShopManager:RestockShop(player: Player)
 	})
 end
 
--- Buys one stick, authoritative on stock, currency and the grant. Bought is per-player, so one buyer never lowers what another sees.
-function StickShopManager:PurchaseStick(player: Player, stickId: string): boolean
+-- Buys one stick, or with `buyAll` as many of the remaining stock as they can afford. Bought is per-player, so one buyer never lowers what another sees.
+function StickShopManager:PurchaseStick(player: Player, stickId: string, buyAll: boolean?): boolean
 	if not validatePlayer(player) then
 		return false
 	end
@@ -132,7 +132,11 @@ function StickShopManager:PurchaseStick(player: Player, stickId: string): boolea
 		return false
 	end
 
-	local canAfford = CurrencyManager:CanAfford(player, stick.Price)
+	-- Buy-all settles for what they can afford rather than refusing when the whole stock is out of reach
+	local amount = if buyAll then math.min(remaining, math.floor(data.Currency / stick.Price)) else 1
+	local totalPrice = stick.Price * amount
+
+	local canAfford = amount > 0 and CurrencyManager:CanAfford(player, totalPrice)
 	if not canAfford then
 		self._purchasing[player] = nil
 		NotificationManager:NotifyNormal(player, {
@@ -144,16 +148,16 @@ function StickShopManager:PurchaseStick(player: Player, stickId: string): boolea
 		return false
 	end
 
-	CurrencyManager:DeductCurrency(player, stick.Price, "StickPurchase")
-	StickManager:GrantStick(player, stickId)
-	PlayerDataManager:SetPlayerDataKey(player, { "StickShop", "Bought", stickId }, bought + 1)
-	StatsManager:RecordSticksBought(player)
-	self.OnStickPurchased:Fire(player, stickId, stick.Price, "Currency")
+	CurrencyManager:DeductCurrency(player, totalPrice, "StickPurchase")
+	StickManager:GrantStick(player, stickId, amount)
+	PlayerDataManager:SetPlayerDataKey(player, { "StickShop", "Bought", stickId }, bought + amount)
+	StatsManager:RecordSticksBought(player, amount)
+	self.OnStickPurchased:Fire(player, stickId, totalPrice, if buyAll then "CurrencyBuyAll" else "Currency")
 
 	self._purchasing[player] = nil
 
 	NotificationManager:NotifyNormal(player, {
-		Text = `Bought a {stick.Name} Stick`,
+		Text = if amount == 1 then `Bought a {stick.Name} Stick` else `Bought {amount} {stick.Name} Sticks`,
 		Duration = 3,
 		Sound = "Purchase",
 		Effect = "Success",
@@ -215,8 +219,8 @@ function StickShopManager:OnStart()
 		})
 	end)
 
-	self.PurchaseStickEvent:OnServerEvent(function(player: Player, stickId: string)
-		local success = self:PurchaseStick(player, stickId)
+	self.PurchaseStickEvent:OnServerEvent(function(player: Player, stickId: string, buyAll: boolean?)
+		local success = self:PurchaseStick(player, stickId, buyAll == true)
 		self.StickPurchaseResultEvent:FireClient(player, success, stickId)
 	end)
 

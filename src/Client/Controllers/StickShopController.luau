@@ -29,6 +29,7 @@ local PlayerGui = LocalPlayer.PlayerGui
 --
 local TIME_LEFT_ATTRIBUTE = "StickShopTimeLeft"
 local BUY_DEBOUNCE = 0.3 -- client-side only; the server's _purchasing guard is authoritative
+local BUY_ALL_MIN_TOTAL_EARNED = 10_000 -- lifetime bux before Buy All is offered
 
 -- The dev product that re-rolls the shop's stock for the whole server (see StickShopManager:RestockShop).
 local RESTOCK_PRODUCT_ID = "StickShopRestock"
@@ -58,7 +59,7 @@ local COLLAPSE_FREQUENCY = 6
 
 --
 local StickShopController = {
-	PurchaseStickEvent = Network.Event("PurchaseStick"), -- client -> server (stickId)
+	PurchaseStickEvent = Network.Event("PurchaseStick"), -- client -> server (stickId, buyAll)
 	StickPurchaseResultEvent = Network.Event("StickPurchaseResult"), -- server -> client (success, stickId)
 
 	-- (stickId) once the server confirms a purchase went through.
@@ -111,8 +112,8 @@ function StickShopController:GetRemaining(stickId: string): number
 	return stock - (stickShop.Bought[stickId] or 0)
 end
 
--- Requests one of `stickId`; the server validates and answers over StickPurchaseResultEvent.
-function StickShopController:Buy(stickId: string)
+-- Requests one of `stickId`, or with `buyAll` its whole remaining stock; the server answers over StickPurchaseResultEvent.
+function StickShopController:Buy(stickId: string, buyAll: boolean?)
 	if self._buyDebounce then
 		return
 	end
@@ -122,7 +123,7 @@ function StickShopController:Buy(stickId: string)
 		self._buyDebounce = false
 	end)
 
-	self.PurchaseStickEvent:FireServer(stickId)
+	self.PurchaseStickEvent:FireServer(stickId, buyAll)
 end
 
 -- Shuts the shop as Exit does. Public because the tutorial closes it before asking for the top bar behind it.
@@ -146,6 +147,12 @@ function StickShopController:_refreshSelectionButtons()
 	local buttonChoices = self._buttonChoices
 
 	buttonChoices.CurrencyPurchase.Title.Text = `${GuiUtil.ConvertNumberWithSuffix(stick.Price)}`
+
+	-- Kept out of the tutorial, where the spotlight walks them through buying a single stick
+	buttonChoices.CurrencyBuyAllPurchase.Visible = PlayerDataController:GetKey("TutorialCompleted") == true
+		and (PlayerDataController:GetKey("TotalEarned") or 0) >= BUY_ALL_MIN_TOTAL_EARNED
+	buttonChoices.CurrencyBuyAllPurchase.Title.Text =
+		`${GuiUtil.ConvertNumberWithSuffix(stick.Price * math.max(self:GetRemaining(stickId), 0))}`
 
 	local hasProduct = stick.RobuxProductId ~= nil and stick.RobuxProductId ~= 0
 	buttonChoices.RobuxPurchase.Visible = hasProduct
@@ -274,6 +281,12 @@ function StickShopController:_buildRows()
 		end
 	end, true).Disconnect)
 
+	self._uiCleaner:Add(UIController:BindButtonClick(self._buttonChoices.CurrencyBuyAllPurchase, function()
+		if self._selectedStickId then
+			self:Buy(self._selectedStickId, true)
+		end
+	end, true).Disconnect)
+
 	self._uiCleaner:Add(UIController:BindButtonClick(self._buttonChoices.RobuxPurchase, function()
 		local stickId = self._selectedStickId
 		if not stickId then
@@ -396,6 +409,9 @@ function StickShopController:_refreshRows()
 	for stickId, row in self._rows do
 		row.Details.Stock.Text = `x{self:GetRemaining(stickId)} Stock`
 	end
+
+	-- The Buy All total follows the stock, so a restock or purchase re-prices it
+	self:_refreshSelectionButtons()
 end
 
 function StickShopController:OnInit()
