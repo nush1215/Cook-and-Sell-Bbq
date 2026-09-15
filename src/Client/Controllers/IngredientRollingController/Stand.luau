@@ -49,9 +49,9 @@ local RESULT_FLOAT_DELAY = 0.1 -- lets the landing spring settle before the floa
 local RESULT_HIGHLIGHT_DELAY = 0.7
 local PROMPT_DISTANCE = 13
 
--- Shares F with the lever's bulk buy, which is AlwaysShow, so within reach of both one press fires both
+-- Shares F / Triangle with the lever's bulk buy, which is AlwaysShow, so within reach of both one press fires both
 local ROBUX_PROMPT_KEY = Enum.KeyCode.F
-local ROBUX_PROMPT_GAMEPAD_KEY = Enum.KeyCode.DPadUp
+local ROBUX_PROMPT_GAMEPAD_KEY = Enum.KeyCode.ButtonY
 local ROBUX_PROMPT_HOLD = 0.3
 -- Pixels down from the Buy prompt it shares a part with, the same spacing as the other stacks
 local ROBUX_PROMPT_UI_OFFSET = Vector2.new(0, -60)

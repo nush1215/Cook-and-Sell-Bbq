@@ -19,6 +19,8 @@ local ACTIVATION_VERBS = {
 local InputController = {
 	-- (Enum.PreferredInput) whenever the player switches device, such as picking up a pad mid-menu
 	OnPreferredInputChanged = Signal.new(),
+	-- (connected: boolean) whenever a pad is plugged in or the last one is pulled
+	OnGamepadConnectionChanged = Signal.new(),
 }
 
 -- The device the player last used. Read live rather than cached, so it answers before OnInit has run.
@@ -29,6 +31,11 @@ end
 -- Whether the player is on a controller.
 function InputController:IsGamepad(): boolean
 	return UserInputService.PreferredInput == Enum.PreferredInput.Gamepad
+end
+
+-- Whether any pad is plugged in, even one not touched yet. A PC player with a pad keeps KeyboardAndMouse until they press it.
+function InputController:IsGamepadConnected(): boolean
+	return #UserInputService:GetConnectedGamepads() > 0
 end
 
 -- Whether the player is on touch, which is also exactly when Roblox's own touch controls are up.
@@ -54,6 +61,13 @@ end
 function InputController:OnInit()
 	UserInputService:GetPropertyChangedSignal("PreferredInput"):Connect(function()
 		self.OnPreferredInputChanged:Fire(UserInputService.PreferredInput)
+	end)
+
+	UserInputService.GamepadConnected:Connect(function()
+		self.OnGamepadConnectionChanged:Fire(true)
+	end)
+	UserInputService.GamepadDisconnected:Connect(function()
+		self.OnGamepadConnectionChanged:Fire(self:IsGamepadConnected())
 	end)
 end
 

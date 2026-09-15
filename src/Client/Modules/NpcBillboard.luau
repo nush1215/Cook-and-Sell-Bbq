@@ -1,7 +1,6 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ContextActionService = game:GetService("ContextActionService")
-local UserInputService = game:GetService("UserInputService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
@@ -56,10 +55,14 @@ local OFFER_ANSWER_ACTION = "NpcOfferAnswer"
 local OFFER_ACCEPT_KEY = Enum.KeyCode.DPadRight
 local OFFER_DECLINE_KEY = Enum.KeyCode.DPadLeft
 
--- The glyph floats above its button, square against the button's height
-local OFFER_GLYPH_SIZE = UDim2.fromScale(0.6, 0.6)
-local OFFER_GLYPH_POSITION = UDim2.fromScale(0.5, 0)
-local OFFER_GLYPH_ANCHOR = Vector2.new(0.5, 1)
+local OFFER_ACCEPT_IMAGE = "rbxassetid://99781338849146"
+local OFFER_DECLINE_IMAGE = "rbxassetid://140650240692201"
+
+-- Each glyph badges its button's outer top corner, square against the button's height
+local OFFER_GLYPH_SIZE = UDim2.fromScale(0.75, 0.75)
+-- Fractions of the button's width and height kept from the edges; negative pokes it past the corner like a badge
+local OFFER_GLYPH_INSET_X = -0.1
+local OFFER_GLYPH_INSET_Y = -0.15
 
 -- Radians another customer must beat the current one by, so two heads in a queue don't trade the glyphs every frame
 local OFFER_TARGET_HYSTERESIS = math.rad(5)
@@ -103,16 +106,17 @@ local offerTargetConnection: RBXScriptConnection? = nil
 local acceptGlyph: ImageLabel? = nil
 local declineGlyph: ImageLabel? = nil
 
--- One D-pad glyph, built on first use. Never Active, so the click underneath still lands on the button.
-local function createOfferGlyph(): ImageLabel
+-- One D-pad glyph inside its button, in the top-left corner or the top-right. Never Active, so it doesn't eat clicks.
+local function createOfferGlyph(image: string, onRight: boolean): ImageLabel
 	local glyph = Instance.new("ImageLabel")
 	glyph.Name = "GamepadKey"
 	glyph.BackgroundTransparency = 1
+	glyph.Image = image
 	glyph.ScaleType = Enum.ScaleType.Fit
 	glyph.Size = OFFER_GLYPH_SIZE
 	glyph.SizeConstraint = Enum.SizeConstraint.RelativeYY
-	glyph.Position = OFFER_GLYPH_POSITION
-	glyph.AnchorPoint = OFFER_GLYPH_ANCHOR
+	glyph.Position = UDim2.fromScale(if onRight then 1 - OFFER_GLYPH_INSET_X else OFFER_GLYPH_INSET_X, OFFER_GLYPH_INSET_Y)
+	glyph.AnchorPoint = Vector2.new(if onRight then 1 else 0, 0)
 	return glyph
 end
 
@@ -123,12 +127,8 @@ local function setOfferTarget(npc: Model?)
 	end
 	offerTarget = npc
 
-	acceptGlyph = acceptGlyph or createOfferGlyph()
-	declineGlyph = declineGlyph or createOfferGlyph()
-
-	-- Re-read each time, since the glyph set follows whichever pad is in hand
-	acceptGlyph.Image = UserInputService:GetImageForKeyCode(OFFER_ACCEPT_KEY)
-	declineGlyph.Image = UserInputService:GetImageForKeyCode(OFFER_DECLINE_KEY)
+	acceptGlyph = acceptGlyph or createOfferGlyph(OFFER_ACCEPT_IMAGE, true)
+	declineGlyph = declineGlyph or createOfferGlyph(OFFER_DECLINE_IMAGE, false)
 
 	local entry = npc and offers[npc]
 	acceptGlyph.Parent = entry and entry.AcceptButton
@@ -192,9 +192,9 @@ local function onOfferAnswer(_, inputState: Enum.UserInputState, input: InputObj
 	return Enum.ContextActionResult.Sink
 end
 
--- Runs the targeting and the D-pad only while there's an offer up and a pad in hand.
+-- Runs the targeting and the D-pad only while there's an offer up and a pad plugged in.
 local function refreshOfferTargeting()
-	local active = next(offers) ~= nil and InputController:IsGamepad()
+	local active = next(offers) ~= nil and InputController:IsGamepadConnected()
 
 	if active and not offerTargetConnection then
 		ContextActionService:BindAction(OFFER_ANSWER_ACTION, onOfferAnswer, false, OFFER_ACCEPT_KEY, OFFER_DECLINE_KEY)
@@ -207,7 +207,7 @@ local function refreshOfferTargeting()
 	end
 end
 
-InputController.OnPreferredInputChanged:Connect(refreshOfferTargeting)
+InputController.OnGamepadConnectionChanged:Connect(refreshOfferTargeting)
 
 -- Mounts `templateName`'s billboards on the NPC's head and returns the state a caller drives them through, or nil only if the rig left the world before its head arrived. `billboards` is every BillboardGui the template held, by name.
 function NpcBillboard.Attach(npc: Model, templateName: string, dialogueVariant: string?, dialoguePrefix: string)

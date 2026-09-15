@@ -11,8 +11,8 @@ about a pad crosses the wire, since every action a pad takes lands on an event t
 | Right stick | Camera. On a pad the camera is also the pointer, for building and for customers |
 | A | Jumps; clicks whatever the cursor is on |
 | B | Closes the top menu |
-| X | The default ProximityPrompt key: grills, stands, boards, shops |
-| Y | Prompts that share a spot with an X prompt: "Take BBQ" off a grill, "Open Worker Hut" |
+| X (Square) | The default ProximityPrompt key: grills, stands, boards, shops, "Take BBQ" |
+| Y (Triangle) | The prompt stacked above an X one: "Skip Cooking", "Buy All", an ingredient's Robux buy, "Store All" |
 | R2 | Uses the equipped tool: places a structure, arms and takes with the pickup hammer, opens a crate |
 | L2 | Rotates the structure being placed |
 | L1 / R1 | Cycles the hotbar (Satchel) |
@@ -57,8 +57,10 @@ PC art to the game's own R2 / L2 art (set in `BuildController`, not Roblox's per
 
 ## Customers
 
-`NpcBillboard` keeps every answerable offer and, on a pad, targets the customer nearest the middle of the
-screen each frame, drawing the D-pad glyphs on that customer's Accept and Decline only. Turning the camera
+`NpcBillboard` keeps every answerable offer and, while any pad is connected (not just preferred, so a PC player
+who hasn't pressed it yet still sees them), targets the customer nearest the middle of the screen each frame,
+drawing the game's own D-pad glyphs as badges poking past the outer top corner of that customer's Decline (top-left) and Accept
+(top-right) only. Turning the camera
 moves the target. Sell and custom-order customers both register through it. A hidden button (the tutorial
 hides Decline on its one offer; an employee seller hides the whole row) can't be pressed from the pad either.
 

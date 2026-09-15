@@ -38,10 +38,10 @@ local GRILL_PROMPT_HOLD = 0.3
 local TAKE_PROMPT_DISTANCE = 15
 -- The same E as every other prompt -- OnePerButton means standing close to the skewer wins it
 local TAKE_PROMPT_KEY = Enum.KeyCode.E
-local TAKE_PROMPT_GAMEPAD_KEY = Enum.KeyCode.ButtonY
+local TAKE_PROMPT_GAMEPAD_KEY = Enum.KeyCode.ButtonX
 -- F rather than E, so it stacks above the take instead of competing with it
 local SKIP_PROMPT_KEY = Enum.KeyCode.F
-local SKIP_PROMPT_GAMEPAD_KEY = Enum.KeyCode.ButtonX
+local SKIP_PROMPT_GAMEPAD_KEY = Enum.KeyCode.ButtonY
 local SKIP_PROMPT_HOLD = 0.3
 -- Pixels up from the take prompt it shares a part with, matching the lever's bulk buy
 local SKIP_PROMPT_UI_OFFSET = Vector2.new(0, 60)
