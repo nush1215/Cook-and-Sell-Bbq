@@ -58,6 +58,12 @@ function Base.new(model: Model)
 	-- Parked out of the world, keyed by base: they're one player's tutorial cue, and each carries its authored pose
 	local guides = model:FindFirstChild(TUTORIAL_GUIDES_NAME)
 	if guides then
+		-- Authored visible so they can be placed in Studio; the client shows one only while its step runs
+		for _, guide in guides:GetChildren() do
+			guide.Hitbox.Transparency = 1
+			guide.Hitbox.SelectionBox.Visible = false
+		end
+
 		guides.Name = model.Name
 		guides.Parent = getTutorialGuideHolder()
 	end

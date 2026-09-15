@@ -33,6 +33,7 @@ return function(self)
 		Description = `Equip your {self:Emphasize("Stick Stand")}`,
 		Wait = function()
 			while not isEquipped() do
+				self:EquipForGamepad(self:GetStructureTool(CATEGORY))
 				task.wait()
 			end
 		end,
@@ -52,7 +53,10 @@ return function(self)
 	self:AwaitGoal({
 		{
 			Description = `Equip your {self:Emphasize("Stick Stand")}`,
-			Check = isEquipped,
+			Check = function()
+				self:EquipForGamepad(self:GetStructureTool(CATEGORY))
+				return isEquipped()
+			end,
 		},
 	}, {
 		Description = `Place your {self:Emphasize("Stick Stand")} on your plot`,

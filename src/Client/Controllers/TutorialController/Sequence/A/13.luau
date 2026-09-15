@@ -2,6 +2,9 @@
 local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 local GrillerController = require(script.Parent.Parent.Parent.Parent.GrillerController)
 
+-- What the filled-skewer tool is tagged, a BBQ being a loaded stick
+local FILLED_TOOL_TAG = "FilledStickTool"
+
 -- Matches the grill prompts' MaxActivationDistance, so the beat clears where the prompt comes in reach
 local NEAR_DISTANCE = 15
 local BEAM_HIDE_DISTANCE = 15
@@ -29,6 +32,7 @@ return function(self)
 		{
 			Description = `Equip your {self:Emphasize("BBQ")}`,
 			Check = function()
+				self:EquipForGamepad(self:GetBackpackTool(FILLED_TOOL_TAG))
 				return EquippedItem.GetSkewer() ~= nil
 			end,
 		},

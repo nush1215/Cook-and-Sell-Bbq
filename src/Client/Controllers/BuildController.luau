@@ -1149,7 +1149,7 @@ function BuildController:_hookTool(tool: Tool)
 	-- Resolved once -- a tool never changes what it places. Nil leaves it inert rather than erroring
 	local structure = Structures.GetStructureFromId(tool:GetAttribute(STRUCTURE_TOOL_ATTRIBUTE))
 
-	self._characterCleaner:Connect(tool.Equipped, function(mouse: Mouse)
+	local function onEquipped(mouse: Mouse)
 		if isPickup then
 			self:_enterPickup(mouse)
 		elseif structure then
@@ -1160,7 +1160,9 @@ function BuildController:_hookTool(tool: Tool)
 
 		-- So the Destroying below can tell this tool running out from any other tool going away.
 		self._activeTool = tool
-	end)
+	end
+
+	self._characterCleaner:Connect(tool.Equipped, onEquipped)
 
 	self._characterCleaner:Connect(tool.Unequipped, function()
 		self:_exitPlacement()
@@ -1196,6 +1198,11 @@ function BuildController:_hookTool(tool: Tool)
 			self:_pressGuideEntry(GUIDE_PLACE_ENTRY, false)
 		end
 	end)
+
+	-- Equipped by code before the hook landed (the tutorial's pad auto-equip on join), so its Equipped already fired unheard
+	if tool.Parent == LocalPlayer.Character then
+		onEquipped(LocalPlayer:GetMouse())
+	end
 end
 
 -- Watches the backpack for each life's build tools, waited on since a respawn's arrives late.
@@ -1216,9 +1223,13 @@ function BuildController:_watchCharacter()
 		end
 	end)
 
-	for _, child in backpack:GetChildren() do
-		if child:IsA("Tool") then
-			self:_hookTool(child)
+	-- The character too: a tool already taken out never passes through the backpack's ChildAdded
+	local containers = { backpack:GetChildren(), LocalPlayer.Character and LocalPlayer.Character:GetChildren() or {} }
+	for _, children in containers do
+		for _, child in children do
+			if child:IsA("Tool") then
+				self:_hookTool(child)
+			end
 		end
 	end
 end

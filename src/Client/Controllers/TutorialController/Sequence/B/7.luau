@@ -7,6 +7,9 @@ local Ingredients = require(ReplicatedStorage.Shared.Config.Ingredients)
 -- The client's copy of the server's pinned ingredient, so the beat can name what to equip
 local TUTORIAL_INGREDIENT_ID = "Garlic"
 
+-- What IngredientManager tags each ingredient tool it builds
+local INGREDIENT_TOOL_TAG = "IngredientTool"
+
 local NEAR_DISTANCE = 12
 local BEAM_HIDE_DISTANCE = 12
 
@@ -32,6 +35,11 @@ return function(self)
 		{
 			Description = `Equip {ingredientName}`,
 			Check = function()
+				-- The pinned one first, it being what the banner names
+				self:EquipForGamepad(
+					self:GetBackpackTool(INGREDIENT_TOOL_TAG, "IngredientId", TUTORIAL_INGREDIENT_ID)
+						or self:GetBackpackTool(INGREDIENT_TOOL_TAG)
+				)
 				return EquippedItem.GetIngredientId() ~= nil
 			end,
 		},

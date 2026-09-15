@@ -2,6 +2,9 @@
 local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 local StickStandController = require(script.Parent.Parent.Parent.Parent.StickStandController)
 
+-- What StickManager tags the tool it builds off the player's owned count
+local STICK_TOOL_TAG = "StickTool"
+
 local NEAR_DISTANCE = 12
 local BEAM_HIDE_DISTANCE = 12
 
@@ -21,6 +24,7 @@ return function(self)
 		{
 			Description = `Equip your {self:Emphasize("Stick")}`,
 			Check = function()
+				self:EquipForGamepad(self:GetBackpackTool(STICK_TOOL_TAG))
 				return EquippedItem.GetStickId() ~= nil
 			end,
 		},

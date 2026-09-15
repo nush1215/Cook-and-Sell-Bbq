@@ -4,6 +4,9 @@ local HttpService = game:GetService("HttpService")
 local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.EquippedItem)
 local SkewerStandController = require(script.Parent.Parent.Parent.Parent.SkewerStandController)
 
+-- What the filled-skewer tool is tagged, a BBQ being a loaded stick
+local FILLED_TOOL_TAG = "FilledStickTool"
+
 local NEAR_DISTANCE = 12
 local BEAM_HIDE_DISTANCE = 12
 
@@ -24,6 +27,7 @@ return function(self)
 		{
 			Description = `Equip your {self:Emphasize("BBQ")}`,
 			Check = function()
+				self:EquipForGamepad(self:GetBackpackTool(FILLED_TOOL_TAG))
 				return EquippedItem.GetSkewer() ~= nil
 			end,
 		},

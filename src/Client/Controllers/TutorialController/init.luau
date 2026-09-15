@@ -27,6 +27,8 @@ local Assets = ReplicatedStorage.Assets
 local UI = Assets.UI
 
 -- Controllers
+local InputController = require(script.Parent.InputController)
+local CameraController = require(script.Parent.CameraController)
 local PlayerDataController
 local UIController
 local HudController
@@ -65,6 +67,7 @@ local HUD_SPOTLIGHT_PADDING = 12
 
 -- Where the server parks each base's tutorial guides, keyed by base name (see Base.new).
 local GUIDES_FOLDER_NAME = "TutorialGuides"
+local GUIDE_HITBOX_TRANSPARENCY = 0.5
 
 -- The label over a guide, drifting wider than other billboards to catch an eye that doesn't know yet
 local PLACE_HERE_LABEL_NAME = "TutorialPlaceHere"
@@ -132,6 +135,7 @@ function TutorialController:Start(variant: string)
 	-- BaseId lands after the client has built, so say something rather than opening blank
 	self:SetText("Tutorial", "Getting your stall ready...")
 	self:GetBase()
+	self:FaceSpawnBackward()
 
 	-- Back as soon as there's a stall: step 1 asks them to equip a griller off it.
 	InventoryController:ShowInventory()
@@ -232,6 +236,27 @@ function TutorialController:GetBaseIfPresent(): Model?
 	return self.Base
 end
 
+-- Turns the character to face away from PlayerSpawn's front, camera swung behind them, so the run opens looking at the back.
+function TutorialController:FaceSpawnBackward()
+	local character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+	local humanoid = character:WaitForChild("Humanoid")
+	character:WaitForChild("HumanoidRootPart")
+
+	-- Off the spawn's rotation, not the character's, so a player who already turned still ends up facing the back
+	local spawnPart = self:GetBase():WaitForChild("Core"):WaitForChild("PlayerSpawn")
+	local facing = CFrame.new(character:GetPivot().Position) * spawnPart.CFrame.Rotation * CFrame.Angles(0, math.pi, 0)
+	character:PivotTo(facing)
+
+	-- Aligned only once the camera has taken the character, or its own attach would swing it back
+	local camera = workspace.CurrentCamera
+	while camera.CameraSubject ~= humanoid do
+		camera:GetPropertyChangedSignal("CameraSubject"):Wait()
+	end
+	RunService.RenderStepped:Wait()
+
+	CameraController:AlignCameraYawTo(facing.LookVector)
+end
+
 -- One of the player's structures of `category`. BEWARE: blocks until they have one -- steps 1 and 2 are what make that safe.
 function TutorialController:GetStructure(category: string): Model
 	local base = self:GetBase()
@@ -264,6 +289,33 @@ function TutorialController:GetStructureTool(category: string): Tool?
 	end
 
 	return nil
+end
+
+-- The first bagged tool carrying `tag`, narrowed to `attribute` == `value` when given. Re-resolved, the bag being rebuilt each spawn.
+function TutorialController:GetBackpackTool(tag: string, attribute: string?, value: any?): Tool?
+	local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
+	if not backpack then
+		return nil
+	end
+
+	for _, child in backpack:GetChildren() do
+		if child:IsA("Tool") and child:HasTag(tag) and (not attribute or child:GetAttribute(attribute) == value) then
+			return child
+		end
+	end
+
+	return nil
+end
+
+-- On a pad, takes a bagged tool out for them -- an "Equip your" beat is a hotbar hunt a controller has no pointer for.
+function TutorialController:EquipForGamepad(tool: Tool?)
+	local character = LocalPlayer.Character
+	local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+	if not InputController:IsGamepad() or not tool or not humanoid or not tool.Parent:IsA("Backpack") then
+		return
+	end
+
+	humanoid:EquipTool(tool)
 end
 
 -- Logs a funnel step by Key; the server owns the ordering and the names.
@@ -501,6 +553,8 @@ function TutorialController:ShowGuide(name: string): { Destroy: () -> (), Model:
 	end
 
 	guide.Parent = workspace
+	guide.Hitbox.Transparency = GUIDE_HITBOX_TRANSPARENCY
+	guide.Hitbox.SelectionBox.Visible = true
 
 	-- Hung on the guide so it travels with it, bobbed by PartFloat with no spin -- a billboard already faces you
 	local labelTemplate = UI:FindFirstChild(PLACE_HERE_LABEL_NAME)
@@ -526,6 +580,9 @@ function TutorialController:ShowGuide(name: string): { Destroy: () -> (), Model:
 			if label then
 				label:Destroy()
 			end
+
+			guide.Hitbox.Transparency = 1
+			guide.Hitbox.SelectionBox.Visible = false
 
 			-- Parked, not destroyed -- the reparent was local, so destroying would cost a second run its guide
 			guide.Parent = baseGuides
