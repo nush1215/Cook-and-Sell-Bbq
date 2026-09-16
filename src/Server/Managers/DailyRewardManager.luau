@@ -40,6 +40,31 @@ local DailyRewardManager = {
 	_claiming = {}, -- [player] = true, held across the read -> write yield window
 }
 
+-- Grants one Reward entry, a Bux one logged under `source`. A Worker hires `candidate`, the card picked for it. Also the daily quest board's grant.
+function DailyRewardManager:GrantReward(
+	player: Player,
+	reward: DailyRewards.Reward,
+	source: string,
+	candidate: FreeWorkers.Candidate?
+)
+	if reward.Type == "Bux" then
+		-- Boosts skipped: the tile advertises a fixed number, as a Bux pack's card does
+		CurrencyManager:IncrementCurrency(player, reward.Amount, source, true)
+	elseif reward.Type == "Crate" then
+		CrateManager:GrantCrate(player, reward.Id, reward.Amount)
+	elseif reward.Type == "Stick" then
+		StickManager:GrantStick(player, reward.Id, reward.Amount)
+	elseif reward.Type == "Structure" then
+		-- Owned rather than placed, as a shop buy lands, so where it goes is theirs to choose
+		BuildManager:GrantStructure(player, reward.Id, reward.Amount)
+	else
+		EmployeeManager:HireEmployee(player, candidate.Role, candidate.Body, candidate.Stars, {
+			Name = candidate.Name,
+			Cosmetics = candidate.Cosmetics,
+		})
+	end
+end
+
 -- Hands over the reward that's up, authoritative on whether it's unlocked and on what it is. A worker day's three are re-rolled here off the same seed the client drew them from, so only the pick's slot comes over.
 function DailyRewardManager:ClaimDailyReward(player: Player, slotIndex: number?): boolean
 	-- Reading their data yields, so without this guard two rapid presses could both pass before either writes
@@ -81,22 +106,9 @@ function DailyRewardManager:ClaimDailyReward(player: Player, slotIndex: number?)
 	PlayerDataManager:SetPlayerDataKey(player, "LastDailyRewardClaim", now)
 	PlayerDataManager:SetPlayerDataKey(player, "DailyRewardStreak", claimedCount + 1)
 
-	if reward.Type == "Bux" then
-		-- Boosts skipped: the tile advertises a fixed number, as a Bux pack's card does
-		CurrencyManager:IncrementCurrency(player, reward.Amount, "DailyReward", true)
-	elseif reward.Type == "Crate" then
-		CrateManager:GrantCrate(player, reward.Id, reward.Amount)
-	elseif reward.Type == "Stick" then
-		StickManager:GrantStick(player, reward.Id, reward.Amount)
-	elseif reward.Type == "Structure" then
-		-- Owned rather than placed, as a shop buy lands, so where it goes is theirs to choose
-		BuildManager:GrantStructure(player, reward.Id, reward.Amount)
-	else
-		EmployeeManager:HireEmployee(player, candidate.Role, candidate.Body, candidate.Stars, {
-			Name = candidate.Name,
-			Cosmetics = candidate.Cosmetics,
-		})
+	self:GrantReward(player, reward, "DailyReward", candidate)
 
+	if candidate then
 		-- These three are spent, so their faces go rather than stand in for the next worker day's
 		local portraits = player.PlayerGui:FindFirstChild(DailyRewards.PORTRAIT_FOLDER)
 		if portraits then

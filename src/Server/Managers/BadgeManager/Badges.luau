@@ -15,6 +15,7 @@ local SellNpcManager = require(Managers.SellNpcManager)
 -- Shared
 local Shared = ReplicatedStorage.Shared
 local StickModel = require(Shared.StickModel)
+local Rating = require(Shared.Config.Rating)
 
 type ToAwardCallback = (player: Player, badgeKey: string, dontAnnounce: boolean?) -> ()
 
@@ -78,6 +79,23 @@ local function onCookStateSold(badgeKey: string, cookStateId: string)
 	end
 end
 
+-- An overall star rating milestone listener, off the attribute RatingManager mirrors so it follows every re-score.
+local function onRatingReached(badgeKey: string, threshold: number)
+	return function(toAwardCallback: ToAwardCallback)
+		checkEveryPlayer(function(player: Player)
+			local function check()
+				local stars = player:GetAttribute(Rating.OVERALL_ATTRIBUTE)
+				if stars and stars >= threshold then
+					toAwardCallback(player, badgeKey)
+				end
+			end
+
+			player:GetAttributeChangedSignal(Rating.OVERALL_ATTRIBUTE):Connect(check)
+			check()
+		end)
+	end
+end
+
 local Badges = {}
 
 Badges.Data = {
@@ -135,6 +153,24 @@ Badges.Data = {
 		Key = "SellCharredBbq",
 		BadgeId = 1569963788552987,
 		OnInitCallback = onCookStateSold("SellCharredBbq", "Charred"),
+	},
+	{
+		Name = "Reach a 3 Star Rating",
+		Key = "Reach3StarRating",
+		BadgeId = 3904514068152521,
+		OnInitCallback = onRatingReached("Reach3StarRating", 3),
+	},
+	{
+		Name = "Reach a 4 Star Rating",
+		Key = "Reach4StarRating",
+		BadgeId = 2055019994388100,
+		OnInitCallback = onRatingReached("Reach4StarRating", 4),
+	},
+	{
+		Name = "Reach a 5 Star Rating",
+		Key = "Reach5StarRating",
+		BadgeId = 1101516124149,
+		OnInitCallback = onRatingReached("Reach5StarRating", 5),
 	},
 } :: { Badge }
 

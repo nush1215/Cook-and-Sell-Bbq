@@ -53,6 +53,11 @@ return {
 		-- When the last was claimed, absolute on workspace:GetServerTimeNow(); 0 is never, which reads as unlocked
 		LastDailyRewardClaim = 0,
 
+		-- Daily Quests
+		-- The board, rolled RESET_INTERVAL after the last. Count seeds the roll and the worker cards; StartedAt 0 reads as due
+		-- Quests carry their own Target, so a retune can't move a board mid-day -- see docs/player-data.md
+		DailyQuests = { Count = 0, StartedAt = 0, Quests = {}, Reward = false, RewardClaimed = false },
+
 		-- Ingredient Rolling
 		Ingredients = {}, -- [ingredientId] = amount owned
 		-- Each stand's last unclaimed pull, held with no expiry. SpeedLevel is stamped on the roll, not read live

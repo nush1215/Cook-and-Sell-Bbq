@@ -441,6 +441,30 @@ handover and destroyed at the claim.
 Neither key is in `TutorialManager`'s `PROGRESS_RESET_KEYS`: the manager refuses a claim before
 `TutorialCompleted`, so there is never a tutorial-time claim for the wipe to undo.
 
+## Daily quests
+
+**`DailyQuests`**: the player's quest board, `{ Count, StartedAt, Quests, Reward, RewardClaimed }`.
+
+- **`Count`**: how many boards they've been rolled. Seeds the roll and the worker reward's three faces through `Config.DailyQuests.GetSeed`. That seed is offset half a stride from the daily rewards' seed, so the two never share faces.
+- **`StartedAt`**: when the board was rolled, absolute on `workspace:GetServerTimeNow()`. The next board rolls `RESET_INTERVAL` after it, counted per player the way daily rewards are. The template's `0` reads as long past, so the first roll needs no special case.
+- **`Quests`**: a dense list of `{ Id, Target, Progress, Claimed }` in tile order (Easy, Medium, Hard). It is dense rather than keyed because a DataStore hands integer keys back as strings.
+  - `Target` is copied off the pool at the roll, so retuning a quest can't move a board that's already live.
+  - `Id` is how the quest's Title and Type are looked up, so a pool entry's Id must never change.
+- **`Reward`**: the board reward, rolled with the quests and saved rather than derived, for the same retune reason. The template's `false` stands in for "never rolled".
+- **`RewardClaimed`**: whether that reward has been handed over.
+
+**Rolling.** `DailyQuestManager:RollDailyQuestsIfDue` rolls the first board once `TutorialCompleted` flips, and then on the base handover and on a per-player `task.delay` to the reset. Nothing polls. A lapsed board is settled before it's replaced:
+- every finished, unclaimed quest's Bux is paid;
+- a fully finished board's unclaimed reward is granted too. A worker reward hires one of its three candidates, picked off the old seed.
+
+The new board is written **before** any grant, since a grant can yield. Progress that lands after a board's reset time is dropped rather than counted toward it.
+
+**Claiming.** `ClaimDailyQuest` stamps `Claimed` before paying `QUEST_REWARD`, as a redeemed code does.
+- Claiming the last quest grants a crate reward on the spot.
+- A worker reward waits on a pick off its cards (`ClaimDailyQuestReward`). Only the slot crosses the wire, as the daily rewards' worker days do. Its portraits are baked into a disabled `DailyQuestWorkerPortraits` ScreenGui on handover and destroyed at the claim or the reset.
+
+The key isn't in `TutorialManager`'s `PROGRESS_RESET_KEYS`: no board exists before `TutorialCompleted`, so there's no tutorial-time progress for the wipe to undo.
+
 ## Tutorial
 
 **`TutorialCompleted`** — the onboarding runs once. Leaving before finishing wipes gameplay progress on the

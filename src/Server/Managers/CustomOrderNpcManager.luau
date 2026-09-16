@@ -62,7 +62,7 @@ local CustomOrderNpcManager = {
 	OnCustomOrderOffered = Signal.new(),
 	-- (player, order, funnelId) once they take it on
 	OnCustomOrderAccepted = Signal.new(),
-	-- (player, entry, funnelId) once an order resolves, however it went. The same record StatsManager banks.
+	-- (player, entry, funnelId, delivered?) once an order resolves, however it went. The same record StatsManager banks, plus the skewer handed over.
 	OnCustomOrderResolved = Signal.new(),
 
 	_npcs = {}, -- [player] = { record, ... } spawned instances, for cleanup
@@ -461,7 +461,7 @@ function CustomOrderNpcManager:_recordOutcome(player: Player, record, outcome: s
 	PlayerDataManager:SetPlayerDataKey(player, { "ActiveCustomOrders", record.funnelId }, nil)
 
 	StatsManager:RecordCustomOrderResolved(player, entry)
-	self.OnCustomOrderResolved:Fire(player, entry, record.funnelId)
+	self.OnCustomOrderResolved:Fire(player, entry, record.funnelId, delivered)
 end
 
 -- What a hand-over is worth: the quote graded by how much of the recipe landed and how it cooked.

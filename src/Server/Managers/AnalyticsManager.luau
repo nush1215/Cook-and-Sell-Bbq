@@ -32,6 +32,7 @@ local EmployeeHutManager
 local FreeWorkersManager
 local OfflineEarningManager
 local DailyRewardManager
+local DailyQuestManager
 
 -- The one place AnalyticsService is spoken to: subscribes to every manager's signals and turns each into an event. Every call is spawned and pcall'd, so it can't block or error gameplay.
 local AnalyticsManager = {
@@ -57,6 +58,7 @@ local SOURCE_TRANSACTION_TYPES = {
 	SauceDispenserUpgrade = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	BuxPack = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	DailyReward = Enum.AnalyticsEconomyTransactionType.TimedReward.Name,
+	DailyQuest = Enum.AnalyticsEconomyTransactionType.TimedReward.Name,
 }
 
 -- Fires a custom event behind spawn and pcall, so analytics never blocks or errors gameplay.
@@ -283,6 +285,7 @@ function AnalyticsManager:OnInit()
 	FreeWorkersManager = require(script.Parent.FreeWorkersManager)
 	OfflineEarningManager = require(script.Parent.OfflineEarningManager)
 	DailyRewardManager = require(script.Parent.DailyRewardManager)
+	DailyQuestManager = require(script.Parent.DailyQuestManager)
 end
 
 function AnalyticsManager:OnStart()
@@ -614,6 +617,22 @@ function AnalyticsManager:OnStart()
 				AnalyticsService:LogFunnelStepEvent(player, "Daily Rewards 1", nil, day, `Claimed Day {day}`)
 			end)
 		end)
+	end)
+
+	-- By quest and difficulty, so a quest nobody finishes stands out from its tier; the Bux land as economy events of their own
+	DailyQuestManager.OnDailyQuestClaimed:Connect(function(player, quest)
+		logCustom(player, "Daily Quest Claimed", 1, quest.Id, quest.Difficulty)
+	end)
+	-- Split on whether it was claimed or paid out at a reset, which is a board finished but never visited
+	DailyQuestManager.OnDailyQuestBoardCompleted:Connect(function(player, reward, settledAtReset)
+		logCustom(
+			player,
+			"Daily Quest Board Completed",
+			1,
+			reward.Type,
+			if reward.Type == "Worker" then `{reward.Stars} Star` else reward.Id,
+			if settledAtReset then "Reset" else "Claimed"
+		)
 	end)
 
 	-- The viewer's rating rides a field rather than the value, so opens break down by band; the second splits their own panel from a visit
