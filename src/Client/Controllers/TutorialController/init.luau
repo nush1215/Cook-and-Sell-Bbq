@@ -65,6 +65,16 @@ local PROMPT_HIGHLIGHT_TAG = "PromptSubjectHighlight"
 -- Padding around a spotlit HUD button, in pixels. Shared with the hotbar slot cue.
 local HUD_SPOTLIGHT_PADDING = 12
 
+-- The down arrow bobbing over a spotlit hotbar slot. Scale is of the slot's width; gap and amplitude are pixels
+local SLOT_ARROW_IMAGE = "rbxassetid://121406419675661"
+local SLOT_ARROW_COLOR = Color3.fromRGB(255, 40, 40)
+local SLOT_ARROW_SCALE = 1.4
+local SLOT_ARROW_GAP = 4
+local SLOT_ARROW_BOB_AMPLITUDE = 10
+local SLOT_ARROW_BOB_SPEED = 6
+-- Above the spotlight's dim (5), hint (11) and off-screen arrow (12)
+local SLOT_ARROW_ZINDEX = 13
+
 -- Where the server parks each base's tutorial guides, keyed by base name (see Base.new).
 local GUIDES_FOLDER_NAME = "TutorialGuides"
 local GUIDE_HITBOX_TRANSPARENCY = 0.5
@@ -615,9 +625,36 @@ function TutorialController:SpotlightHotbarSlot(resolveTool: () -> Tool?): { Des
 	local spotlight = self:GetSpotlight()
 	local currentFrame
 
-	local heartbeat = RunService.Heartbeat:Connect(function()
+	-- In the spotlight's own container, so it draws over the dim in the same screen space the hole is placed in
+	local arrow = Instance.new("ImageLabel")
+	arrow.Name = "HotbarSlotArrow"
+	arrow.Image = SLOT_ARROW_IMAGE
+	arrow.ImageColor3 = SLOT_ARROW_COLOR
+	arrow.BackgroundTransparency = 1
+	arrow.ScaleType = Enum.ScaleType.Fit
+	arrow.AnchorPoint = Vector2.new(0.5, 1)
+	arrow.ZIndex = SLOT_ARROW_ZINDEX
+	arrow.Visible = false
+	arrow.Parent = spotlight.container
+
+	local clock = 0
+	local heartbeat = RunService.Heartbeat:Connect(function(dt)
 		local tool = resolveTool()
 		local frame = tool and InventoryController:GetSlotFrame(tool)
+		arrow.Visible = frame ~= nil
+
+		-- Every frame, since the slot shifts as the bar lays out and the bob never stops
+		if frame then
+			clock += dt * SLOT_ARROW_BOB_SPEED
+			local size = frame.AbsoluteSize.X * SLOT_ARROW_SCALE
+			local bob = (math.sin(clock) + 1) / 2 * SLOT_ARROW_BOB_AMPLITUDE
+			arrow.Size = UDim2.fromOffset(size, size)
+			arrow.Position = UDim2.fromOffset(
+				frame.AbsolutePosition.X + frame.AbsoluteSize.X / 2,
+				frame.AbsolutePosition.Y - HUD_SPOTLIGHT_PADDING - SLOT_ARROW_GAP - bob
+			)
+		end
+
 		if frame == currentFrame then
 			return
 		end
@@ -637,6 +674,7 @@ function TutorialController:SpotlightHotbarSlot(resolveTool: () -> Tool?): { Des
 	return {
 		Destroy = function()
 			heartbeat:Disconnect()
+			arrow:Destroy()
 			spotlight:Hide()
 		end,
 	}
