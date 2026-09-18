@@ -385,9 +385,9 @@ function BaseManager:PlaceStructureOnBase(
 	end
 
 	rotation = math.floor(rotation) % 4
-	local footprintX, footprintZ = Structures.GetFootprint(structure, rotation)
+	local candidate = { Type = structureType, CellX = cellX, CellZ = cellZ, Rotation = rotation }
 
-	if not base:IsBlockFree(cellX, cellZ, footprintX, footprintZ, data.Structures, data.Plots, data.HutRepaired) then
+	if not base:IsBlockFree(candidate, data.Structures, data.Plots, data.HutRepaired) then
 		self._purchasing[player] = nil
 		return false
 	end
@@ -517,16 +517,13 @@ function BaseManager:ReclaimStrandedStructures(player: Player)
 
 	for _, uid in uids do
 		local placed = data.Structures[uid]
-		local structure = Structures.GetStructureFromId(placed.Type)
 
 		-- One the config no longer has takes up no cells, and the pickup can't hand it back either
-		if not structure then
+		if not Structures.GetStructureFromId(placed.Type) then
 			continue
 		end
 
-		local footprintX, footprintZ = Structures.GetFootprint(structure, placed.Rotation)
-
-		if base:IsBlockFree(placed.CellX, placed.CellZ, footprintX, footprintZ, kept, data.Plots, data.HutRepaired) then
+		if base:IsBlockFree(placed, kept, data.Plots, data.HutRepaired) then
 			kept[uid] = placed
 			continue
 		end
@@ -534,8 +531,7 @@ function BaseManager:ReclaimStrandedStructures(player: Player)
 		table.insert(stranded, {
 			Uid = uid,
 			-- Which of the two reasons to name below; IsBlockFree folds them into one answer
-			TookHutCells = hutBlock ~= nil
-				and Structures.Overlaps(hutBlock, placed.CellX, placed.CellZ, footprintX, footprintZ),
+			TookHutCells = hutBlock ~= nil and Structures.Overlaps(hutBlock, placed),
 		})
 	end
 

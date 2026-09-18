@@ -2,6 +2,7 @@
 return {
 
 	Currency = Color3.fromRGB(0, 255, 0),
+	Gems = Color3.fromRGB(170, 255, 255),
 
 	-- Rarity colours by tier word, so a Rare stick and a Rare ingredient match. Ingredients show odds instead
 	Common = {

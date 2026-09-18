@@ -41,12 +41,18 @@ export type Structure = {
 	-- layered over the sizzle, not replacing it, and riding the same fade
 	CookInstability: number?, -- how far this grill's cook rate swings either side of 1, or nil for steady.
 	-- Costs no cook time -- it removes the ability to time the window, not to reach it. Held under MAX_INSTABILITY
+	CustomerPayoutMultiplier: number?, -- table-only: what a custom order seated here pays, times its graded payout
+	RichChanceBonus: number?, -- table-only: added per placed copy to CustomOrderNpc.RICH_CHANCE, out of 100
 	Footprint: Footprint?, -- grid cells occupied; derived from the model's Hitbox when absent
+	Flat: boolean?, -- lies on the ground like a path: it only blocks other Flat pieces, so anything builds over it
 	Model: Model, -- not authored below, back-filled from Assets.Structures
 	FootprintX: number, -- not authored below, resolved once at load (see the back-fill loop)
 	FootprintZ: number,
 	SizeX: number, -- likewise; the template's Hitbox dimensions in studs, where the footprint above is
 	SizeZ: number, -- the same thing rounded to whole cells
+	Blocks: { [number]: { GridUtil.Rect } }, -- not authored below; [rotation] = the cells it blocks, from its
+	-- footprint's min corner. The whole footprint, or only each leg's cells when it has several Hitboxes
+	SeatCount: number, -- not authored below; how many children its Seats folder has, 0 for anything without one
 }
 
 -- A structure as player data holds it: which kind, and which cell of the base it stands on.
@@ -67,6 +73,14 @@ local WARNING_COLOR = "#ff7272"
 -- Matches the tag read on the BBQ itself; written out rather than required off Config.Mutations
 local GOLDEN_COLOR = "#ffcd41" -- Mutations.Golden.Color
 local SHOCKED_COLOR = "#78cdff" -- Mutations.Shocked.Color
+
+-- Shared by each cosmetic family, so every size of one path reads as the same material
+local DIRT_TEXT_COLOR = Color3.fromRGB(170, 120, 70)
+local DIRT_STROKE_COLOR = Color3.fromRGB(55, 38, 20)
+local STONE_TEXT_COLOR = Color3.fromRGB(175, 175, 185)
+local STONE_STROKE_COLOR = Color3.fromRGB(50, 50, 58)
+local WOOD_TEXT_COLOR = Color3.fromRGB(200, 150, 90)
+local WOOD_STROKE_COLOR = Color3.fromRGB(58, 43, 25)
 
 --
 local Structures = {}
@@ -216,13 +230,315 @@ Structures.Data = {
 		Rarity = "Common",
 		Restockable = false,
 	},
+
+	--------------------- [[[ COSMETICS ]]] ---------------------
+	-- Purely visual, so they need no code. Cost, Icon, Rarity and Restockable are placeholders until the cosmetics shop lands
+	{
+		Id = "SmallDirtPath",
+		Name = "Small Dirt Path",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "A patch of packed dirt. Anything can be built on top of it",
+		Icon = "",
+		TextColor = DIRT_TEXT_COLOR,
+		StrokeColor = DIRT_STROKE_COLOR,
+		Rarity = "Common",
+		Restockable = false,
+		Flat = true,
+	},
+
+	{
+		Id = "MediumDirtPath",
+		Name = "Medium Dirt Path",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "A patch of packed dirt. Anything can be built on top of it",
+		Icon = "",
+		TextColor = DIRT_TEXT_COLOR,
+		StrokeColor = DIRT_STROKE_COLOR,
+		Rarity = "Common",
+		Restockable = false,
+		Flat = true,
+	},
+
+	{
+		Id = "LongDirtPath",
+		Name = "Long Dirt Path",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "A long strip of packed dirt. Anything can be built on top of it",
+		Icon = "",
+		TextColor = DIRT_TEXT_COLOR,
+		StrokeColor = DIRT_STROKE_COLOR,
+		Rarity = "Common",
+		Restockable = false,
+		Flat = true,
+	},
+
+	{
+		Id = "LargeDirtPath",
+		Name = "Large Dirt Path",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "A wide patch of packed dirt. Anything can be built on top of it",
+		Icon = "",
+		TextColor = DIRT_TEXT_COLOR,
+		StrokeColor = DIRT_STROKE_COLOR,
+		Rarity = "Common",
+		Restockable = false,
+		Flat = true,
+	},
+
+	{
+		Id = "BigDirtPath",
+		Name = "Big Dirt Path",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "A big patch of packed dirt. Anything can be built on top of it",
+		Icon = "",
+		TextColor = DIRT_TEXT_COLOR,
+		StrokeColor = DIRT_STROKE_COLOR,
+		Rarity = "Common",
+		Restockable = false,
+		Flat = true,
+	},
+
+	{
+		Id = "SmallStonePath",
+		Name = "Small Stone Path",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "A few laid stones. Anything can be built on top of it",
+		Icon = "",
+		TextColor = STONE_TEXT_COLOR,
+		StrokeColor = STONE_STROKE_COLOR,
+		Rarity = "Uncommon",
+		Restockable = false,
+		Flat = true,
+	},
+
+	{
+		Id = "MediumStonePath",
+		Name = "Medium Stone Path",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "A laid stone path. Anything can be built on top of it",
+		Icon = "",
+		TextColor = STONE_TEXT_COLOR,
+		StrokeColor = STONE_STROKE_COLOR,
+		Rarity = "Uncommon",
+		Restockable = false,
+		Flat = true,
+	},
+
+	{
+		Id = "LongStonePath",
+		Name = "Long Stone Path",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "A long laid stone path. Anything can be built on top of it",
+		Icon = "",
+		TextColor = STONE_TEXT_COLOR,
+		StrokeColor = STONE_STROKE_COLOR,
+		Rarity = "Uncommon",
+		Restockable = false,
+		Flat = true,
+	},
+
+	{
+		Id = "LargeStonePath",
+		Name = "Large Stone Path",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "A wide laid stone path. Anything can be built on top of it",
+		Icon = "",
+		TextColor = STONE_TEXT_COLOR,
+		StrokeColor = STONE_STROKE_COLOR,
+		Rarity = "Uncommon",
+		Restockable = false,
+		Flat = true,
+	},
+
+	{
+		Id = "BigStonePath",
+		Name = "Big Stone Path",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "A big laid stone path. Anything can be built on top of it",
+		Icon = "",
+		TextColor = STONE_TEXT_COLOR,
+		StrokeColor = STONE_STROKE_COLOR,
+		Rarity = "Uncommon",
+		Restockable = false,
+		Flat = true,
+	},
+
+	{
+		Id = "SmallFence",
+		Name = "Small Fence",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "Keeps your BBQ spot looking tidy",
+		Icon = "",
+		TextColor = WOOD_TEXT_COLOR,
+		StrokeColor = WOOD_STROKE_COLOR,
+		Rarity = "Common",
+		Restockable = false,
+	},
+
+	{
+		Id = "MediumFence",
+		Name = "Medium Fence",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "Keeps your BBQ spot looking tidy",
+		Icon = "",
+		TextColor = WOOD_TEXT_COLOR,
+		StrokeColor = WOOD_STROKE_COLOR,
+		Rarity = "Common",
+		Restockable = false,
+	},
+
+	{
+		Id = "LongFence",
+		Name = "Long Fence",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "Keeps your BBQ spot looking tidy",
+		Icon = "",
+		TextColor = WOOD_TEXT_COLOR,
+		StrokeColor = WOOD_STROKE_COLOR,
+		Rarity = "Common",
+		Restockable = false,
+	},
+
+	{
+		Id = "HangingLight",
+		Name = "Hanging Light",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "A warm glow for late night grilling",
+		Icon = "",
+		TextColor = Color3.fromRGB(255, 215, 110),
+		StrokeColor = Color3.fromRGB(90, 70, 20),
+		Rarity = "Rare",
+		Restockable = false,
+	},
+
+	{
+		Id = "PicnicParasol",
+		Name = "Picnic Parasol",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "Shade for your customers. Build under it",
+		Icon = "",
+		TextColor = Color3.fromRGB(255, 120, 120),
+		StrokeColor = Color3.fromRGB(80, 30, 30),
+		Rarity = "Rare",
+		Restockable = false,
+	},
+
+	{
+		Id = "LargeCanopy",
+		Name = "Large Canopy",
+		Category = "Cosmetics",
+		Cost = 0,
+		Description = "A big roof over your stall. Only the legs take up room, so build right under it",
+		Icon = "",
+		TextColor = Color3.fromRGB(120, 200, 255),
+		StrokeColor = Color3.fromRGB(25, 60, 90),
+		Rarity = "Epic",
+		Restockable = false,
+	},
+
+	--------------------- [[[ TABLES ]]] ---------------------
+	-- Where custom order customers sit to wait and eat. More seats bring them faster; see docs/balance.md
+	{
+		Id = "SmallWoodenTable",
+		Name = "Small Wooden Table",
+		Category = "Tables",
+		Cost = 0,
+		Description = "A seat for your custom order customers to wait and eat at",
+		Icon = "",
+		TextColor = WOOD_TEXT_COLOR,
+		StrokeColor = WOOD_STROKE_COLOR,
+		Rarity = "Common",
+		Restockable = false,
+	},
+
+	{
+		Id = "MediumWoodenTable",
+		Name = "Medium Wooden Table",
+		Category = "Tables",
+		Cost = 0,
+		Description = "Seats for your custom order customers to wait and eat at",
+		Icon = "",
+		TextColor = WOOD_TEXT_COLOR,
+		StrokeColor = WOOD_STROKE_COLOR,
+		Rarity = "Common",
+		Restockable = false,
+	},
+
+	{
+		Id = "LargeWoodenTable",
+		Name = "Large Wooden Table",
+		Category = "Tables",
+		Cost = 0,
+		Description = "Plenty of seats. More seats bring custom orders in faster",
+		Icon = "",
+		TextColor = WOOD_TEXT_COLOR,
+		StrokeColor = WOOD_STROKE_COLOR,
+		Rarity = "Uncommon",
+		Restockable = false,
+	},
+
+	{
+		Id = "CircularTable",
+		Name = "Circular Table",
+		Category = "Tables",
+		Cost = 0,
+		Description = "Seats for your custom order customers. More seats bring them in faster",
+		Icon = "",
+		TextColor = WOOD_TEXT_COLOR,
+		StrokeColor = WOOD_STROKE_COLOR,
+		Rarity = "Uncommon",
+		Restockable = false,
+	},
+
+	{
+		Id = "FancyTable",
+		Name = "Fancy Table",
+		Category = "Tables",
+		Cost = 0,
+		Description = `Attracts <font color="{VALUE_COLOR}">RICH</font> custom order customers`,
+		Icon = "",
+		TextColor = Color3.fromRGB(200, 140, 255),
+		StrokeColor = Color3.fromRGB(60, 30, 90),
+		Rarity = "Epic",
+		Restockable = false,
+		RichChanceBonus = 15,
+	},
+
+	{
+		Id = "GoldenTable",
+		Name = "Golden Table",
+		Category = "Tables",
+		Cost = 0,
+		Description = `Customers seated here pay <font color="{VALUE_COLOR}">+20%</font>`,
+		Icon = "",
+		TextColor = Color3.fromRGB(255, 205, 65),
+		StrokeColor = Color3.fromRGB(90, 70, 15),
+		Rarity = "Legendary",
+		Restockable = false,
+		CustomerPayoutMultiplier = 1.2,
+	},
 }
 
 -- Made by the base rather than authored, so adding a base needs nothing done to it
 Structures.FOLDER_NAME = "Structures"
 
 -- Studs per grid cell. A coarser grid is easier to place onto and blockier about what fits.
-Structures.CELL_SIZE = 2
+Structures.CELL_SIZE = 1
 
 -- How far above its cell a fresh structure appears before springing down; see docs/balance.md
 Structures.PLACE_DROP_HEIGHT = 6
@@ -230,7 +546,7 @@ Structures.PLACE_DROP_HEIGHT = 6
 -- How long the server waits before settling its own copy, the drop being the client's to play
 Structures.PLACE_SETTLE_TIME = 3
 
--- The attributes every placed copy wears; the cell four let a client work out whether a spot is free
+-- The attributes every placed copy wears; type, cells and rotation let a client work out whether a spot is free
 Structures.UID_ATTRIBUTE = "Uid"
 Structures.OWNER_ATTRIBUTE = "OwnerUserId"
 
@@ -239,17 +555,66 @@ Structures.TYPE_ATTRIBUTE = "StructureType"
 
 Structures.CELL_X_ATTRIBUTE = "CellX"
 Structures.CELL_Z_ATTRIBUTE = "CellZ"
-Structures.FOOTPRINT_X_ATTRIBUTE = "FootprintX"
-Structures.FOOTPRINT_Z_ATTRIBUTE = "FootprintZ"
+Structures.ROTATION_ATTRIBUTE = "Rotation"
 
--- Authored as a direct child of a structure template, named here so measurer and reader can't drift
+-- Authored as direct children of a structure template, named here so measurer and reader can't drift
 Structures.HITBOX_NAME = "Hitbox"
 
--- The box a structure is measured against: its Hitbox, else its bounding box. See docs/balance.md.
+-- An optional model of parts players walk through rather than bump into, like a canopy
+Structures.ROOF_NAME = "Roof"
+
+-- A table's folder of Seats, each one a customer's place at it
+Structures.SEATS_NAME = "Seats"
+
+-- Slack in cells, so a leg flush with a cell edge doesn't spill into the next cell off float noise
+local LEG_EDGE_SLACK = 1e-3
+
+-- Every Hitbox directly under a structure. Several are legs: each blocks its own cells, and their combined box is the footprint.
+function Structures.GetHitboxes(instance: Instance): { BasePart }
+	local hitboxes = {}
+
+	for _, child in instance:GetChildren() do
+		if child.Name == Structures.HITBOX_NAME and child:IsA("BasePart") then
+			table.insert(hitboxes, child)
+		end
+	end
+
+	return hitboxes
+end
+
+-- A part's centre and half-size along `frame`'s axes, so a part turned inside the model still measures right.
+local function getExtentsIn(frame: CFrame, part: BasePart): (Vector3, Vector3)
+	local relative = frame:ToObjectSpace(part.CFrame)
+	local size = part.Size
+
+	local half = Vector3.new(
+		math.abs(relative.XVector.X) * size.X + math.abs(relative.YVector.X) * size.Y + math.abs(relative.ZVector.X) * size.Z,
+		math.abs(relative.XVector.Y) * size.X + math.abs(relative.YVector.Y) * size.Y + math.abs(relative.ZVector.Y) * size.Z,
+		math.abs(relative.XVector.Z) * size.X + math.abs(relative.YVector.Z) * size.Y + math.abs(relative.ZVector.Z) * size.Z
+	) / 2
+
+	return relative.Position, half
+end
+
+-- The box a structure is measured against: its Hitbox, the box around all of them, else its bounding box. See docs/balance.md.
 local function getStructureBounds(instance: Instance): (CFrame, Vector3)
-	local hitbox = instance:FindFirstChild(Structures.HITBOX_NAME)
-	if hitbox and hitbox:IsA("BasePart") then
-		return hitbox.CFrame, hitbox.Size
+	local hitboxes = Structures.GetHitboxes(instance)
+
+	if #hitboxes == 1 then
+		return hitboxes[1].CFrame, hitboxes[1].Size
+	elseif #hitboxes > 1 then
+		-- Along the first leg's axes, the others being authored square to it
+		local frame = hitboxes[1].CFrame
+		local minCorner = Vector3.one * math.huge
+		local maxCorner = -Vector3.one * math.huge
+
+		for _, hitbox in hitboxes do
+			local centre, half = getExtentsIn(frame, hitbox)
+			minCorner = minCorner:Min(centre - half)
+			maxCorner = maxCorner:Max(centre + half)
+		end
+
+		return frame * CFrame.new((minCorner + maxCorner) / 2), maxCorner - minCorner
 	end
 
 	if instance:IsA("Model") then
@@ -259,6 +624,48 @@ local function getStructureBounds(instance: Instance): (CFrame, Vector3)
 	end
 
 	return instance:GetPivot(), Vector3.zero
+end
+
+-- The cells a leg touches, from the unturned footprint's min corner. Nil for one wholly outside it.
+local function getLegRect(boundsCFrame: CFrame, leg: BasePart, footprintX: number, footprintZ: number): GridUtil.Rect?
+	local centre, half = getExtentsIn(boundsCFrame, leg)
+
+	local centreX = centre.X / Structures.CELL_SIZE + footprintX / 2
+	local centreZ = centre.Z / Structures.CELL_SIZE + footprintZ / 2
+	local cellsX = half.X / Structures.CELL_SIZE
+	local cellsZ = half.Z / Structures.CELL_SIZE
+
+	-- Outward, so any cell a leg reaches into is blocked
+	local rect = {
+		MinX = math.max(0, math.floor(centreX - cellsX + LEG_EDGE_SLACK)),
+		MinZ = math.max(0, math.floor(centreZ - cellsZ + LEG_EDGE_SLACK)),
+		MaxX = math.min(footprintX, math.ceil(centreX + cellsX - LEG_EDGE_SLACK)),
+		MaxZ = math.min(footprintZ, math.ceil(centreZ + cellsZ - LEG_EDGE_SLACK)),
+	}
+
+	if rect.MaxX <= rect.MinX or rect.MaxZ <= rect.MinZ then
+		return nil
+	end
+
+	return rect
+end
+
+-- Turns an unturned footprint's rect `rotation` quarter-turns, the same way GetPlacementPivot turns the model.
+local function rotateRect(rect: GridUtil.Rect, footprintX: number, footprintZ: number, rotation: number): GridUtil.Rect
+	if rotation == 1 then
+		return { MinX = rect.MinZ, MinZ = footprintX - rect.MaxX, MaxX = rect.MaxZ, MaxZ = footprintX - rect.MinX }
+	elseif rotation == 2 then
+		return {
+			MinX = footprintX - rect.MaxX,
+			MinZ = footprintZ - rect.MaxZ,
+			MaxX = footprintX - rect.MinX,
+			MaxZ = footprintZ - rect.MinZ,
+		}
+	elseif rotation == 3 then
+		return { MinX = footprintZ - rect.MaxZ, MinZ = rect.MinX, MaxX = footprintZ - rect.MinZ, MaxZ = rect.MaxX }
+	end
+
+	return rect
 end
 
 -- Resolves each entry's template and cell footprint once. Snaps to the nearest whole cell, not up.
@@ -275,12 +682,17 @@ for index = #Structures.Data, 1, -1 do
 
 	structure.Model = model
 
-	if not model:FindFirstChild(Structures.HITBOX_NAME) then
+	local seats = model:FindFirstChild(Structures.SEATS_NAME)
+	structure.SeatCount = if seats then #seats:GetChildren() else 0
+
+	local hitboxes = Structures.GetHitboxes(model)
+
+	if #hitboxes == 0 then
 		warn(`Structure {structure.Id} has no {Structures.HITBOX_NAME} part, falling back to its bounding box`)
 	end
 
 	-- The unrounded dimensions, for anything measuring against the world rather than the grid
-	local _, size = getStructureBounds(model)
+	local boundsCFrame, size = getStructureBounds(model)
 
 	structure.SizeX = size.X
 	structure.SizeZ = size.Z
@@ -291,6 +703,34 @@ for index = #Structures.Data, 1, -1 do
 	else
 		structure.FootprintX = math.max(1, math.round(structure.SizeX / Structures.CELL_SIZE))
 		structure.FootprintZ = math.max(1, math.round(structure.SizeZ / Structures.CELL_SIZE))
+	end
+
+	local rects = {}
+
+	-- Legs block only their own cells, so the space between them stays buildable
+	if #hitboxes > 1 then
+		for _, leg in hitboxes do
+			local rect = getLegRect(boundsCFrame, leg, structure.FootprintX, structure.FootprintZ)
+			if rect then
+				table.insert(rects, rect)
+			end
+		end
+	end
+
+	if #rects == 0 then
+		rects = { { MinX = 0, MinZ = 0, MaxX = structure.FootprintX, MaxZ = structure.FootprintZ } }
+	end
+
+	structure.Blocks = {}
+
+	for rotation = 0, 3 do
+		local rotated = {}
+
+		for _, rect in rects do
+			table.insert(rotated, rotateRect(rect, structure.FootprintX, structure.FootprintZ, rotation))
+		end
+
+		structure.Blocks[rotation] = rotated
 	end
 end
 
@@ -349,24 +789,40 @@ function Structures.BlocksOverlap(
 	return aX < bX + bFootprintX and bX < aX + aFootprintX and aZ < bZ + bFootprintZ and bZ < aZ + aFootprintZ
 end
 
--- Whether a placed structure blocks these cells, its footprint derived from type and rotation.
-function Structures.Overlaps(
-	placed: PlacedStructure,
-	cellX: number,
-	cellZ: number,
-	footprintX: number,
-	footprintZ: number
-): boolean
-	local structure = Structures.GetStructureFromId(placed.Type)
+-- Whether two placed structures block a shared cell, block by block. Flat pieces only ever meet other Flat pieces.
+function Structures.Overlaps(a: PlacedStructure, b: PlacedStructure): boolean
+	local structureA = Structures.GetStructureFromId(a.Type)
+	local structureB = Structures.GetStructureFromId(b.Type)
 
 	-- Dropped at load, so older data can name it; it has no model either, so it blocks nothing
-	if not structure then
+	if not structureA or not structureB then
 		return false
 	end
 
-	local placedX, placedZ = Structures.GetFootprint(structure, placed.Rotation)
+	if (structureA.Flat == true) ~= (structureB.Flat == true) then
+		return false
+	end
 
-	return Structures.BlocksOverlap(cellX, cellZ, footprintX, footprintZ, placed.CellX, placed.CellZ, placedX, placedZ)
+	for _, rectA in structureA.Blocks[a.Rotation] do
+		for _, rectB in structureB.Blocks[b.Rotation] do
+			if
+				Structures.BlocksOverlap(
+					a.CellX + rectA.MinX,
+					a.CellZ + rectA.MinZ,
+					rectA.MaxX - rectA.MinX,
+					rectA.MaxZ - rectA.MinZ,
+					b.CellX + rectB.MinX,
+					b.CellZ + rectB.MinZ,
+					rectB.MaxX - rectB.MinX,
+					rectB.MaxZ - rectB.MinZ
+				)
+			then
+				return true
+			end
+		end
+	end
+
+	return false
 end
 
 -- The pivot seating `model` centred and flush on the block, turned `rotation` quarter-turns, by its box.

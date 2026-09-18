@@ -92,14 +92,16 @@ local HIDE_HUD_FOR_UI = {
 	},
 }
 
--- Frames that come down on their own while a UI is open. The shop keeps Currency, which is what a Bux browser is watching
+-- Frames that come down on their own while a UI is open. The shop keeps Currency, which is what a Bux browser is watching; nothing there costs Gems
 local HIDE_IN_BOTTOM_LEFT = {
 	ShopUI = {
 		"FriendBoost",
+		"Gems",
 	},
 
 	HireEmployeeUI = {
 		"FriendBoost",
+		"Gems",
 	},
 }
 

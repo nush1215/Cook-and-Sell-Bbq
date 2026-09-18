@@ -3,6 +3,9 @@
 --
 local RichNpc = {}
 
+-- How a rich customer is named in toasts, shared by the stand's and the custom order's
+RichNpc.LABEL = `<font color="#ffd400">RICH</font>`
+
 -- Sweep interval and per-player chance out of 100; with COOLDOWN these set how often a rich one turns up
 RichNpc.CHECK_INTERVAL = 10
 RichNpc.SPAWN_CHANCE = 60

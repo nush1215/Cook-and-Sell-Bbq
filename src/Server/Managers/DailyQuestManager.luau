@@ -457,13 +457,17 @@ function DailyQuestManager:OnStart()
 	end)
 
 	-- A delivered order is a customer served too, so its skewer counts toward the sale quests as well
-	CustomOrderNpcManager.OnCustomOrderResolved:Connect(function(player, entry, _, delivered)
+	CustomOrderNpcManager.OnCustomOrderResolved:Connect(function(player, entry, _, delivered, isRich)
 		if entry.Outcome ~= "Delivered" then
 			return
 		end
 
 		self:ProgressDailyQuestsFromSale(player, { delivered })
 		self:ProgressDailyQuestType(player, "DeliverCustomOrders", 1)
+
+		if isRich then
+			self:ProgressDailyQuestType(player, "ServeRichCustomer", 1)
+		end
 
 		if entry.Matched == entry.Slots and entry.Extras == 0 and entry.CookState == "Perfect" then
 			self:ProgressDailyQuestType(player, "PerfectCustomOrders", 1)

@@ -16,6 +16,7 @@ local Spr = require(Packages.Spr)
 local Shared = ReplicatedStorage.Shared
 local GuiUtil = require(Shared.GuiUtil)
 local RandomUtil = require(Shared.RandomUtil)
+local Colors = require(Shared.Colors)
 
 -- Local Player
 local LocalPlayer = Players.LocalPlayer
@@ -40,19 +41,46 @@ local CURRENCY_POP_UPS = {
 	},
 }
 
+-- The HUD counters, Bux first: frame under BottomLeft, profile key, "+X" template under CurrencyUI, figure prefix, gain colour
+local COUNTERS = {
+	{
+		DataKey = "Currency",
+		Frame = "Currency",
+		PopupTemplate = "CurrencyAddTemplate",
+		Prefix = "$",
+		GainColor = Color3.fromRGB(116, 255, 51),
+	},
+	{
+		DataKey = "Gems",
+		Frame = "Gems",
+		PopupTemplate = "GemAddTemplate",
+		Prefix = "",
+		GainColor = Colors.Gems,
+	},
+}
+
 --
-local CurrencyController = {}
+local CurrencyController = {
+	_counters = {}, -- [dataKey] = { Settings, Amount, Spring, AnimatedNumber, PopupTemplate? } for each counter set up
+}
 
-function CurrencyController:_updateCurrency(old, new)
-	local ui = self.UI
-	local currency = ui.BottomLeft.Currency
-	local amount = currency.Amount
+-- A counter figure behind its prefix: suffixed from `threshold` up, comma'd below it.
+local function formatAmount(value: number, threshold: number, prefix: string): string
+	return if value >= threshold
+		then `{prefix}{GuiUtil.ConvertNumberWithSuffix(value)}`
+		else `{prefix}{GuiUtil.ConvertNumberWithCommas(value)}`
+end
 
-	self._animatedNumber:UpdateNumber(new)
+-- Moves a counter to `new`, bumping it and floating the change off it unless nothing moved.
+function CurrencyController:_updateCounter(counter, old: number, new: number)
+	local amount = counter.Amount
+
+	counter.AnimatedNumber:UpdateNumber(new)
 	local didLoseCurrency = old > new
-	self._spring:Impulse(didLoseCurrency and -3 or 3)
+	counter.Spring:Impulse(didLoseCurrency and -3 or 3)
 
-	if old == 0 then
+	-- The seed passes the balance as both, so the load floats nothing while a real gain from 0 still does
+	if old == new then
 		return
 	end
 
@@ -60,9 +88,8 @@ function CurrencyController:_updateCurrency(old, new)
 
 	local changeAmountTemplate = amount.ChangeAmountTemplate:Clone()
 	changeAmountTemplate.Name = HttpService:GenerateGUID()
-	changeAmountTemplate.TextColor3 = didLoseCurrency and Color3.fromRGB(255, 43, 43) or Color3.fromRGB(116, 255, 51)
-	changeAmountTemplate.Text = value >= 10_000 and `${GuiUtil.ConvertNumberWithSuffix(value)}`
-		or `${GuiUtil.ConvertNumberWithCommas(value)}`
+	changeAmountTemplate.TextColor3 = didLoseCurrency and Color3.fromRGB(255, 43, 43) or counter.Settings.GainColor
+	changeAmountTemplate.Text = formatAmount(value, 10_000, counter.Settings.Prefix)
 	changeAmountTemplate.Visible = true
 	changeAmountTemplate.Parent = amount
 
@@ -75,10 +102,12 @@ function CurrencyController:_updateCurrency(old, new)
 	end)
 end
 
--- Spawns one floating "+value" popup, driven per arriving cash projectile (see CollectCash).
-function CurrencyController:SpawnCurrencyPopup(value: number)
-	local currencyUI = self.CurrencyUI
-	local currencyAddTemplate = currencyUI.CurrencyAddTemplate
+-- Spawns one floating "+value" popup for a currency, Bux unless `dataKey` names another. Driven per arriving projectile (see CollectCash, CollectGems).
+function CurrencyController:SpawnCurrencyPopup(value: number, dataKey: string?)
+	local counter = self._counters[dataKey or "Currency"]
+	if not (counter and counter.PopupTemplate) then
+		return
+	end
 
 	-- Alternate sides each call so consecutive popups don't cluster on one edge.
 	self._popupSide = not self._popupSide
@@ -87,13 +116,12 @@ function CurrencyController:SpawnCurrencyPopup(value: number)
 	local x = RandomUtil.GetRandomFromMinMax(side.X.Min, side.X.Max)
 	local y = RandomUtil.GetRandomFromMinMax(side.Y.Min, side.Y.Max)
 
-	local popup = currencyAddTemplate:Clone()
+	local popup = counter.PopupTemplate:Clone()
 	popup.Name = HttpService:GenerateGUID()
-	popup.Amount.Text = value >= 1_000 and `+${GuiUtil.ConvertNumberWithSuffix(value)}`
-		or `+${GuiUtil.ConvertNumberWithCommas(value)}`
+	popup.Amount.Text = `+{formatAmount(value, 1_000, counter.Settings.Prefix)}`
 	popup.Position = UDim2.fromScale(x, y)
 	popup.Visible = true
-	popup.Parent = currencyUI
+	popup.Parent = self.CurrencyUI
 
 	Spr.target(popup, 0.8, 1, { Position = UDim2.fromScale(x, y - 0.1) })
 	task.delay(0.5, function()
@@ -103,35 +131,58 @@ function CurrencyController:SpawnCurrencyPopup(value: number)
 	end)
 end
 
-function CurrencyController:_setupUI()
-	local ui = self.UI
-	local currency = ui.BottomLeft.Currency
+-- Builds one HUD counter off its Studio frame, seeded from the profile and following it from then on. A frame not built yet is warned about and skipped.
+function CurrencyController:_setupCounter(settings)
+	local frame = self.UI.BottomLeft:FindFirstChild(settings.Frame)
+	if not frame then
+		warn(`[Currency] HudUI.BottomLeft.{settings.Frame} is missing, so the {settings.DataKey} counter can't be shown`)
+		return
+	end
 
-	-- Setup spring for currency UI
+	local popupTemplate = self.CurrencyUI:FindFirstChild(settings.PopupTemplate)
+	if not popupTemplate then
+		warn(`[Currency] CurrencyUI.{settings.PopupTemplate} is missing, so {settings.DataKey} gains won't pop up`)
+	end
+
+	-- Setup spring for the counter
 	local spring = Spring.new(0)
 	spring.Speed = 25
 	spring.Damper = 0.5
-	self._spring = spring
 
-	RunService.RenderStepped:Connect(function(deltaTime)
-		currency.UIScale.Scale = 1 + spring.Position
+	local uiScale = frame.UIScale
+	RunService.RenderStepped:Connect(function()
+		uiScale.Scale = 1 + spring.Position
 	end)
 
+	local amount = frame.Amount
 	local animatedNumber = AnimatedNumber.new(0, 0.5)
 	animatedNumber.OnChangedValue:Connect(function(value)
-		value = math.floor(value)
-		currency.Amount.Text = value >= 10_000 and `${GuiUtil.ConvertNumberWithSuffix(value)}`
-			or `${GuiUtil.ConvertNumberWithCommas(value)}`
+		amount.Text = formatAmount(math.floor(value), 10_000, settings.Prefix)
 	end)
-	self._animatedNumber = animatedNumber
 
-	--  Setup listener for currency changes
-	local currentCurrency = PlayerDataController:GetKey("Currency")
-	self:_updateCurrency(0, currentCurrency)
+	local counter = {
+		Settings = settings,
+		Amount = amount,
+		Spring = spring,
+		AnimatedNumber = animatedNumber,
+		PopupTemplate = popupTemplate,
+	}
+	self._counters[settings.DataKey] = counter
 
-	PlayerDataController:ListenForChange("Currency", function(new, old)
-		self:_updateCurrency(old, new)
+	-- Setup listener for changes, seeded as a change to itself
+	local current = PlayerDataController:GetKey(settings.DataKey)
+	self:_updateCounter(counter, current, current)
+
+	PlayerDataController:ListenForChange(settings.DataKey, function(new, old)
+		self:_updateCounter(counter, old, new)
 	end)
+end
+
+-- Sets up each HUD counter in turn.
+function CurrencyController:_setupUI()
+	for _, settings in COUNTERS do
+		self:_setupCounter(settings)
+	end
 end
 
 function CurrencyController:OnInit()

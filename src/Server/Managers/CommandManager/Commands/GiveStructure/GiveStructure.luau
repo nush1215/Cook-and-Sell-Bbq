@@ -1,7 +1,7 @@
 return {
 	Name = "giveStructure",
 	Aliases = { "gs" },
-	Description = "Gives grillers and stands to a player, as unplaced build tools",
+	Description = "Gives structures (grillers, stands, cosmetics) to a player, as unplaced build tools",
 	Args = {
 		{
 			Type = "structureId",

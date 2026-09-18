@@ -228,8 +228,15 @@ local function getDominantCookState(skewerRecords: { StickModel.StickRecord }): 
 	return dominant
 end
 
--- Logs a soft-currency (Bux) flow, reading the ending balance after the change.
-function AnalyticsManager:_onCurrencyChanged(player: Player, amount: number, source: string?, isGain: boolean)
+-- Logs a soft-currency flow (Bux or Gems), reading the ending balance off `dataKey` after the change.
+function AnalyticsManager:_onCurrencyChanged(
+	player: Player,
+	currencyType: string,
+	dataKey: string,
+	amount: number,
+	source: string?,
+	isGain: boolean
+)
 	if not source then
 		return
 	end
@@ -238,8 +245,8 @@ function AnalyticsManager:_onCurrencyChanged(player: Player, amount: number, sou
 	local transactionType = SOURCE_TRANSACTION_TYPES[source] or Enum.AnalyticsEconomyTransactionType.Gameplay.Name
 	task.spawn(function()
 		pcall(function()
-			PlayerDataManager:GetPlayerDataKey(player, "Currency"):andThen(function(currency)
-				AnalyticsService:LogEconomyEvent(player, flowType, "Bux", amount, currency, transactionType, source)
+			PlayerDataManager:GetPlayerDataKey(player, dataKey):andThen(function(balance)
+				AnalyticsService:LogEconomyEvent(player, flowType, currencyType, amount, balance, transactionType, source)
 			end)
 		end)
 	end)
@@ -291,7 +298,10 @@ end
 function AnalyticsManager:OnStart()
 	-- Economy
 	CurrencyManager.OnCurrencyChanged:Connect(function(player, amount, source, isGain)
-		self:_onCurrencyChanged(player, amount, source, isGain)
+		self:_onCurrencyChanged(player, "Bux", "Currency", amount, source, isGain)
+	end)
+	CurrencyManager.OnGemsChanged:Connect(function(player, amount, source, isGain)
+		self:_onCurrencyChanged(player, "Gems", "Gems", amount, source, isGain)
 	end)
 
 	-- Monetization

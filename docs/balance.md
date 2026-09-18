@@ -567,7 +567,8 @@ doing, where a rich one rewards what they already did.
 
 **One order at a time until the kitchen can run two.** `CONCURRENT_ORDER_MARKS` is a ladder of placed builds
 — a base runs as many orders at once as the rows it clears, in order — and today's second row is 3 grillers
-**and** 2 stick stands. A second order never arrives with the first: a fresh customer only comes in while
+**and** 2 stick stands. Rows three and four also need table seats (6, then 12; see Tables below), so four
+orders at once is the ceiling. A second order never arrives with the first: a fresh customer only comes in while
 every custom order customer already on the base is stood waiting for its BBQ, never beside the introduction
 order, and still through the same roll and `COOLDOWN`. Orders a player left behind are the exception, and
 come back together on rejoin, since each was already owed. On a two-order base the roll stops waiting for
@@ -656,6 +657,51 @@ the label, and what changes is only how often a forced roll fires — which is a
 between the labels and the real rates. A flat reweighting would instead make every *other* ingredient
 rarer than its printed number, which is the direction the 100% rule exists to protect.
 
+### Tables
+
+Tables are structures in the `Tables` category. Their `Seats` folder holds one `Seat` per place, and
+`Structures` counts them at load as `SeatCount`. Seats keep `CanTouch` off, so a player can never sit in one;
+the server seats customers with `Seat:Sit`.
+
+- **Where they wait.** Once an order is accepted, the customer claims a free seat and waits there instead of
+  beside the stand. With no seat free it stands aside as before, so a base without tables plays exactly as
+  it used to. Picking the table up from under it sends it to another seat, or back to standing, without
+  touching its clock.
+- **Where they eat.** A seated customer eats there for `SEATED_EAT_DURATION` (15s) instead of
+  `SellNpc.EAT_DURATION` (8s). One sent to the stand to collect walks back to its seat to eat.
+- **Seat choice.** A rich customer prefers a table with a `RichChanceBonus`. Everyone then prefers the best
+  `CustomerPayoutMultiplier`, and ties are random.
+- **Golden Table.** `CustomerPayoutMultiplier` 1.2: the graded payout is multiplied by it for a customer
+  that waited there, and the toast names the table. The offer card still shows the plain quote, since the
+  seat is only claimed on accept.
+- **Fancy Table.** `RichChanceBonus` 15, added per placed copy to `RICH_CHANCE`.
+
+**Free seats bring customers faster.** Each seat no customer has claimed adds `SEAT_SPAWN_CHANCE_STEP` to
+`SPAWN_CHANCE`, up to `SEAT_SPAWN_CHANCE_MAX_BONUS`, and takes `SEAT_COOLDOWN_STEP` seconds off `COOLDOWN`,
+down to `SEAT_COOLDOWN_MIN`. The pacing rule is unchanged: a new customer still only comes in once every
+present one is waiting for its BBQ.
+
+| Free seats | Spawn chance | Cooldown | Expected wait past the cooldown |
+|---|---|---|---|
+| 0 | 60% | 100s | ~17s |
+| 6 | 72% | 82s | ~14s |
+| 12 | 84% | 64s | ~12s |
+| 15+ | 90% | 60s | ~11s |
+
+### The rich customer
+
+A visit is rich on a `RICH_CHANCE` roll (10), plus every placed table's `RichChanceBonus`, capped at
+`RICH_CHANCE_MAX` (40). Never the introduction order.
+
+- **What it asks for.** Tiers off `RICH_TIER_WEIGHTS` only (Rare, Epic, Legendary), with the same reach rule
+  as any order. A tier with nothing reachable steps down, then up, but never below Rare. If nothing Rare or
+  better is in reach, the visit is an ordinary one instead.
+- **What it pays.** The ordinary quote, with `RICH_MULTIPLIER_BONUS` (0.1) added to the premium and its cap.
+  Its Rare+ recipe already makes it the biggest order a player sees, so the premium only nudges it.
+- **What it looks like.** A `ServerStorage.Assets.RichNPC` rig with `RichUI` and `RichParticles`, shared with
+  the stand's rich customer. It speaks the ordinary `CustomNPC*` lines.
+- **Daily quests.** Delivering one counts toward `ServeRichCustomer`.
+
 | Knob | Higher | Lower |
 |---|---|---|
 | `SPAWN_CHANCE` | orders become the main way to earn | they're a novelty nobody plans around |
@@ -674,6 +720,88 @@ rarer than its printed number, which is the direction the 100% rule exists to pr
 | `OFFER_TIMEOUT` | players can wander off mid-ask | the cooldown frees sooner, slow players lose orders |
 | `ROLL_PITY_THRESHOLD` | the steer is barely felt | the stand may as well hand it over |
 | `HURRY_THRESHOLD` | a long anxious run-out | no warning worth having |
+| `SEAT_SPAWN_CHANCE_*` / `SEAT_COOLDOWN_*` | tables flood the base with orders | seats stop mattering to pace |
+| `SEATED_EAT_DURATION` | seats stay taken longer, slowing the next | the seated beat is over before the tip lands |
+| `RICH_CHANCE` / `RICH_CHANCE_MAX` | rich orders are routine | the Fancy Table barely shows |
+| `RICH_TIER_WEIGHTS` | rich orders lean Legendary | every rich order is Rare |
+| `RICH_MULTIPLIER_BONUS` | rich orders outpay everything | only the recipe makes them rich |
+
+## Selling — customer tips
+
+`Shared/Config/CustomerTips.luau`, run by `CustomerTipManager`. On top of what it paid, a customer can leave a
+tip in **Gems**, the second currency.
+- The tip is rolled as the customer starts eating.
+- On a hit, the customer says its `{prefix}Tipping` line `SAY_DELAY` seconds into the eat. `PAY_DELAY` seconds
+  later the Gems land, with the `CollectGems` effect and a toast.
+- A stand customer tips `STAND_GEMS_MIN..MAX` (5–10). A custom order customer tips `CUSTOM_ORDER_GEMS_MIN..MAX` (15–20).
+- A custom order customer eating seated at a table tips `SEATED_GEMS_MIN..MAX` (20–30), and its chance is
+  multiplied by `SEATED_CHANCE_MULTIPLIER` (1.2), so a good order (85% standing) becomes a certain tip.
+- A rich custom order customer tips `RICH_GEMS_MIN..MAX` (35–50), seated or not. Seated, it also gets the
+  chance boost.
+
+**The chance starts at 1 in 5, and good BBQ raises it.** The multipliers stack:
+
+```
+boost = COOK_STATE_MULTIPLIERS[state] × (mutated ? MUTATION_MULTIPLIER : 1) × (1 + TIER_STEP × (meanTier − 1))
+stand = STAND_CHANCE × boost × (full stick ? FULL_STICK_MULTIPLIER : 1)
+order = CUSTOM_ORDER_CHANCE × accuracy × boost ÷ COOK_STATE_MULTIPLIERS.Perfect × (seated ? SEATED_CHANCE_MULTIPLIER : 1)
+```
+
+- `STAND_CHANCE` is priced for an **ordinary** stand BBQ: Cooked, plain, Common, on a stick with room left.
+- `CUSTOM_ORDER_CHANCE` is priced for a **good** order: an exact fill, cooked Perfect. That's why the order line
+  divides the Perfect multiplier back out.
+- A cook state missing from `COOK_STATE_MULTIPLIERS` never tips. That covers Raw and Charred. It's also the safe
+  default for a state added later.
+- `meanTier` is read the same way the Menu rating reads it, so an all-Common stick adds nothing.
+- `accuracy` is the order's existing grade: `matched/slots − extras × EXTRA_INGREDIENT_PENALTY`.
+- **Custom orders have no full-stick term.** The order fixes the ingredient count, so otherwise a 3-slot order on
+  an 8-slot stick would be penalised.
+- **A rich customer's haul gets one roll**, on the mean chance across its skewers.
+- **Anything past 100 is a certain tip.** Nothing is capped.
+
+| BBQ | Stand | Custom order | Custom order, seated |
+|---|---|---|---|
+| Cooked, plain, Common (ordinary) | 20% | 68% | 81.6% |
+| Cooked, full stick | 22% | — | — |
+| Perfect | 25% | 85% | certain (102%) |
+| Perfect, full stick | 27.5% | — | — |
+| Perfect, full, Golden | 34.4% | certain (106.25%) | certain |
+| Perfect, full, Rare average | 30.25% | 93.5% | certain (112.2%) |
+| Overcooked | 10% | 34% | 40.8% |
+| Raw / Charred | never | never | never |
+| Order: 2 of 3 ingredients, Perfect | — | 56.7% | 68% |
+
+**Tips are gapped per player.** After a tip lands, no customer of that player can tip for `MIN_GAP` seconds.
+- The gap is shared between the stand and custom orders.
+- It lives in server memory, so a rejoin resets it.
+- The roll happens at the eat, not the sale, so a tip always lands a fixed `SAY_DELAY + PAY_DELAY` after its roll,
+  and the gap spaces out the payouts themselves.
+- A customer that never reaches its eat spot doesn't use up the gap.
+
+**Expected earnings.** Assuming mostly Perfect cooks on full sticks, expect roughly ~110 Gems/hr early, ~330 mid
+and ~490 late. The rate is driven mostly by how fast the player sells, and about 1 in 4 to 1 in 5 stand customers
+tip. `MIN_GAP` caps a player at 240 tips an hour.
+
+**Other rules:**
+- Gems are never boosted. x2 Bux, friends and the early boost are all promises about Bux, and Gems stay out of
+  `TotalEarned`.
+- Sales answered by seller employees tip at the same odds. The tip is for the food.
+- No tips from the wizard (it pays in luck), in the tutorial, or offline.
+- A player who leaves mid-eat forfeits the tip, since the rig is destroyed before the Gems land.
+- Analytics log tips as Gems economy sources `CustomerTip` and `CustomOrderTip`.
+- Nothing spends Gems yet.
+
+| Knob | Higher | Lower |
+|---|---|---|
+| `STAND_CHANCE` | stand tips become routine | they're a rare surprise |
+| `CUSTOM_ORDER_CHANCE` | a good order is a near-sure tip | orders tip no more often than the stand |
+| `COOK_STATE_MULTIPLIERS` | cooking well pays off in Gems | how it cooked stops mattering |
+| `FULL_STICK_MULTIPLIER` | filling the stick is worth the trip | a half-built skewer tips the same |
+| `MUTATION_MULTIPLIER` / `TIER_STEP` | a rich kitchen out-tips a skilled one | only the cook matters |
+| `MIN_GAP` | tips spread out, and the real rate falls below the chance | tips land back to back |
+| `SEATED_CHANCE_MULTIPLIER` | tables make a tip near-certain | seating stops mattering to tips |
+| `*_GEMS_MIN` / `*_GEMS_MAX` | Gems pile up faster | each tip feels small |
+| `SAY_DELAY` / `PAY_DELAY` | the tip lands late in the eat | the line and the Gems crowd the eating beat |
 
 ## Crates
 
@@ -767,7 +895,8 @@ over the edge.
 against the size it was saved at — so halving `CELL_SIZE` would otherwise collapse every existing build to
 half its spread. `StructureCellSize` in player data records what each build was written under and
 `BaseManager:RescaleStructureCells` rescales it on handover; anything that no longer fits afterwards is
-handed back by `ReclaimStrandedStructures`. See `docs/player-data.md`.
+handed back by `ReclaimStrandedStructures`. See `docs/player-data.md`. `EmployeeHut.CELL_X`/`CELL_Z` are cells
+too and are **not** rescaled for you — scale them by the same ratio, or the hut moves.
 
 A structure is measured against its **`Hitbox`** if it has one, else the model's bounding box. A Hitbox is
 how a model *states* what it occupies rather than having it guessed, which is what lets a chimney hang off
@@ -781,6 +910,16 @@ config about how big a thing is.
 
 Collision is plain integer AABB overlap and is the whole model: nothing is ever queried against the world,
 so only the cells a structure claimed matter.
+
+A structure blocks its whole footprint unless it has **several `Hitbox` parts**. Those are legs: each
+blocks only the cells it reaches into, rounded outward, so a canopy's four legs block and the cells under
+it stay free for anything else. The box around all of them is the footprint, which is what must sit on
+owned ground and what centres the model. The blocked rects are measured once at load and pre-turned for
+all four rotations, so the collision check stays the same rect-vs-rect loop.
+
+A **`Flat`** structure (a path) sits on its own layer: it only collides with other Flat pieces, so anything
+can be built over it, and it skips the "someone's standing there" check. A **`Roof`** model inside a
+structure is made non-collidable on build, so players walk through a canopy instead of snagging on it.
 
 A structure drops in **from above at full size** — the opposite of a bought unlock rising out of the
 ground (see `BaseUnlocks.LAYOUT_RISE`). The spring is shared, so only the start differs. The server waits

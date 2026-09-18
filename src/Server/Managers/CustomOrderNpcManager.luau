@@ -25,6 +25,10 @@ local CookStates = require(Shared.Config.CookStates)
 local Structures = require(Shared.Config.Structures)
 local Ingredients = require(Shared.Config.Ingredients)
 local CustomOrderNpc = require(Shared.Config.CustomOrderNpc)
+local RichNpc = require(Shared.Config.RichNpc)
+
+-- Managers
+local CustomerTipManager = require(script.Parent.CustomerTipManager)
 
 -- How often the wait is checked. Not per frame: this runs for minutes, and a tenth of a second is
 -- imperceptible on both the hand-over reaction and the run-out warning
@@ -62,7 +66,7 @@ local CustomOrderNpcManager = {
 	OnCustomOrderOffered = Signal.new(),
 	-- (player, order, funnelId) once they take it on
 	OnCustomOrderAccepted = Signal.new(),
-	-- (player, entry, funnelId, delivered?) once an order resolves, however it went. The same record StatsManager banks, plus the skewer handed over.
+	-- (player, entry, funnelId, delivered?, isRich) once an order resolves, however it went. The same record StatsManager banks, plus the skewer handed over.
 	OnCustomOrderResolved = Signal.new(),
 
 	_npcs = {}, -- [player] = { record, ... } spawned instances, for cleanup
@@ -73,6 +77,8 @@ local CustomOrderNpcManager = {
 	-- [player] = true once their guaranteed first order is sent; the saved key alone yields
 	_grantedFirstOrder = {},
 	_tierWeights = {}, -- CustomOrderNpc.TIER_WEIGHTS flattened for the weighted roll, built once on start
+	_richTierWeights = {}, -- CustomOrderNpc.RICH_TIER_WEIGHTS, likewise
+	_richMinTierIndex = math.huge, -- the commonest tier a rich order may ask for, the lowest in RICH_TIER_WEIGHTS
 	_rng = ServerRandom.MakeRNG("CustomOrderNpc"),
 }
 
@@ -173,6 +179,27 @@ local function measureDelivery(order, delivered): (number, number)
 	return matched, extras
 end
 
+-- How much of the order a hand-over got right, 0-1: the share of the recipe that landed, less its extras.
+local function getOrderAccuracy(order, delivered): number
+	local matched, extras = measureDelivery(order, delivered)
+
+	-- Padding a stick out with whatever was to hand must not pay, so extras come off the share
+	return math.max(matched / #order.Ingredients - extras * CustomOrderNpc.EXTRA_INGREDIENT_PENALTY, 0)
+end
+
+-- Stands a customer up out of whatever seat it's in. Its claim on the seat is the record's to drop.
+local function unseatCustomer(humanoid: Humanoid)
+	local seatPart = humanoid.SeatPart
+	if seatPart then
+		local weld = seatPart:FindFirstChild("SeatWeld")
+		if weld then
+			weld:Destroy()
+		end
+	end
+
+	humanoid.Sit = false
+end
+
 -- What a perfect exact fill of `ids` is worth on `stick`, which the quote and its badge are both figured from.
 local function getReferenceValue(stick, ids: { string }): number
 	return StickModel.GetSellValue({
@@ -183,18 +210,20 @@ local function getReferenceValue(stick, ids: { string }): number
 	})
 end
 
--- Builds an order: what to ask for, what a perfect exact fill earns, and how long they get.
-function CustomOrderNpcManager:_buildOrder(data)
+-- Builds an order: what to ask for, what a perfect exact fill earns, and how long they get. A `rich` one asks only for RICH_TIER_WEIGHTS tiers, and is nil when none are in reach.
+function CustomOrderNpcManager:_buildOrder(data, rich: boolean?)
 	local stick = getBestOwnedStick(data)
 	local slots =
 		math.min(self._rng:NextInteger(CustomOrderNpc.SLOT_COUNT_MIN, CustomOrderNpc.SLOT_COUNT_MAX), stick.Capacity)
+
+	local minTierIndex = if rich then self._richMinTierIndex else 1
 
 	-- What they can reach: owned outright, or cheap enough that rolling for it is a trip rather than a wall
 	local affordable = data.Currency * CustomOrderNpc.AFFORD_FACTOR
 	local byTier = {}
 	for _, ingredient in Ingredients.GetAllIngredients() do
 		local owned = (data.Ingredients[ingredient.Id] or 0) > 0
-		if not owned and ingredient.Price > affordable then
+		if ingredient.Tier.Index < minTierIndex or (not owned and ingredient.Price > affordable) then
 			continue
 		end
 
@@ -207,6 +236,11 @@ function CustomOrderNpcManager:_buildOrder(data)
 	-- Nothing reachable at all, which a broke player really can hit: ask for the cheapest tier anyway,
 	-- since the roll steer is what gets them there and a silent no-visit reads as the feature being broken
 	if next(byTier) == nil then
+		-- A rich one has no cheap tier to fall back on, so the visit goes to an ordinary customer instead
+		if rich then
+			return nil
+		end
+
 		local cheapest = Ingredients.Tiers[1]
 		byTier[cheapest.Id] = {}
 
@@ -220,15 +254,27 @@ function CustomOrderNpcManager:_buildOrder(data)
 	local ids = {}
 	local tierIndexTotal = 0
 
-	for _ = 1, slots do
-		local wanted = RandomUtil.GetResultFromWeight(self._tierWeights, self._rng)
+	local tierWeights = if rich then self._richTierWeights else self._tierWeights
 
-		-- Walked down from the rolled tier, so a band with nothing reachable in it falls back rather than failing
+	for _ = 1, slots do
+		local wanted = RandomUtil.GetResultFromWeight(tierWeights, self._rng)
+		local wantedIndex = Ingredients.GetTierFromId(wanted).Index
+
+		-- Walked down from the rolled tier, so a band with nothing reachable in it falls back rather than failing.
+		-- Then up, since a rich one's floor can sit above everything it can reach below the roll
 		local candidates = nil
-		for index = Ingredients.GetTierFromId(wanted).Index, 1, -1 do
+		for index = wantedIndex, minTierIndex, -1 do
 			candidates = byTier[Ingredients.Tiers[index].Id]
 			if candidates then
 				break
+			end
+		end
+		if not candidates then
+			for index = wantedIndex + 1, #Ingredients.Tiers do
+				candidates = byTier[Ingredients.Tiers[index].Id]
+				if candidates then
+					break
+				end
 			end
 		end
 		if not candidates then
@@ -241,9 +287,10 @@ function CustomOrderNpcManager:_buildOrder(data)
 	end
 
 	-- The premium climbs with what was asked for, so a rarer recipe is worth the harder trip
+	local richBonus = if rich then CustomOrderNpc.RICH_MULTIPLIER_BONUS else 0
 	local multiplier = math.min(
-		CustomOrderNpc.BASE_MULTIPLIER + CustomOrderNpc.TIER_STEP * (tierIndexTotal / slots - 1),
-		CustomOrderNpc.MULTIPLIER_CAP
+		CustomOrderNpc.BASE_MULTIPLIER + richBonus + CustomOrderNpc.TIER_STEP * (tierIndexTotal / slots - 1),
+		CustomOrderNpc.MULTIPLIER_CAP + richBonus
 	)
 
 	-- GetTotalCookTime is ingredient seconds; the bar runs that over RAW_END, so the clock has to as well
@@ -260,6 +307,7 @@ function CustomOrderNpcManager:_buildOrder(data)
 		Quote = math.round(value * multiplier),
 		Seconds = math.round(cookSeconds + CustomOrderNpc.LEEWAY_BASE + CustomOrderNpc.LEEWAY_PER_INGREDIENT * slots),
 		TierIndex = tierIndexTotal / slots,
+		Rich = rich or nil,
 	}
 end
 
@@ -274,6 +322,7 @@ local function restoreOrder(saved)
 		Quote = saved.Quote,
 		Seconds = saved.Seconds,
 		TierIndex = saved.TierIndex,
+		Rich = saved.Rich,
 	}
 end
 
@@ -332,6 +381,7 @@ local function buildSavedOrder(record, phase: string)
 			then math.max(record.deadline - workspace:GetServerTimeNow(), 0)
 			else nil,
 		TierIndex = order.TierIndex,
+		Rich = order.Rich,
 		FirstVisit = record.firstVisit,
 		FunnelId = record.funnelId,
 	}
@@ -414,6 +464,10 @@ function CustomOrderNpcManager:_despawnNpc(player: Player, record)
 		record.slot = nil
 	end
 
+	-- A pooled rig still welded to a seat would drag the table's claim into the next customer
+	unseatCustomer(record.npc:FindFirstChildOfClass("Humanoid"))
+	record.seat, record.seatTable = nil, nil
+
 	NpcRig.Fade(record.npc, false, SellNpc.FADE_OUT_DURATION)
 
 	-- The player may have left during the fade, in which case _cleanupPlayer already destroyed the rig.
@@ -421,7 +475,12 @@ function CustomOrderNpcManager:_despawnNpc(player: Player, record)
 		return
 	end
 
-	NpcRig.Release(record.npc)
+	-- A rich rig is its own model -- pooling it would repaint it as the template for the next customer
+	if record.isRich then
+		record.npc:Destroy()
+	else
+		NpcRig.Release(record.npc)
+	end
 
 	local tracked = self._npcs[player]
 	if tracked then
@@ -461,15 +520,12 @@ function CustomOrderNpcManager:_recordOutcome(player: Player, record, outcome: s
 	PlayerDataManager:SetPlayerDataKey(player, { "ActiveCustomOrders", record.funnelId }, nil)
 
 	StatsManager:RecordCustomOrderResolved(player, entry)
-	self.OnCustomOrderResolved:Fire(player, entry, record.funnelId, delivered)
+	self.OnCustomOrderResolved:Fire(player, entry, record.funnelId, delivered, record.isRich == true)
 end
 
 -- What a hand-over is worth: the quote graded by how much of the recipe landed and how it cooked.
 function CustomOrderNpcManager:_gradeDelivery(order, delivered): number
-	local matched, extras = measureDelivery(order, delivered)
-
-	-- Padding a stick out with whatever was to hand must not pay, so extras come off the share
-	local accuracy = math.max(matched / #order.Ingredients - extras * CustomOrderNpc.EXTRA_INGREDIENT_PENALTY, 0)
+	local accuracy = getOrderAccuracy(order, delivered)
 
 	-- Relative to Perfect, so a cook state is worth the same here as it is anywhere else in the economy
 	local cookFactor = CookStates.GetMultiplier(StickModel.GetCookStateId(delivered))
@@ -612,8 +668,8 @@ function CustomOrderNpcManager:GetHeldStandSkewerUids(player: Player): { [string
 end
 
 -- The payout toast. Graded, so the number is explained by whatever cost them the most -- flat, it read
--- the same for a perfect fill and for a bag of the wrong thing.
-function CustomOrderNpcManager:_notifyDelivered(player: Player, order, delivered, banked: number)
+-- the same for a perfect fill and for a bag of the wrong thing. `bonusTable` names a table that paid extra.
+function CustomOrderNpcManager:_notifyDelivered(player: Player, order, delivered, banked: number, bonusTable)
 	local matched, extras = measureDelivery(order, delivered)
 	local missing = #order.Ingredients - matched
 	local cookState = CookStates.GetStateFromId(StickModel.GetCookStateId(delivered))
@@ -635,6 +691,10 @@ function CustomOrderNpcManager:_notifyDelivered(player: Player, order, delivered
 		text = "Their order, but " .. GuiUtil.Colorize(cookState.Name, cookState.Color) .. " - they paid {value}"
 	else
 		text, effect = "Perfect order! {value}", "Success"
+	end
+
+	if bonusTable then
+		text ..= ` ({GuiUtil.Colorize(bonusTable.Name, bonusTable.TextColor)} bonus)`
 	end
 
 	-- {value} is NotificationManager's placeholder for Count, so it must survive uninterpolated
@@ -668,7 +728,7 @@ function CustomOrderNpcManager:_sayDeliveryReaction(npc: Model, order, delivered
 	self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCDelivered", StickModel.GetDialogueVariant(delivered))
 end
 
--- Waits out the deadline, flagging the customer as it runs down. Returns the delivered skewer, or nil on an expiry or a BBQ held for it on the stand.
+-- Waits out the deadline, flagging the customer as it runs down. Returns the delivered skewer, or nil on an expiry, a BBQ held for it on the stand, or its table being picked up (still awaiting).
 function CustomOrderNpcManager:_awaitDelivery(player: Player, npc: Model, record)
 	local nextHurry = record.deadline - CustomOrderNpc.HURRY_THRESHOLD
 
@@ -676,6 +736,12 @@ function CustomOrderNpcManager:_awaitDelivery(player: Player, npc: Model, record
 		local now = workspace:GetServerTimeNow()
 		if now >= record.deadline then
 			break
+		end
+
+		-- Its table was picked up from under it, so it goes on waiting, just somewhere else
+		if record.seat and not record.seat:IsDescendantOf(workspace) then
+			record.seat, record.seatTable = nil, nil
+			return nil
 		end
 
 		if now >= nextHurry then
@@ -708,17 +774,23 @@ function CustomOrderNpcManager:_awaitDelivery(player: Player, npc: Model, record
 end
 
 -- The toast that calls the player over, or back to `returningCount` restored orders. Timed differently per variation, so it's its own method.
-function CustomOrderNpcManager:_notifyArrived(player: Player, firstVisit: boolean?, returningCount: number?)
+function CustomOrderNpcManager:_notifyArrived(
+	player: Player,
+	firstVisit: boolean?,
+	returningCount: number?,
+	rich: boolean?
+)
 	-- Their first says why it's worth taking, since the recipe card shows what it wants but not that it pays more
 	NotificationManager:NotifyNormal(player, {
 		Text = if returningCount and returningCount > 1
 			then "Your customers waited for you! Finish their orders"
 			elseif returningCount then "Your customer waited for you! Finish their order"
 			elseif firstVisit then "Someone's here with a custom order! It pays extra!"
+			elseif rich then `A {RichNpc.LABEL} customer is here with a custom order!`
 			else "Someone's here with a custom order!",
 		-- The ones that carry a second sentence get the longer read
 		Duration = if firstVisit or returningCount then 4 else 3,
-		Sound = "CustomerArrived",
+		Sound = if rich and not returningCount then "RichSpawn" else "CustomerArrived",
 	})
 end
 
@@ -808,16 +880,136 @@ function CustomOrderNpcManager:_leave(player: Player, npc: Model, record, humano
 	end
 
 	NpcRig.StopAnimation(record)
+	unseatCustomer(humanoid)
+	record.seat, record.seatTable = nil, nil
 	NpcRig.WalkTo(humanoid, spawnPart.Position)
 	self:_despawnNpc(player, record)
 end
 
--- Runs one whole visit: the ask, the wait, and whatever gets handed over.
+-- Every seat on the player's placed tables, taken or not.
+function CustomOrderNpcManager:CountPlacedSeats(data): number
+	local count = 0
+
+	for _, placed in data.Structures do
+		-- SeatCount is 0 on anything without a Seats folder, so only tables add to it
+		local structure = Structures.GetStructureFromId(placed.Type)
+		if structure then
+			count += structure.SeatCount
+		end
+	end
+
+	return count
+end
+
+-- How many of the player's seats no customer has claimed, which is what brings the next one in sooner.
+function CustomOrderNpcManager:CountFreeSeats(player: Player, data): number
+	local taken = 0
+
+	for _, record in self._npcs[player] or {} do
+		if record.seat then
+			taken += 1
+		end
+	end
+
+	return math.max(self:CountPlacedSeats(data) - taken, 0)
+end
+
+-- The unclaimed seats on the player's placed tables, each with the table config it belongs to.
+function CustomOrderNpcManager:_getFreeSeats(player: Player, data): { { Seat: Seat, Table: Structures.Structure } }
+	local base = BaseManager:GetBaseFromPlayer(player)
+	if not base then
+		return {}
+	end
+
+	local taken = {}
+	for _, record in self._npcs[player] or {} do
+		if record.seat then
+			taken[record.seat] = true
+		end
+	end
+
+	local free = {}
+	for uid, placed in data.Structures do
+		local structure = Structures.GetStructureFromId(placed.Type)
+		if not structure or structure.SeatCount == 0 then
+			continue
+		end
+
+		-- Missing while the base is still rendering it, which just means no seat there yet
+		local model = base:GetStructureModel(uid)
+		local seats = model and model:FindFirstChild(Structures.SEATS_NAME)
+		if not seats then
+			continue
+		end
+
+		for _, seat in seats:GetChildren() do
+			if seat:IsA("Seat") and not taken[seat] then
+				table.insert(free, { Seat = seat, Table = structure })
+			end
+		end
+	end
+
+	return free
+end
+
+-- Claims the best free seat for the customer: a rich one heads for a table that draws them, then anyone for the best payout. False if none is free.
+function CustomOrderNpcManager:_claimSeat(player: Player, record, data): boolean
+	local best, bestScore = nil, -math.huge
+
+	for _, candidate in self:_getFreeSeats(player, data) do
+		local structure = candidate.Table
+
+		-- The random fraction is under the payout step, so it only breaks ties between equal seats
+		local score = (if record.isRich and structure.RichChanceBonus then 100 else 0)
+			+ (structure.CustomerPayoutMultiplier or 1) * 10
+			+ self._rng:NextNumber()
+
+		if score > bestScore then
+			best, bestScore = candidate, score
+		end
+	end
+
+	if not best then
+		return false
+	end
+
+	record.seat, record.seatTable = best.Seat, best.Table
+	return true
+end
+
+-- Walks the customer to its claimed seat and sits it down. False if the rig or the table went while it walked.
+function CustomOrderNpcManager:_seatCustomer(record, humanoid: Humanoid): boolean
+	NpcRig.WalkTo(humanoid, record.seat.Position)
+
+	if record.npc.Parent == nil or not record.seat:IsDescendantOf(workspace) then
+		return false
+	end
+
+	record.seat:Sit(humanoid)
+	return true
+end
+
+-- The chance out of 100 that a visit is a rich customer: the base chance plus every placed table that draws them.
+function CustomOrderNpcManager:GetRichChance(data): number
+	local chance = CustomOrderNpc.RICH_CHANCE
+
+	for _, placed in data.Structures do
+		local structure = Structures.GetStructureFromId(placed.Type)
+		if structure and structure.RichChanceBonus then
+			chance += structure.RichChanceBonus
+		end
+	end
+
+	return math.min(chance, CustomOrderNpc.RICH_CHANCE_MAX)
+end
+
+-- Runs one whole visit: the ask, the wait, and whatever gets handed over. A `rich` of true forces a rich customer, false an ordinary one, nil rolls for it.
 function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	player: Player,
 	variation: string?,
 	firstVisit: boolean?,
-	saved
+	saved,
+	rich: boolean?
 ): string?
 	local spawnPart, standPart = NpcRig.GetBaseParts(player)
 	if not spawnPart or not standPart then
@@ -830,10 +1022,24 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	end
 
 	-- Built before the rig is claimed, since an order nobody could fill is a visit not worth making
-	local order = if saved then restoreOrder(saved) else self:_buildOrder(data)
+	local order = nil
+	if saved then
+		order = restoreOrder(saved)
+	else
+		-- Never the introduction, which has to teach the ordinary order first
+		if rich == nil then
+			rich = not firstVisit and RandomUtil.RollChance(self:GetRichChance(data), self._rng)
+		end
+
+		-- A rich one with nothing Rare+ in reach turns into an ordinary visit rather than none
+		order = if rich then self:_buildOrder(data, true) else nil
+		order = order or self:_buildOrder(data)
+	end
 	if not order then
 		return "no order could be built from the roster"
 	end
+
+	local isRich = order.Rich == true
 
 	local tracked = self._npcs[player]
 	if not tracked then
@@ -844,7 +1050,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	-- The sell stand's slot allocator, so this one lines up beside its customers rather than inside them
 	local slot, standPosition = NpcRig.ClaimStandPosition(player, spawnPart, standPart)
 
-	local npc = NpcRig.Acquire()
+	local npc = if isRich then SellNpcManager:AcquireRichNpc() else NpcRig.Acquire()
 	local humanoid = npc:FindFirstChildOfClass("Humanoid")
 
 	-- Tracked before anything yields, so the pacing check counts it and a mid-lookup cleanup destroys the rig rather than orphaning it
@@ -854,6 +1060,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 		slot = slot,
 		standPosition = standPosition,
 		order = order,
+		isRich = isRich,
 		-- Both come off the save on a restore, so an interrupted introduction still reads as one and the
 		-- funnel follows the same order across the rejoin rather than starting a second one
 		firstVisit = if saved then saved.FirstVisit else firstVisit,
@@ -863,7 +1070,8 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	}
 	table.insert(tracked, record)
 
-	local description = NpcRig.GetCustomerDescription(player, self._rng)
+	-- A rich customer is its own character, so there's no appearance to look up
+	local description = if isRich then nil else NpcRig.GetCustomerDescription(player, self._rng)
 	if npc.Parent == nil then
 		return
 	end
@@ -918,7 +1126,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 
 	-- A Direct one announces itself on arrival and an Inspect one holds its toast for the verdict; restores share the one sent as they're spawned
 	if not saved and not inspecting then
-		self:_notifyArrived(player, firstVisit)
+		self:_notifyArrived(player, firstVisit, nil, isRich)
 	end
 
 	-- Picked here, so the client doesn't have to work out which of the three openings this is
@@ -951,7 +1159,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 			return
 		end
 
-		self:_notifyArrived(player, firstVisit)
+		self:_notifyArrived(player, firstVisit, nil, isRich)
 		task.wait(CustomOrderNpc.REQUEST_DELAY)
 
 		if npc.Parent == nil then
@@ -1031,6 +1239,9 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 				record.slot, record.standPosition = NpcRig.ClaimStandPosition(player, spawnPart, standPart)
 			end
 
+			-- Up from its table, which stays claimed so it comes back to eat there
+			unseatCustomer(humanoid)
+
 			self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCCollecting")
 			NpcRig.WalkTo(humanoid, record.standPosition)
 
@@ -1051,21 +1262,40 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 			NpcRig.ReleaseSlot(player, record.slot)
 			record.slot = nil
 
-			waitPosition = waitPosition or self:_claimWaitPosition(player, record, spawnPart, standPart)
-			NpcRig.WalkTo(humanoid, waitPosition)
+			-- A free seat beats standing aside, and one it already holds is walked back to
+			local seated = false
+			if record.seat or (data and self:_claimSeat(player, record, data)) then
+				seated = self:_seatCustomer(record, humanoid)
+				if not seated then
+					record.seat, record.seatTable = nil, nil
+				end
+			end
 
 			if npc.Parent == nil then
 				return
 			end
 
-			-- Turned back toward the stand, so it waits watching the player rather than facing off the base
-			npc:PivotTo(CFrame.lookAt(npc:GetPivot().Position, standPart.Position))
+			if seated then
+				-- Off the stand's sides, so the customers still stood there spread out as though it had gone
+				waitPosition, record.waitSide = nil, nil
+			else
+				waitPosition = waitPosition or self:_claimWaitPosition(player, record, spawnPart, standPart)
+				NpcRig.WalkTo(humanoid, waitPosition)
+
+				if npc.Parent == nil then
+					return
+				end
+
+				-- Turned back toward the stand, so it waits watching the player rather than facing off the base
+				npc:PivotTo(CFrame.lookAt(npc:GetPivot().Position, standPart.Position))
+			end
+
 			self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCWaiting")
 
 			delivered = self:_awaitDelivery(player, npc, record)
 
-			-- Out of time, rather than sent over for a BBQ held for it on the stand
-			if not delivered and not record.standSkewerUid then
+			-- Out of time, rather than sent over for a BBQ held for it on the stand or stood up by its table going
+			if not delivered and not record.standSkewerUid and not record.awaitingDelivery then
 				break
 			end
 		end
@@ -1092,7 +1322,13 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 		return
 	end
 
+	-- Read off the table it waited at, even when it went to the stand to collect, since it eats back there
+	local bonusTable = record.seatTable and record.seatTable.CustomerPayoutMultiplier and record.seatTable
 	local paid = self:_gradeDelivery(order, delivered)
+	if bonusTable then
+		paid = math.round(paid * bonusTable.CustomerPayoutMultiplier)
+	end
+
 	local banked = CurrencyManager:GetBoostedAmount(player, paid)
 
 	-- The plain figure -- applying boosts is IncrementCurrency's job, and a boosted one would double it
@@ -1107,25 +1343,55 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 	-- The payout lets each projectile pop a "+X" that adds up to the counter's jump
 	EffectManager:RunEffect("All", "CollectCash", { npc, banked, player })
 
-	self:_notifyDelivered(player, order, delivered, banked)
+	self:_notifyDelivered(player, order, delivered, banked, bonusTable)
 
 	self:_sayDeliveryReaction(npc, order, delivered)
 
-	-- Bought off the stand, so it moves out of the lane to eat among the other buyers
+	-- Bought off the stand, so it goes back to its seat, or moves out of the lane to eat among the other buyers
 	if collected and npc.Parent ~= nil then
-		NpcRig.WalkTo(humanoid, NpcRig.GetEatPosition(spawnPart, record.standPosition, self._rng))
+		local reseated = record.seat ~= nil and self:_seatCustomer(record, humanoid)
 
 		if npc.Parent == nil then
 			return
 		end
 
-		-- Faced a random way, so it doesn't eat staring the same way as the buyers around it
-		npc:PivotTo(CFrame.new(npc:GetPivot().Position) * CFrame.Angles(0, self._rng:NextNumber(0, math.pi * 2), 0))
+		if not reseated then
+			record.seat, record.seatTable = nil, nil
+			NpcRig.WalkTo(humanoid, NpcRig.GetEatPosition(spawnPart, record.standPosition, self._rng))
+
+			if npc.Parent == nil then
+				return
+			end
+
+			-- Faced a random way, so it doesn't eat staring the same way as the buyers around it
+			npc:PivotTo(CFrame.new(npc:GetPivot().Position) * CFrame.Angles(0, self._rng:NextNumber(0, math.pi * 2), 0))
+		end
 	end
+
+	local seated = record.seat ~= nil and record.seat:IsDescendantOf(workspace)
 
 	NpcRig.PlayAnimation(record, "Eat", self._rng)
 	self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCEating")
-	task.wait(SellNpc.EAT_DURATION)
+
+	-- Never in the tutorial, whose beats a tip would talk over
+	if not SellNpcManager:AreCustomersGuaranteed(player) then
+		CustomerTipManager:RollCustomOrderTip(
+			player,
+			npc,
+			delivered,
+			getOrderAccuracy(order, delivered),
+			seated,
+			record.isRich,
+			function()
+				self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCTipping")
+			end
+		)
+	end
+
+	NpcRig.EatSkewerIngredients(
+		record.skewerModel,
+		if seated then CustomOrderNpc.SEATED_EAT_DURATION else SellNpc.EAT_DURATION
+	)
 
 	if npc.Parent == nil then
 		return
@@ -1133,14 +1399,22 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 
 	self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCLeaving")
 	NpcRig.StopAnimation(record)
+	unseatCustomer(humanoid)
+	record.seat, record.seatTable = nil, nil
 	NpcRig.WalkTo(humanoid, spawnPart.Position)
 	self:_despawnNpc(player, record)
 end
 
 -- Runs one visit with its failure contained, releasing the rig and slot a throw would strand.
-function CustomOrderNpcManager:_runGuardedVisit(player: Player, variation: string?, firstVisit: boolean?, saved)
+function CustomOrderNpcManager:_runGuardedVisit(
+	player: Player,
+	variation: string?,
+	firstVisit: boolean?,
+	saved,
+	rich: boolean?
+)
 	local success, result = xpcall(function()
-		return self:_spawnCustomOrderCustomer(player, variation, firstVisit, saved)
+		return self:_spawnCustomOrderCustomer(player, variation, firstVisit, saved, rich)
 	end, debug.traceback)
 
 	-- A restore that died drops its own entry, or it sits unrestored and holds every fresh order back for good
@@ -1186,11 +1460,12 @@ end
 function CustomOrderNpcManager:GetMaxConcurrentOrders(data): number
 	local grillers = GrillerManager:CountPlacedGrillers(data)
 	local stickStands = StickStandManager:CountPlacedStickStands(data)
+	local seats = self:CountPlacedSeats(data)
 	local count = 0
 
 	for _, mark in CustomOrderNpc.CONCURRENT_ORDER_MARKS do
-		-- Stopped at the first row missed, so a row that doesn't climb in both columns can't be cleared past one that does
-		if grillers < mark.Grillers or stickStands < mark.StickStands then
+		-- Stopped at the first row missed, so a row that doesn't climb in every column can't be cleared past one that does
+		if grillers < mark.Grillers or stickStands < mark.StickStands or seats < mark.Seats then
 			break
 		end
 
@@ -1289,7 +1564,7 @@ function CustomOrderNpcManager:TryRestoreCustomOrders(player: Player): boolean
 	return true
 end
 
--- One pass of the custom-order roll, cheapest checks first so the data reads are rare.
+-- One pass of the custom-order roll, cheapest checks first. The chance counts their free seats, so it waits on the data read.
 function CustomOrderNpcManager:_rollCustomOrderVisits()
 	for _, player in Players:GetPlayers() do
 		if not validatePlayer(player) then
@@ -1301,12 +1576,21 @@ function CustomOrderNpcManager:_rollCustomOrderVisits()
 			continue
 		end
 
-		if not RandomUtil.RollChance(CustomOrderNpc.SPAWN_CHANCE, self._rng) then
+		local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+		if not hasData or not self:IsUnlocked(data) then
 			continue
 		end
 
-		local hasData, data = PlayerDataManager:GetPlayerData(player):await()
-		if not hasData or not self:IsUnlocked(data) then
+		-- Room to sit them draws them in more often and sooner, each within its cap
+		local freeSeats = self:CountFreeSeats(player, data)
+		local chance = CustomOrderNpc.SPAWN_CHANCE
+			+ math.min(freeSeats * CustomOrderNpc.SEAT_SPAWN_CHANCE_STEP, CustomOrderNpc.SEAT_SPAWN_CHANCE_MAX_BONUS)
+		local cooldown = math.max(
+			CustomOrderNpc.COOLDOWN - freeSeats * CustomOrderNpc.SEAT_COOLDOWN_STEP,
+			CustomOrderNpc.SEAT_COOLDOWN_MIN
+		)
+
+		if not RandomUtil.RollChance(chance, self._rng) then
 			continue
 		end
 
@@ -1316,7 +1600,7 @@ function CustomOrderNpcManager:_rollCustomOrderVisits()
 		end
 
 		-- In their data on the synced clock, so rejoining can't hand out a fresh order
-		if (workspace:GetServerTimeNow() - data.LastCustomOrderVisit) < CustomOrderNpc.COOLDOWN then
+		if (workspace:GetServerTimeNow() - data.LastCustomOrderVisit) < cooldown then
 			continue
 		end
 
@@ -1329,15 +1613,25 @@ function CustomOrderNpcManager:_rollCustomOrderVisits()
 	end
 end
 
--- Sends one now off the command bar, keeping only the checks that would leave it meaningless. A named `variation` is forced; without one it rolls as an ordinary visit would.
-function CustomOrderNpcManager:ForceCustomOrderVisit(player: Player, variation: string?): (boolean, string?)
+-- Sends one now off the command bar, keeping only the checks that would leave it meaningless. A named `variation` or `rich` is forced; without one it rolls as an ordinary visit would.
+function CustomOrderNpcManager:ForceCustomOrderVisit(
+	player: Player,
+	variation: string?,
+	rich: boolean?
+): (boolean, string?)
 	if not validatePlayer(player) then
 		return false, `{player.Name} has no base to send a customer to.`
 	end
 
-	if not self:CanSendAnotherCustomOrder(player, PlayerDataManager:GetLoadedPlayerData(player)) then
+	local data = PlayerDataManager:GetLoadedPlayerData(player)
+	if not self:CanSendAnotherCustomOrder(player, data) then
 		return false,
 			`{player.Name} can't take another custom order yet: one is still on its way, or their base has no room.`
+	end
+
+	-- Checked up front, since the visit itself quietly turns an unbuildable rich order into an ordinary one
+	if rich and not self:_buildOrder(data, true) then
+		return false, `{player.Name} has no Rare or better ingredient in reach, so no rich order can be built.`
 	end
 
 	-- Stamped as the roll stamps it, but not read, so the command can still be re-run straight away
@@ -1361,7 +1655,7 @@ function CustomOrderNpcManager:ForceCustomOrderVisit(player: Player, variation: 
 			end
 		end
 
-		self:_runGuardedVisit(player, variation)
+		self:_runGuardedVisit(player, variation, nil, nil, rich)
 	end)
 
 	if queued then
@@ -1473,6 +1767,18 @@ function CustomOrderNpcManager:OnStart()
 		else
 			warn(
 				`[CustomOrderNpcManager] CustomOrderNpc.TIER_WEIGHTS names tier {tierId}, which Ingredients has no entry for`
+			)
+		end
+	end
+
+	for tierId, weight in CustomOrderNpc.RICH_TIER_WEIGHTS do
+		local tier = Ingredients.GetTierFromId(tierId)
+		if tier then
+			table.insert(self._richTierWeights, { tierId, weight })
+			self._richMinTierIndex = math.min(self._richMinTierIndex, tier.Index)
+		else
+			warn(
+				`[CustomOrderNpcManager] CustomOrderNpc.RICH_TIER_WEIGHTS names tier {tierId}, which Ingredients has no entry for`
 			)
 		end
 	end

@@ -3,7 +3,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local DataStoreService = game:GetService("DataStoreService")
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
-local Workspace = game:GetService("Workspace")
 
 -- Packages
 local Packages = ReplicatedStorage.Packages
@@ -31,12 +30,18 @@ local LeaderboardManager = {
 	_appliedRigUserIds = {}, -- [leaderboardKey] = userId currently shown on the Rig
 }
 
+-- Dresses the Rig on every copy of a leaderboard as its current #1 player.
 function LeaderboardManager:UpdateLeaderboardRig(leaderboardKey: string, topEntry: { key: string, value: number }?)
-	local leaderboards = Workspace:FindFirstChild("Leaderboards")
-	local leaderboard = leaderboards and leaderboards:FindFirstChild(leaderboardKey)
-	local rig = leaderboard and leaderboard:FindFirstChild("Rig")
-	local humanoid = rig and rig:FindFirstChildWhichIsA("Humanoid")
-	if not humanoid then
+	local humanoids = {}
+	for _, leaderboard in workspace.Leaderboards:GetChildren() do
+		local rig = leaderboard.Name == leaderboardKey and leaderboard:FindFirstChild("Rig")
+		local humanoid = rig and rig:FindFirstChildWhichIsA("Humanoid")
+		if humanoid then
+			table.insert(humanoids, humanoid)
+		end
+	end
+
+	if #humanoids == 0 then
 		return
 	end
 
@@ -61,9 +66,11 @@ function LeaderboardManager:UpdateLeaderboardRig(leaderboardKey: string, topEntr
 		return
 	end
 
-	pcall(function()
-		humanoid:ApplyDescriptionAsync(description)
-	end)
+	for _, humanoid in humanoids do
+		pcall(function()
+			humanoid:ApplyDescriptionAsync(description)
+		end)
+	end
 end
 
 function LeaderboardManager:SaveLeaderboard()

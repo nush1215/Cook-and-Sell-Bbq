@@ -5,10 +5,10 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Managers = ServerScriptService.Server.Managers
 local CustomOrderNpcManager = require(Managers.CustomOrderNpcManager)
 
-return function(context, player: Player?, variation: string?)
+return function(context, player: Player?, variation: string?, rich: boolean?)
 	local target = player or context.Executor
 
-	local success, message = CustomOrderNpcManager:ForceCustomOrderVisit(target, variation)
+	local success, message = CustomOrderNpcManager:ForceCustomOrderVisit(target, variation, rich)
 	if not success then
 		return message or "Failed to send a custom order customer."
 	end

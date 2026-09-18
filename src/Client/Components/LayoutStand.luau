@@ -28,10 +28,10 @@ function LayoutStand:Start()
 		})
 	end
 
-	-- Rise in and pop from the below-slot, undersized pose the server authored the fresh copy at.
+	-- Rise in and pop from the below-slot, undersized pose the server authored the fresh copy at. A structure names its own scale
 	Spr.target(model, BaseUnlocks.LAYOUT_DAMPING, BaseUnlocks.LAYOUT_FREQUENCY, {
 		Pivot = model:GetAttribute("SlotCFrame"),
-		Scale = 1,
+		Scale = model:GetAttribute("SlotScale") or 1,
 	})
 
 	if model:GetAttribute("PulseOnSpawn") then

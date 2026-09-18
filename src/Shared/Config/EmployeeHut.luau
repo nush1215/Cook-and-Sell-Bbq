@@ -80,8 +80,8 @@ EmployeeHut.REQUIRED_PLOT = "1"
 
 -- The cell the hut sits on, in the base's own lattice -- both states are posed off it, so the repair swaps
 -- the model without moving it. Quarter-turns, as everything placed uses (see GridUtil.RotateFootprint)
-EmployeeHut.CELL_X = -20
-EmployeeHut.CELL_Z = 14
+EmployeeHut.CELL_X = -40
+EmployeeHut.CELL_Z = 28
 EmployeeHut.CELL_ROTATION = 3
 
 -- What repairing it costs. Sits between the first plot (5k) and the second (50k) -- it's the next thing bought after making room for it

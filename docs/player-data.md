@@ -5,6 +5,17 @@ this holds the reasoning behind the ones where the shape is a decision.
 
 ## Core game
 
+**`Gems`** — the second currency, beside `Currency` (Bux). Today its only source is customer tips (see
+`CustomerTipManager` and the customer-tips section of `docs/balance.md`), paid through
+`CurrencyManager:IncrementGems`.
+- **Never boosted.** Every boost is a promise about Bux.
+- **Not added to `TotalEarned`**, because that total drives the early boost and the richest leaderboard, and both
+  are about Bux.
+- **Nothing spends it yet.** A `DeductGems` belongs with the first sink.
+- **Not in `TutorialManager`'s `PROGRESS_RESET_KEYS`.** Nothing can earn Gems in an unfinished run, since tips stay
+  off while the tutorial has customers guaranteed, so the wipe would only ever reset a 0 or an admin grant. It also
+  means Gems bought for Robux later can't be lost to a tutorial wipe.
+
 **`Plots`** — plots bought, keyed by name in the base's Plots folder. The starting plot isn't here: it's
 the `START` cell in `Config.Plots`' grid, owned from handover. A plot is priced off *how many* of these
 there are rather than *which*, so the choice is where to expand and never how much for.
@@ -220,6 +231,10 @@ ceiling, because a cook has a safe place to stop at and an order does not.
 
 `Counts` is deliberately not saved: it is `countIngredients(Ingredients)`, and keeping a second copy of
 the same fact in the profile only creates something to fall out of step.
+
+`Rich` is `true` on a rich customer's order and absent otherwise, so entries saved before rich orders
+existed read as ordinary with no migration. A restored rich order comes back on a rich rig and tips at the
+rich rate. The table seat it held is not saved: a restored accepted order claims whatever seat is free.
 
 **`CustomOrderHistory`** — the last `Rating.ORDER_WINDOW` resolved orders, oldest first. This
 is the `RecentSales` idiom and it is here for the same reason: a rating has to be able to fall as well as

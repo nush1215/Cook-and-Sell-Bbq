@@ -447,6 +447,37 @@ function NpcRig.GiveSkewer(npc: Model, record, scale: number?): (Tool, Model?)
 	return NpcRig.GiveCarried(npc, StickModel.BuildStickModel(record), scale)
 end
 
+-- Fades the skewer's ingredients out in order over `duration`, so the food looks eaten off the stick. Yields for `duration`.
+function NpcRig.EatSkewerIngredients(skewer: Model, duration: number)
+	local ingredients = {}
+	for _, child in skewer:GetChildren() do
+		if child:GetAttribute("SkewerIndex") then
+			table.insert(ingredients, child)
+		end
+	end
+	table.sort(ingredients, function(a, b)
+		return a:GetAttribute("SkewerIndex") < b:GetAttribute("SkewerIndex")
+	end)
+
+	if #ingredients == 0 then
+		task.wait(duration)
+		return
+	end
+
+	local slice = duration / #ingredients
+	local fadeInfo = TweenInfo.new(slice)
+	for _, ingredient in ingredients do
+		for _, descendant in ingredient:GetDescendants() do
+			if descendant:IsA("BasePart") or descendant:IsA("Decal") then
+				TweenService:Create(descendant, fadeInfo, { Transparency = 1 }):Play()
+			elseif descendant:IsA("ParticleEmitter") then
+				descendant.Enabled = false
+			end
+		end
+		task.wait(slice)
+	end
+end
+
 -- Walks the NPC to `destination`, re-issuing MoveTo until it arrives or WALK_TIMEOUT elapses.
 function NpcRig.WalkTo(humanoid: Humanoid, destination: Vector3)
 	local rootPart = humanoid.RootPart

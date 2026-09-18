@@ -18,6 +18,8 @@ local PlayerDataManager
 local CurrencyManager = {
 	-- (player, amount, source, isGain) after every change; `source` is nil for grants outside the economy
 	OnCurrencyChanged = Signal.new(),
+	-- OnCurrencyChanged's twin for Gems, with the same arguments so analytics reads both the same way
+	OnGemsChanged = Signal.new(),
 
 	_earlyBoostDisabled = {}, -- [player] = true while an admin has their early boost switched off
 }
@@ -83,6 +85,12 @@ function CurrencyManager:IncrementCurrency(player: Player, amount: number?, sour
 	PlayerDataManager:IncrementDataKey(player, "TotalEarned", amount)
 	PlayerDataManager:IncrementDataKey(player, "Currency", amount)
 	self.OnCurrencyChanged:Fire(player, amount, source, true)
+end
+
+-- Grants Gems. Never boosted and kept out of TotalEarned, since the boosts and that lifetime total are both about Bux.
+function CurrencyManager:IncrementGems(player: Player, amount: number, source: string?)
+	PlayerDataManager:IncrementDataKey(player, "Gems", amount)
+	self.OnGemsChanged:Fire(player, amount, source, true)
 end
 
 -- Spends currency. `source` names what it went on and rides on OnCurrencyChanged.

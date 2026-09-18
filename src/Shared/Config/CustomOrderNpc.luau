@@ -14,11 +14,39 @@ CustomOrderNpc.COOLDOWN = 100
 CustomOrderNpc.MIN_GRILLERS = 2
 CustomOrderNpc.MIN_ROLLING_STANDS = 2
 
--- Placed builds per order a base can have running at once; it runs as many as the rows it clears, in order
+-- Placed builds per order a base can have running at once; it runs as many as the rows it clears, in order.
+-- Seats is every seat on their placed tables
 CustomOrderNpc.CONCURRENT_ORDER_MARKS = {
-	{ Grillers = 0, StickStands = 0 },
-	{ Grillers = 3, StickStands = 2 },
+	{ Grillers = 0, StickStands = 0, Seats = 0 },
+	{ Grillers = 3, StickStands = 2, Seats = 0 },
+	{ Grillers = 4, StickStands = 2, Seats = 6 },
+	{ Grillers = 5, StickStands = 3, Seats = 12 },
 }
+
+-- What each free seat adds to SPAWN_CHANCE, up to the bonus cap, so a base with room to sit them draws more
+CustomOrderNpc.SEAT_SPAWN_CHANCE_STEP = 2
+CustomOrderNpc.SEAT_SPAWN_CHANCE_MAX_BONUS = 30
+
+-- Seconds each free seat takes off COOLDOWN, never below the floor
+CustomOrderNpc.SEAT_COOLDOWN_STEP = 3
+CustomOrderNpc.SEAT_COOLDOWN_MIN = 60
+
+-- Seconds a seated customer spends eating, where a standing one takes SellNpc.EAT_DURATION
+CustomOrderNpc.SEATED_EAT_DURATION = 15
+
+-- Chance out of 100 a visit is a rich customer, plus every placed table's RichChanceBonus, up to the max
+CustomOrderNpc.RICH_CHANCE = 10
+CustomOrderNpc.RICH_CHANCE_MAX = 40
+
+-- What a rich customer asks for, out of 100. Rare and up only: a tier missing here is never asked for
+CustomOrderNpc.RICH_TIER_WEIGHTS = {
+	Rare = 65,
+	Epic = 25,
+	Legendary = 10,
+}
+
+-- Added to a rich order's premium and its cap, kept small since the Rare+ recipe already carries the value
+CustomOrderNpc.RICH_MULTIPLIER_BONUS = 0.1
 
 -- The two ways a visit opens. Named rather than a boolean, so the command bar can ask for one by name
 CustomOrderNpc.VARIATIONS = {
