@@ -991,6 +991,46 @@ Above common the boost is pure profit, and that's where the tiers are meant to b
 bamboo carry none on purpose: at $3 and $17 a slot their price is already noise, and what they sell is
 capacity.
 
+## Broke relief
+
+The loop can't bankrupt anyone on its own — rolls are free and even a charred skewer sells above cost — so
+the only way to get stuck is spending on things that don't earn (structures, workers, unlocks, huts) until
+there's **no skewer anywhere and too little to buy what's missing**. `IngredientRollingManager` hands a
+player in that state whichever half they lack, into the backpack, "on the house": a Corn and an Onion (the
+two cheapest, a full Wooden stick) and/or the cheapest stick. The gift is authored
+(`BROKE_RELIEF_INGREDIENT_IDS`); only the line it's handed out at is derived.
+
+**The rule.** Broke means tutorial done, nothing with an ingredient on it anywhere (held, stick stands,
+grills, the stall, a worker's hands, or taken off the stall by a customer mid-offer), and Bux plus any
+unclaimed offline payout below the price of whichever halves they own none of. An ingredient counts from
+inventory, hut storage, a maker's load, or a crate that only pays ingredients; a stick from inventory, hut
+storage, a maker's load, an empty stick on a stand, or a crate that only pays sticks.
+
+**The two prices** are derived, not authored: the cheapest ingredient (every entry rolls and rerolls are
+free, so affording it is a way in, however many pulls it takes) and the cheapest stick with a
+`RestockChance` of 100 (so affording it is at most one restock's wait — and buying out that window's stock
+means owning sticks). Gems, daily rewards and quest claims deliberately don't count.
+
+**When unsure, it errs toward gifting.** A mixed crate (the Grill Starter) counts for neither half, and a
+skewer plated on a dormant sauce dispenser isn't looked at. A wrong gift costs ~$160; a wrong refusal leaves
+someone stuck.
+
+**It's a separate grant, never a steered roll.** Ingredients are sold for Robux, so the odds on the label
+have to stay the odds — weighting a broke player's pulls toward cheap entries would break that.
+
+**When it runs.** Two seconds after any Bux spend, a skewer traded to the wizard, or a join — the only ways
+to lose a last way back to a sale — restarted by each trigger so a burst runs once. The delay is
+load-bearing: purchases deduct before they grant, so an instant check would catch one halfway. There's no
+cooldown because the gift is self-limiting: it leaves them owning what they lacked, and selling the skewer
+lands them above the line. Two brief in-flight windows are accepted rather than tracked — a custom order's
+skewer between hand-over and payment, and a crate's rewards during its opening show — each worth at most
+one unneeded gift.
+
+Logged as `Broke Relief Granted` (value: the Bux they were down to; fields: what they lacked —
+`Ingredients`, `Stick` or `Both` — and that Bux figure again, as text for breakdowns), then one `Broke Relief Outcome` per gift — `Sold` at their next skewer sale or custom order,
+`Regranted` if they went broke again first, `Left` if the session ended first — valued in seconds since
+the gift. A high `Left` share is the sign the gift isn't enough.
+
 ## Offline earnings
 
 `Shared/Config/OfflineEarnings.luau`. The hut's workers keep going while their owner is away. On the next

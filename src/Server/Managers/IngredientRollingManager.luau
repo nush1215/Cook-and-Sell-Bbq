@@ -20,6 +20,8 @@ local BaseUnlocks = require(Shared.Config.BaseUnlocks)
 local EarlyBoost = require(Shared.Config.EarlyBoost)
 local CustomOrderNpc = require(Shared.Config.CustomOrderNpc)
 local Boosts = require(Shared.Config.Boosts)
+local Sticks = require(Shared.Config.Sticks)
+local Crates = require(Shared.Config.Crates)
 
 --
 local PlayerDataManager
@@ -31,6 +33,31 @@ local StatsManager
 local BaseManager
 local ShopManager
 local CustomOrderNpcManager
+local StickManager
+local SellNpcManager
+local OfflineEarningManager
+
+--
+local BROKE_CHECK_DELAY = 2 -- seconds after a trigger; a purchase deducts before it grants, so an instant check would catch one halfway
+
+-- What a broke player owning no ingredient is handed: the two cheapest, a full Wooden stick's worth
+local BROKE_RELIEF_INGREDIENT_IDS = table.freeze({ "Corn", "Onion" })
+
+-- The cheapest thing a stand can land. Every entry rolls and rerolls are free, so affording it means a way back in
+local CHEAPEST_INGREDIENT = Ingredients.Data[1]
+for _, ingredient in Ingredients.Data do
+	if ingredient.Price < CHEAPEST_INGREDIENT.Price then
+		CHEAPEST_INGREDIENT = ingredient
+	end
+end
+
+-- The cheapest stick stocked every window, so affording it means at most one restock's wait
+local CHEAPEST_STICK
+for _, stick in Sticks.GetRestockableSticks() do
+	if stick.RestockChance >= 100 and (not CHEAPEST_STICK or stick.Price < CHEAPEST_STICK.Price) then
+		CHEAPEST_STICK = stick
+	end
+end
 
 --
 local IngredientRollingManager = {
@@ -48,6 +75,8 @@ local IngredientRollingManager = {
 	OnIngredientPurchased = Signal.new(),
 	-- (player, standId, ingredientId) on a teaser. Fires alongside OnIngredientRolled, not instead of it
 	OnIngredientTeased = Signal.new(),
+	-- (player, ingredientIds?, stickId?, balance) when a broke player is handed what they were missing
+	OnBrokeReliefGranted = Signal.new(),
 
 	-- The rolls live in player data (data.PendingRolls), so one landed on but not bought survives a rejoin.
 	_inCooldown = {}, -- [player] = true, held until the roll animation has had time to finish
@@ -59,11 +88,23 @@ local IngredientRollingManager = {
 	-- [player] = { StandId, IngredientId } the open Robux prompt was raised for, so a new pull can't reprice it
 	_pendingRobuxStand = {},
 	_promptingRobux = {}, -- [player] = true across the Robux prompt's read -> prompt window, so a mash raises one
+	_brokeChecks = {}, -- [player] = the delayed broke check, restarted by every trigger so a burst runs one
 }
 
 --
 local function validatePlayer(player: Player?): boolean
 	return player ~= nil and player:IsDescendantOf(Players)
+end
+
+-- Whether an [id] = amount table holds at least one of anything. A spent entry stays behind at 0, so presence isn't enough.
+local function hasAnyCount(counts: { [string]: number }): boolean
+	for _, amount in counts do
+		if amount > 0 then
+			return true
+		end
+	end
+
+	return false
 end
 
 -- Mirrors pending rolls onto the stand models, which is a visitor's only view of them. Written folder-wide.
@@ -537,6 +578,132 @@ function IngredientRollingManager:GrantIngredientFromProduct(player: Player, tie
 	end
 end
 
+-- Whether a broke player is missing ingredients, and the stick they're missing, to build a skewer. False and nil while they own one or can buy their way to one.
+function IngredientRollingManager:GetBrokeReliefItems(player: Player, data): (boolean, Sticks.Stick?)
+	-- Taken off the stall mid-offer, so it's out of their data but still pays or comes back
+	if SellNpcManager:IsCustomerHoldingSkewer(player) then
+		return false, nil
+	end
+
+	local hasIngredient = hasAnyCount(data.Ingredients)
+	local hasStick = hasAnyCount(data.Sticks)
+
+	for _, store in data.HutStorage do
+		hasIngredient = hasIngredient or hasAnyCount(store.Ingredients)
+		hasStick = hasStick or hasAnyCount(store.Sticks)
+	end
+
+	-- A maker's load is loose stock on its way to a stand; a carried skewer joins the records below
+	local carried = {}
+	for _, employee in data.Employees do
+		if employee.Carrying then
+			table.insert(carried, employee.Carrying)
+		end
+
+		if employee.Load then
+			hasStick = hasStick or employee.Load.StickId ~= nil
+			hasIngredient = hasIngredient or #employee.Load.Ingredients > 0
+		end
+	end
+
+	-- Anything with an ingredient on sells, raw or charred; an empty stick is still a stick
+	for _, records in { data.FilledSticks, data.StickStands, data.Grillers, data.SkewerStand, carried } do
+		for _, record in records do
+			if #record.Ingredients > 0 then
+				return false, nil
+			end
+
+			hasStick = true
+		end
+	end
+
+	-- A mixed crate can't be counted on for either half
+	for crateId, amount in data.Crates do
+		local crate = Crates.GetCrateFromId(crateId)
+		if amount > 0 and crate then
+			local rewardType = Crates.GetGuaranteedRewardType(crate)
+			hasIngredient = hasIngredient or rewardType == "Ingredient"
+			hasStick = hasStick or rewardType == "Stick"
+		end
+	end
+
+	-- Priced off one ingredient, since one is all it takes to build their way back
+	local stick = if hasStick then nil else CHEAPEST_STICK
+	local shortfall = (if hasIngredient then 0 else CHEAPEST_INGREDIENT.Price) + (if stick then stick.Price else 0)
+
+	-- An unpressed offline claim is money already theirs
+	local claim = OfflineEarningManager:GetPendingClaimPayload(player)
+	local balance = data.Currency + (if claim then claim.Amount else 0)
+
+	if balance >= shortfall then
+		return false, nil
+	end
+
+	return not hasIngredient, stick
+end
+
+-- Hands a broke player the relief ingredients and/or the cheapest stick, whichever they're missing, so there's always a way back to a sale.
+function IngredientRollingManager:GrantBrokeRelief(player: Player)
+	if not validatePlayer(player) then
+		return
+	end
+
+	-- The tutorial runs its own economy, handing over everything its steps need
+	local data = PlayerDataManager:GetLoadedPlayerData(player)
+	if not data or not data.TutorialCompleted then
+		return
+	end
+
+	local needsIngredients, stick = self:GetBrokeReliefItems(player, data)
+	if not needsIngredients and not stick then
+		return
+	end
+
+	-- Into the backpack rather than the hand, since the usual way here is buying a structure they're about to place
+	local gifts = {}
+	if needsIngredients then
+		for _, ingredientId in BROKE_RELIEF_INGREDIENT_IDS do
+			IngredientManager:GrantIngredient(player, ingredientId, 1, true)
+			table.insert(gifts, Ingredients.GetIngredientFromId(ingredientId).Name)
+		end
+	end
+
+	if stick then
+		StickManager:GrantStick(player, stick.Id, 1, true)
+		table.insert(gifts, `{stick.Name} Stick`)
+	end
+
+	local last = table.remove(gifts)
+	NotificationManager:NotifyNormal(player, {
+		Text = if #gifts > 0
+			then `On the house! Here's a free {table.concat(gifts, ", ")} and {last}`
+			else `On the house! Here's a free {last}`,
+		Duration = 5,
+		Sound = "CollectedReward",
+		Effect = "Success",
+	})
+
+	self.OnBrokeReliefGranted:Fire(
+		player,
+		if needsIngredients then BROKE_RELIEF_INGREDIENT_IDS else nil,
+		stick and stick.Id,
+		data.Currency
+	)
+end
+
+-- Runs the broke check shortly after something that could have taken their last way out. Restarted by each trigger, so a burst of purchases runs one.
+function IngredientRollingManager:ScheduleBrokeReliefCheck(player: Player)
+	local pending = self._brokeChecks[player]
+	if pending then
+		task.cancel(pending)
+	end
+
+	self._brokeChecks[player] = task.delay(BROKE_CHECK_DELAY, function()
+		self._brokeChecks[player] = nil
+		self:GrantBrokeRelief(player)
+	end)
+end
+
 function IngredientRollingManager:OnInit()
 	PlayerDataManager = require(script.Parent.PlayerDataManager)
 	CurrencyManager = require(script.Parent.CurrencyManager)
@@ -547,6 +714,9 @@ function IngredientRollingManager:OnInit()
 	ShopManager = require(script.Parent.ShopManager)
 	CustomOrderNpcManager = require(script.Parent.CustomOrderNpcManager)
 	BoostManager = require(script.Parent.BoostManager)
+	StickManager = require(script.Parent.StickManager)
+	SellNpcManager = require(script.Parent.SellNpcManager)
+	OfflineEarningManager = require(script.Parent.OfflineEarningManager)
 end
 
 function IngredientRollingManager:OnStart()
@@ -570,16 +740,32 @@ function IngredientRollingManager:OnStart()
 	end)
 
 	-- The base rebuilds its stands on assignment, so last session's rolls have to be stamped back on.
+	-- The join is also a broke check, which is what rescues anyone who went broke before it existed
 	BaseManager.OnBaseAssigned:Connect(function(player: Player)
 		self:RestorePendingRollsToBase(player)
+		self:ScheduleBrokeReliefCheck(player)
 	end)
 
 	-- Covers a base handed over before the connect above existed. Spawned, since the read yields
 	for _, player in Players:GetPlayers() do
 		task.spawn(function()
 			self:RestorePendingRollsToBase(player)
+			self:ScheduleBrokeReliefCheck(player)
 		end)
 	end
+
+	-- The only ways to lose a last way back to a sale: spending, and a skewer traded for luck rather than cash
+	CurrencyManager.OnCurrencyChanged:Connect(function(player: Player, _amount: number, _source: string?, isGain: boolean)
+		if not isGain then
+			self:ScheduleBrokeReliefCheck(player)
+		end
+	end)
+
+	SellNpcManager.OnWizardVisitResolved:Connect(function(player: Player, ending: string)
+		if ending == "Accepted" then
+			self:ScheduleBrokeReliefCheck(player)
+		end
+	end)
 
 	Players.PlayerRemoving:Connect(function(player: Player)
 		self._inCooldown[player] = nil
@@ -589,6 +775,11 @@ function IngredientRollingManager:OnStart()
 		self._forcedTeasers[player] = nil
 		self._pendingRobuxStand[player] = nil
 		self._promptingRobux[player] = nil
+
+		if self._brokeChecks[player] then
+			task.cancel(self._brokeChecks[player])
+			self._brokeChecks[player] = nil
+		end
 	end)
 end
 

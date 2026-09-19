@@ -142,15 +142,17 @@ function IngredientManager:GetEquippedIngredientId(player: Player): string?
 	return nil
 end
 
--- Adds to the player's owned count and records the obtain in their index. Returns whether it was their first.
-function IngredientManager:GrantIngredient(player: Player, ingredientId: string, amount: number?): boolean
+-- Adds to the player's owned count and records the obtain in their index. Returns whether it was their first. `skipEquip` leaves whatever they're holding in hand.
+function IngredientManager:GrantIngredient(player: Player, ingredientId: string, amount: number?, skipEquip: boolean?): boolean
 	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
 	if not hasData then
 		return false
 	end
 
 	-- Flagged before the write, since that's what runs the reconcile that builds the tool to equip
-	self._pendingEquips[player] = ingredientId
+	if not skipEquip then
+		self._pendingEquips[player] = ingredientId
+	end
 
 	local owned = data.Ingredients[ingredientId] or 0
 	PlayerDataManager:SetPlayerDataKey(player, { "Ingredients", ingredientId }, owned + (amount or 1))

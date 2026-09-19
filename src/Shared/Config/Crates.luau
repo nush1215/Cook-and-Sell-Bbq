@@ -306,6 +306,28 @@ function Crates.GetRewardCount(crate: Crate): number
 	return count
 end
 
+-- The one Type every slot of this crate pays out, or nil for a crate mixing sticks and ingredients.
+function Crates.GetGuaranteedRewardType(crate: Crate): RewardType?
+	local found = {}
+
+	local function collect(rewards: { RewardEntry })
+		for _, reward in rewards do
+			if reward.Rewards then
+				collect(reward.Rewards)
+			else
+				found[reward.Type] = true
+			end
+		end
+	end
+
+	for _, group in crate.Contents do
+		collect(group.Rewards)
+	end
+
+	local only = next(found)
+	return if next(found, only) == nil then only else nil
+end
+
 -- The cooldown (seconds) opening `count` crates at once costs the player.
 function Crates.GetOpenCooldown(count: number): number
 	return Crates.OPEN_COOLDOWN_BASE + math.max(count, 1) * Crates.OPEN_COOLDOWN_PER_CRATE
