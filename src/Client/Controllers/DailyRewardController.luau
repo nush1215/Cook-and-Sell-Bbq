@@ -21,6 +21,7 @@ local PlayerDataController = require(script.Parent.PlayerDataController)
 local FreeWorkersController = require(script.Parent.FreeWorkersController)
 local TutorialCrateController = require(script.Parent.TutorialCrateController)
 local ShopController = require(script.Parent.ShopController)
+local OfflineEarningController = require(script.Parent.OfflineEarningController)
 
 --
 local LocalPlayer = Players.LocalPlayer
@@ -370,11 +371,12 @@ function DailyRewardController:OnStart()
 				return
 			end
 
-			-- Stood on their base first, where the offline earnings panel comes up too
+			-- Stood on their base first, and behind the offline earnings panel, which goes up ahead of the week when there's one
 			while LocalPlayer:GetAttribute("BaseId") == nil do
 				LocalPlayer:GetAttributeChangedSignal("BaseId"):Wait()
 			end
 
+			OfflineEarningController:WaitForJoinClaim()
 			self:OpenDailyRewardsIfReady()
 		end)
 		:catch(warn)

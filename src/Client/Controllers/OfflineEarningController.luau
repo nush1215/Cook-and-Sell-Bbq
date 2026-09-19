@@ -2,6 +2,10 @@
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local Players = game:GetService("Players")
 
+-- Packages
+local Packages = ReplicatedStorage.Packages
+local Signal = require(Packages.Signal)
+
 -- Shared
 local Shared = ReplicatedStorage.Shared
 local Network = require(Shared.Network)
@@ -28,11 +32,22 @@ local REQUEST_TIMEOUT = 3
 --
 local OfflineEarningController = {
 	ShowOfflineEarningsEvent = Network.Event("ShowOfflineEarnings"),
+	GetOfflineEarningsFunction = Network.Function("GetOfflineEarnings"),
 	ClaimOfflineEarningsEvent = Network.Event("ClaimOfflineEarnings"),
 	OfflineEarningsClaimResultEvent = Network.Event("OfflineEarningsClaimResult"),
 
+	OnJoinClaimResolved = Signal.new(), -- () once the join's ask has been answered, panel up or not
+
+	_joinClaimResolved = false, -- whether the join's ask has been answered, so a later waiter doesn't hang
 	_claiming = false, -- the client half of the debounce; the server holds the authoritative one
 }
+
+-- Yields until the join's ask has been answered, so a panel that should sit behind this one can wait its turn.
+function OfflineEarningController:WaitForJoinClaim()
+	if not self._joinClaimResolved then
+		self.OnJoinClaimResolved:Wait()
+	end
+end
 
 -- Fills the panel with what the workers did and opens it.
 function OfflineEarningController:ShowOfflineEarnings(data)
@@ -94,6 +109,27 @@ function OfflineEarningController:OnStart()
 
 	self.ShowOfflineEarningsEvent:OnClientEvent(function(data)
 		self:ShowOfflineEarnings(data)
+	end)
+
+	-- Asked for once stood on the base, since a push on assign landed before the handler above existed and was dropped
+	task.spawn(function()
+		while LocalPlayer:GetAttribute("BaseId") == nil do
+			LocalPlayer:GetAttributeChangedSignal("BaseId"):Wait()
+		end
+
+		-- A timed-out ask still resolves, so the panels waiting behind this one aren't held for it
+		local ok, payload = pcall(function()
+			return self.GetOfflineEarningsFunction:Invoke()
+		end)
+
+		if ok and payload then
+			self:ShowOfflineEarnings(payload)
+		elseif not ok then
+			warn(`[OfflineEarning] {payload}`)
+		end
+
+		self._joinClaimResolved = true
+		self.OnJoinClaimResolved:Fire()
 	end)
 
 	self.OfflineEarningsClaimResultEvent:OnClientEvent(function(data)

@@ -22,7 +22,7 @@ local Shared = ReplicatedStorage.Shared
 local GuiUtil = require(Shared.GuiUtil)
 
 --
-local USE_STUDIO_DATA = false
+local USE_STUDIO_DATA = true
 local LIVE_DATA_VERSION = "PLAYER_DATA_A6"
 local STUDIO_DATA_VERSION = "PLAYER_DATA_STUDIO_A6"
 local DEFAULT_TIMEOUT = 25
