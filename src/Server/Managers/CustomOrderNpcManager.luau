@@ -382,6 +382,7 @@ local function buildSavedOrder(record, phase: string)
 			else nil,
 		TierIndex = order.TierIndex,
 		Rich = order.Rich,
+		Look = record.look,
 		FirstVisit = record.firstVisit,
 		FunnelId = record.funnelId,
 	}
@@ -1051,7 +1052,10 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	-- The sell stand's slot allocator, so this one lines up beside its customers rather than inside them
 	local slot, standPosition = NpcRig.ClaimStandPosition(player, spawnPart, standPart)
 
-	local npc = if isRich then SellNpcManager:AcquireRichNpc() else NpcRig.Acquire()
+	-- A saved order comes back wearing the look it left in; one saved before looks were kept has none, and rolls fresh
+	local savedLook = if saved then saved.Look else nil
+
+	local npc = if isRich then SellNpcManager:AcquireRichNpc(savedLook) else NpcRig.Acquire()
 	local humanoid = npc:FindFirstChildOfClass("Humanoid")
 
 	-- Tracked before anything yields, so the pacing check counts it and a mid-lookup cleanup destroys the rig rather than orphaning it
@@ -1062,6 +1066,8 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 		standPosition = standPosition,
 		order = order,
 		isRich = isRich,
+		-- Saved with the order, so a restore brings back the same character rather than a fresh roll
+		look = if isRich then npc.Name else nil,
 		-- Both come off the save on a restore, so an interrupted introduction still reads as one and the
 		-- funnel follows the same order across the rejoin rather than starting a second one
 		firstVisit = if saved then saved.FirstVisit else firstVisit,
@@ -1072,7 +1078,10 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	table.insert(tracked, record)
 
 	-- A rich customer is its own character, so there's no appearance to look up
-	local description = if isRich then nil else NpcRig.GetCustomerDescription(player, self._rng)
+	local description = nil
+	if not isRich then
+		description, record.look = NpcRig.GetCustomerDescription(player, self._rng, savedLook)
+	end
 	if npc.Parent == nil then
 		return
 	end

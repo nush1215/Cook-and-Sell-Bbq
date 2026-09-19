@@ -108,9 +108,11 @@ local function validatePlayer(player: Player): boolean
 	return player:IsDescendantOf(Players) and player:GetAttribute("BaseId") ~= nil
 end
 
--- Clones a random rich rig with its badge and particles. Not pooled -- each is its own character, so it's destroyed on the way out.
-function SellNpcManager:AcquireRichNpc(): Model
-	local npc = RandomUtil.GetRandomFromArray(RichNpcFolder:GetChildren(), nil, self._rng):Clone()
+-- Clones a rich rig with its badge and particles: the one named `name` if it's still there, else a random one. Not pooled -- each is its own character, so it's destroyed on the way out.
+function SellNpcManager:AcquireRichNpc(name: string?): Model
+	local template = name and RichNpcFolder:FindFirstChild(name)
+		or RandomUtil.GetRandomFromArray(RichNpcFolder:GetChildren(), nil, self._rng)
+	local npc = template:Clone()
 	CollisionManager:SetModelGroup(npc, CollisionManager.NPC)
 
 	-- Whole or not at all: under default mode the tag lands on the client long before the head the billboards hang off

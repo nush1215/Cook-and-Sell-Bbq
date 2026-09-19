@@ -256,6 +256,14 @@ the same fact in the profile only creates something to fall out of step.
 existed read as ordinary with no migration. A restored rich order comes back on a rich rig and tips at the
 rich rate. The table seat it held is not saved: a restored accepted order claims whatever seat is free.
 
+`Look` is who the customer was, so a restored order comes back as the same character: a friend's `UserId`
+(a number) or an `Assets.NPC` rig's name (a string) for an ordinary one, a `RichNPC` rig's name for a rich
+one. It's absent on entries saved before looks were kept, and those roll a fresh look as they always did.
+A look that can't be had any more — a rig since renamed or removed, or a friend's appearance that fails to
+load — rolls fresh too, and the new one is what the next save keeps. A friend since unfriended still comes
+back as themselves; that look is fetched without going into `NpcRig`'s cache, which only frees friends it
+can find on the owner's friend list.
+
 **`CustomOrderHistory`** — the last `Rating.ORDER_WINDOW` resolved orders, oldest first. This
 is the `RecentSales` idiom and it is here for the same reason: a rating has to be able to fall as well as
 climb, which a lifetime tally never can, and it is **stored as facts rather than a score** so retuning
@@ -525,6 +533,15 @@ The new board is written **before** any grant, since a grant can yield. Progress
 - A worker reward waits on a pick off its cards (`ClaimDailyQuestReward`). Only the slot crosses the wire, as the daily rewards' worker days do. Its portraits are baked into a disabled `DailyQuestWorkerPortraits` ScreenGui on handover and destroyed at the claim or the reset.
 
 The key isn't in `TutorialManager`'s `PROGRESS_RESET_KEYS`: no board exists before `TutorialCompleted`, so there's no tutorial-time progress for the wipe to undo.
+
+## Update log
+
+**`LastSeenUpdateLog`** — the `Title` of the newest `Config.UpdateLogs` entry whose log the player has had on screen, with `""` as "none". `UpdateLogController` puts the log up on join whenever this isn't the newest Title, and stamps it through `UpdateLogManager:MarkUpdateLogSeen` once the panel actually opens, by hand or on its own.
+- **Live profiles** get the key through `Reconcile` at `""`, so every returning player is shown the newest update once.
+- **New players** are stamped with the newest Title by a post-load callback while `TutorialCompleted` is false, so the log never comes up on its own for someone who has nothing to catch up on.
+- **Keyed by Title:** renaming a shipped update's Title shows it to everyone again.
+
+It isn't in `TutorialManager`'s `PROGRESS_RESET_KEYS`: a mid-tutorial wipe leaves the stamp, and the next load stamps it again anyway.
 
 ## Tutorial
 

@@ -129,7 +129,7 @@ return {
 		-- Whether one has ever visited; the first is given the moment they can fill one, not rolled for
 		SeenCustomOrder = false,
 		-- The orders they're part-way through, banked as each is owed and cleared as it resolves -- see docs/player-data.md
-		ActiveCustomOrders = {}, -- [funnelId] = { Phase, Ingredients, StickId, Value, Quote, Seconds, SecondsLeft?, TierIndex, FirstVisit?, FunnelId }
+		ActiveCustomOrders = {}, -- [funnelId] = { Phase, Ingredients, StickId, Value, Quote, Seconds, SecondsLeft?, TierIndex, Rich?, Look?, FirstVisit?, FunnelId }
 		-- The last Rating.ORDER_WINDOW resolved orders, oldest first. Facts rather than a score -- see docs/player-data.md
 		CustomOrderHistory = {},
 
@@ -142,6 +142,10 @@ return {
 
 		-- Group Reward
 		GroupRewardClaimed = false, -- one claim per player, forever; also hides the HUD's Gift button
+
+		-- Update Log
+		-- The Title of the newest update whose log they've had up; "" is none, so a returning player is shown it on join
+		LastSeenUpdateLog = "",
 
 		-- Tutorial
 		-- The onboarding runs once; leaving unfinished wipes gameplay progress on the way out
