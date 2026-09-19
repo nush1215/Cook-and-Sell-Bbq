@@ -81,6 +81,7 @@ local FreeWorkersController = {
 
 	_slots = {}, -- [slot] = { Frame, Scale, StampScale, Revealed, PortraitCleaner, EffectCleaner }
 	_freeOffer = nil :: Offer?, -- this player's free three, rolled once on start
+	_hutUid = nil :: string?, -- the hut whose prompt put the free three up, whose panel follows the hire
 	_offer = nil :: Offer?, -- the three on the cards now
 	_selected = nil, -- the card standing forward, the only one Hire is offered on
 	_claiming = false, -- the client half of the debounce; the server holds the authoritative one
@@ -328,8 +329,9 @@ function FreeWorkersController:OpenOffer(offer: Offer)
 	Spr.target(container, CONTAINER_DAMPING, CONTAINER_FREQUENCY, { Position = CONTAINER_OPEN_POSITION })
 end
 
--- Puts the free three up.
-function FreeWorkersController:Open()
+-- Puts the free three up, off the prompt of the hut `hutUid`.
+function FreeWorkersController:Open(hutUid: string)
+	self._hutUid = hutUid
 	self:OpenOffer(self._freeOffer)
 end
 
@@ -366,9 +368,9 @@ function FreeWorkersController:OnStart()
 		RequestHire = function(slot: number)
 			self.ClaimFreeWorkerEvent:FireServer(slot)
 		end,
-		-- The hut's own panel, where their first worker is equipped
+		-- The panel of the hut they opened this from, where their first worker is equipped
 		OnHired = function()
-			WorkerHutController:Open()
+			WorkerHutController:Open(self._hutUid)
 		end,
 	}
 

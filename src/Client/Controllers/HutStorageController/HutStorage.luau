@@ -152,7 +152,7 @@ function HutStorage:RefreshPrompt()
 
 		-- Always up for the owner, unlike storage, since opening the panel needs nothing in hand
 		local workerPrompt = self:_createPrompt(EmployeeHut.WORKER_ATTACHMENT, function()
-			HutStorageController:RequestOpenWorkerHut()
+			HutStorageController:RequestOpenWorkerHut(self._uid)
 		end)
 		workerPrompt.ActionText = EmployeeHut.WORKER_PROMPT_ACTION_TEXT
 		workerPrompt.HoldDuration = EmployeeHut.WORKER_PROMPT_HOLD_DURATION

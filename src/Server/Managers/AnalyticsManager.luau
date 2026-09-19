@@ -33,6 +33,7 @@ local FreeWorkersManager
 local OfflineEarningManager
 local DailyRewardManager
 local DailyQuestManager
+local CosmeticShopManager
 
 -- The one place AnalyticsService is spoken to: subscribes to every manager's signals and turns each into an event. Every call is spawned and pcall'd, so it can't block or error gameplay.
 local AnalyticsManager = {
@@ -55,6 +56,7 @@ local SOURCE_TRANSACTION_TYPES = {
 	WorkerHire = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	IngredientPurchase = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	StickPurchase = Enum.AnalyticsEconomyTransactionType.Shop.Name,
+	CosmeticPurchase = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	SauceDispenserUpgrade = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	BuxPack = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	DailyReward = Enum.AnalyticsEconomyTransactionType.TimedReward.Name,
@@ -293,6 +295,7 @@ function AnalyticsManager:OnInit()
 	OfflineEarningManager = require(script.Parent.OfflineEarningManager)
 	DailyRewardManager = require(script.Parent.DailyRewardManager)
 	DailyQuestManager = require(script.Parent.DailyQuestManager)
+	CosmeticShopManager = require(script.Parent.CosmeticShopManager)
 end
 
 function AnalyticsManager:OnStart()
@@ -356,6 +359,9 @@ function AnalyticsManager:OnStart()
 	end)
 	StickShopManager.OnStickPurchased:Connect(function(player, stickId, price, method)
 		logCustom(player, "Stick Bought", price, stickId, method)
+	end)
+	CosmeticShopManager.OnCosmeticPurchased:Connect(function(player, structureId, price, tierId)
+		logCustom(player, "Cosmetic Bought", price, structureId, tierId)
 	end)
 	GrillerManager.OnCookCompleted:Connect(function(player, cookStateId, elapsed, method)
 		logCustom(player, "Cook Completed", elapsed, cookStateId, method)
@@ -574,8 +580,9 @@ function AnalyticsManager:OnStart()
 			logFreeWorkerFunnelStep(player, 5, "Equipped Worker")
 		end
 	end)
-	EmployeeHutManager.OnHutSlotPurchased:Connect(function(player, slot, cost, method)
-		logCustom(player, "Hut Slot Unlocked", cost, tostring(slot), method)
+	-- The slot is the hut's own, 2 or 3, so the funnel reads the same whichever hut it was bought on
+	EmployeeHutManager.OnHutSlotPurchased:Connect(function(player, hutIndex, slot, cost, method)
+		logCustom(player, "Hut Slot Unlocked", cost, tostring(slot), method, tostring(hutIndex))
 	end)
 	EmployeeHutManager.OnHutItemStored:Connect(function(player, kind, itemId, amount, storeAll)
 		logCustom(

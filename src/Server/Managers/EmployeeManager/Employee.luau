@@ -143,18 +143,26 @@ function Employee:GetStructureModel(uid: string): Model?
 	return folder and folder:FindFirstChild(uid)
 end
 
--- The hut they were hired out of, if one is still placed. What a maker hangs around, since its job starts and ends at the store.
+-- The hut its slot is in, or any other still placed while that one is picked up. What a maker hangs around, since its job starts and ends at the store.
 function Employee:GetHomeModel(data): Model?
+	-- Slot is cleared a beat before an unequipped employee leaves the roster
+	local hutIndex = self.Record.Slot and EmployeeHut.GetHutIndex(self.Record.Slot)
+	local fallback = nil
+
 	for uid, placed in data.Structures do
-		if placed.Type == EmployeeHut.STRUCTURE_ID then
-			local model = self:GetStructureModel(uid)
-			if model then
-				return model
-			end
+		if placed.Type ~= EmployeeHut.STRUCTURE_ID then
+			continue
 		end
+
+		local model = self:GetStructureModel(uid)
+		if model and placed.Hut == hutIndex then
+			return model
+		end
+
+		fallback = fallback or model
 	end
 
-	return nil
+	return fallback
 end
 
 -- Where it waits for work: its hut if one is placed, else the base's customer spawn.

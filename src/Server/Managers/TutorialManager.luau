@@ -62,7 +62,7 @@ local PROGRESS_RESET_KEYS = {
 	"HutRepairEndsAt",
 	-- Both hang off the hut, so they go with it: staff with no hut, and stock in a hut that's gone
 	"Employees",
-	"HutSlotsUnlocked",
+	"HutSlots",
 	"HutStorage",
 	-- The ledger of who they hired this window, which would otherwise outlive the staff it was spent on
 	"HiringBoard",

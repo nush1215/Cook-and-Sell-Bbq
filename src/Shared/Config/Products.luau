@@ -93,7 +93,7 @@ for index, productId in Plots.RobuxProductIds do
 	})
 end
 
--- One per hut slot sold for Robux. The slot only sets the price -- every one buys the player's next slot, so a receipt can't skip or repeat one.
+-- One per hut slot number sold for Robux, shared by every hut. The number only sets the price -- every one buys the next slot on the hut it was prompted from, so a receipt can't skip or repeat one.
 for slot, productId in EmployeeHut.SLOT_PRODUCT_IDS do
 	table.insert(Products.Data, {
 		Id = EmployeeHut.GetSlotProductStringId(slot),
@@ -108,7 +108,7 @@ for slot, productId in EmployeeHut.SLOT_PRODUCT_IDS do
 
 			-- Lazy require, to avoid pulling EmployeeHutManager's dependency graph at module load
 			local EmployeeHutManager = require(ServerScriptService.Server.Managers.EmployeeHutManager)
-			EmployeeHutManager:PurchaseHutSlot(player, slot, true)
+			EmployeeHutManager:GrantHutSlotFromProduct(player)
 		end,
 	})
 end

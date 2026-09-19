@@ -16,7 +16,7 @@ return {
 		Plots = {}, -- [plotId] = true
 
 		-- The build, keyed by a uid minted at placement. Cells and quarter-turns, not poses -- see docs/player-data.md
-		Structures = {}, -- [uid] = { Type, CellX, CellZ, Rotation }
+		Structures = {}, -- [uid] = { Type, CellX, CellZ, Rotation, Hut? }; Hut is a Worker Hut's number, 1 to MAX_HUTS
 		-- The CELL_SIZE those cells were saved under; 4 is what every profile predating this key wrote
 		StructureCellSize = 4,
 		-- Owned but unplaced. Seeded with one of each, since a new player needs both to have a game at all
@@ -29,10 +29,10 @@ return {
 		HutRepairEndsAt = -1,
 		-- The three free workers offered on the first open of a repaired hut; true once one has been taken
 		FreeWorkersClaimed = false,
-		-- Hired employees, keyed by a uid minted at hire. Skill is 0-1, not stars -- see docs/player-data.md
+		-- Hired employees, keyed by a uid minted at hire. Skill is 0-1, not stars; Slot runs across huts, 1-3 hut 1's -- see docs/player-data.md
 		Employees = {}, -- [uid] = { Role, Skill, Body, Name, Cosmetics, Slot?, Carrying?, Load?, HiredAt }
-		-- Hut slots unlocked, counted from slot 1. Bought in order, so 3 means slots 1-3; slot 1 comes with the repair
-		HutSlotsUnlocked = 1,
+		-- Slots unlocked per hut number; a missing entry is 1, the free first. Dense, since a DataStore strings gapped keys -- see docs/player-data.md
+		HutSlots = {}, -- [hutNumber] = slots unlocked in that hut
 		-- The worker board's per-window hires. A stale Seed means the window rolled over, so Hired reads as
 		-- empty. Dense rather than sparse: a DataStore hands integer keys back as strings -- see docs/player-data.md
 		HiringBoard = { Seed = 0, Hired = { false, false, false, false } },
@@ -101,6 +101,10 @@ return {
 		-- The same per-window ledger for structures, with its own Seed since the two shops run separate clocks
 		GrillStandShop = { Seed = 0, Bought = {} }, -- Bought = [structureId] = amount bought this window
 
+		-- Cosmetic Shop
+		-- The same ledger again for the hourly Gems rotation, which runs a clock of its own
+		CosmeticShop = { Seed = 0, Bought = {} }, -- Bought = [structureId] = purchases this rotation
+
 		-- Sell Stall
 		-- When the last rich customer was sent. Wall-clock, so a rejoin can't hand out a fresh one
 		LastRichVisit = 0,
@@ -110,6 +114,8 @@ return {
 		SeenHaggle = false,
 		-- Whether a rich customer has ever visited; the first is given, so meeting one isn't down to luck
 		SeenRichCustomer = false,
+		-- Whether a customer has ever tipped them; the first is given, so Gems get introduced rather than left to luck
+		SeenCustomerTip = false,
 		-- When they last completed a sale, of any kind. Wall-clock; 0 means they never have
 		LastSaleAt = 0,
 		-- When the last checking customer was sent. Wall-clock, so a rejoin can't hand out a fresh one

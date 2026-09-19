@@ -783,13 +783,21 @@ and ~490 late. The rate is driven mostly by how fast the player sells, and about
 tip. `MIN_GAP` caps a player at 240 tips an hour.
 
 **Other rules:**
+- **A player's first tip is guaranteed** (`SeenCustomerTip`), so everyone meets Gems, including live players when the
+  update ships.
+  - It lands on the first paying customer whose food could earn a tip.
+  - It comes with a one-time explainer toast that points them to the Cosmetic Shop.
+  - A new player's first `POST_TUTORIAL_QUIET_CUSTOMERS` (1) customers after finishing the tutorial are passed over,
+    so the free tip lands on their second.
+  - That hold-off is session-only, so a player who leaves before serving one gets the free tip on their next first
+    customer instead.
 - Gems are never boosted. x2 Bux, friends and the early boost are all promises about Bux, and Gems stay out of
   `TotalEarned`.
 - Sales answered by seller employees tip at the same odds. The tip is for the food.
 - No tips from the wizard (it pays in luck), in the tutorial, or offline.
 - A player who leaves mid-eat forfeits the tip, since the rig is destroyed before the Gems land.
 - Analytics log tips as Gems economy sources `CustomerTip` and `CustomOrderTip`.
-- Nothing spends Gems yet.
+- The Cosmetic Shop is what spends them, logged as the Gems sink `CosmeticPurchase` (see Cosmetic Shop).
 
 | Knob | Higher | Lower |
 |---|---|---|
@@ -926,6 +934,81 @@ ground (see `BaseUnlocks.LAYOUT_RISE`). The spring is shared, so only the start 
 `PLACE_SETTLE_DELAY` before settling its own copy, because the drop is the client's to play and the server
 has no signal for when the spring landed; that wait is also what makes a late-arriving client spring from
 the settled pose (a no-op) rather than replay the drop on a structure built minutes ago.
+
+## Cosmetic Shop
+
+`Shared/Config/CosmeticShop.luau`, run by `CosmeticShopManager`. The first thing that spends **Gems**: cosmetics,
+tables and extra Worker Huts, sold out of `Core.Zones.CosmeticShop`. The structures themselves are ordinary
+`Config.Structures` entries, so a purchase is a `BuildManager:GrantStructure` and they build like anything else;
+this config only says what each tier offers and what it costs.
+
+- **Rotation.** Every hour (`ROTATION_INTERVAL` in the manager) the shop draws new offers. The seed is the hour, so
+  every server shows the same shop, and there's no restock product to step one server off it.
+- **Tiers.** Each rotation draws `Slots` distinct offers per tier, weighted by `Weight`: 1 Featured, 2 Great and
+  3 Good. The Featured slot is the Worker Hut or the Fancy Table. Great is the other tables and the canopies. Good is
+  the paths, fences, Hanging Light and Picnic Parasol. A structure's `Rarity` follows the tier it's sold in: Good is
+  Common/Uncommon, Great Rare (the Golden Table Epic), Fancy Table Epic, Worker Hut Legendary.
+- **Stock.** A player can buy `STOCK` (1) of each offer per rotation. It's per player, so one buyer never takes
+  anything off another's shop.
+- **Bundles.** An offer's `Amount` is how many one purchase hands over: paths come x3 and fences x2, read as
+  "x3 Medium Dirt Path". Stock counts purchases, not structures.
+- **Worker Hut.** Refused until the broken hut is repaired, since the repaired one always counts as one of
+  `EmployeeHut.MAX_HUTS` (3). Refused again once they own 3, placed or in the backpack. Every hut's first slot is
+  free, and slots 2 and 3 are bought per hut in Bux from that hut's row of `EmployeeHut.SLOT_PRICES` — see `HutSlots`
+  in `docs/player-data.md`. Later huts cost far more to fill, since a player only reaches them well into the game:
+
+  | Hut | Slot 1 | Slot 2 | Slot 3 | To fill |
+  |---|---|---|---|---|
+  | 1 (the repaired one) | free | 10,000 | 20,000 | 30,000 |
+  | 2 | free | 100,000 | 200,000 | 300,000 |
+  | 3 | free | 500,000 | 750,000 | 1,250,000 |
+
+  The Robux slot products are still one per slot number and shared by every hut, so a slot bought for Robux costs
+  the same Robux on any hut.
+
+**Prices follow what an offer does for the player.** They're set against the customer tip estimate of ~110 Gems/hr
+early, ~330 mid and ~490 late (see Selling — customer tips). They're placeholders until a proper balancing pass.
+- **What earns is priced by what it earns.**
+  - **Tables** are priced by their seats. Each free seat speeds custom orders up, 6 and 12 seats open a third and fourth order at once, and a
+  seated order tips surer and bigger (a Perfect one certain at 20–30 Gems, against 85% at 15–20 standing). That's
+  about +10 Gems an order, so a first table pays for itself in Gems inside an hour or two.
+  - The **Golden Table** makes seated orders pay 1.2x, the **Fancy Table** adds rich visits (two reach the cap), and the
+  **Worker Hut** is another free worker slot with room to buy two more — the goal the shop is saved toward.
+- **What's only looks stays cheap.** Paths, fences, the light, the parasol and both canopies can be bought on a
+  whim, so nobody has to choose between decorating and getting ahead. The canopies sit in the Great tier but are
+  priced like decorations.
+
+The plain tables cost **60 Gems a seat**, so twelve seats (the fourth concurrent order) is about 720 Gems, and fifteen
+(where the seat bonuses cap) about 900. The seat counts are the models' own (`SeatCount`), so reprice a table whose
+`Seats` folder changes. The Golden and Fancy Tables have two seats each and are priced for their bonus instead.
+
+| Kind | Offer | Seats | Per buy | Gems | Time at mid |
+|---|---|---|---|---|---|
+| Earns | Worker Hut (Featured) | — | x1 | 2,500 | ~7.5 h (~5 h late) |
+| Earns | Fancy Table (Featured) | 2 | x1 | 1,200 | ~3.5 h |
+| Earns | Golden Table | 2 | x1 | 1,000 | ~3 h |
+| Earns | Large Wooden Table | 6 | x1 | 360 | ~1.1 h |
+| Earns | Medium Wooden Table | 4 | x1 | 240 | ~45 min |
+| Earns | Circular Table | 3 | x1 | 180 | ~33 min |
+| Earns | Small Wooden Table | 2 | x1 | 120 | ~22 min |
+| Looks | Medium / Large Canopy | — | x1 | 75 / 120 | 14–22 min |
+| Looks | Hanging Light / Picnic Parasol | — | x1 | 40 / 50 | 7–9 min |
+| Looks | Small / Medium / Long / Large / Big Stone Path | — | x3 | 15 / 20 / 25 / 30 / 40 | 3–7 min |
+| Looks | Small / Medium / Long / Large / Big Dirt Path | — | x3 | 10 / 15 / 20 / 25 / 30 | 2–5 min |
+| Looks | Small / Medium / Long Fence | — | x2 | 10 / 15 / 25 | 2–5 min |
+
+**Weights.** Featured is 1 each, a coin flip. Great is 3 each and the Golden Table 2, the one table there that pays
+more. Good is 1 per path and 2 for everything else — ten paths at an even weight would fill two thirds of the Good
+slots, where this keeps them to about half.
+
+| Knob | Higher | Lower |
+|---|---|---|
+| `Price` | a purchase is a goal | Gems stop meaning anything |
+| `Amount` | a bundle builds a whole path in one go | a path takes several rotations to lay |
+| `Weight` | that offer turns up most hours | a rare sight worth waiting for |
+| `STOCK` | a good rotation empties a wallet | one of each is all an hour holds |
+| `Slots` | more on sale every hour | the shop is mostly waiting |
+| `ROTATION_INTERVAL` | a rotation is worth coming back for | the shop churns before it's read |
 
 ## The early boost
 

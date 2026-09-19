@@ -1,4 +1,4 @@
--- The employee hut on every base: broken from handover, repaired once for currency, and the shop the employees are bought from. Repairing hands over the Structures entry, so from then on it moves like any other build.
+-- The employee hut on every base: broken from handover, repaired once for currency, and the shop the employees are bought from. Repairing hands over the Structures entry, so from then on it moves like any other build. More are sold for Gems at the Cosmetic Shop, up to MAX_HUTS, each numbered with slots of its own.
 
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
@@ -65,15 +65,32 @@ EmployeeHut.WORKER_PROMPT_MAX_DISTANCE = 12
 -- The PlayerGui panel the Worker Hut prompt opens, where slots are bought and workers equipped
 EmployeeHut.SLOTS_UI_NAME = "HutUI"
 
--- What each slot costs, by slot number. Slot 1 comes with the repair; the length is how many slots there are
-EmployeeHut.SLOT_PRICES = { 0, 10_000, 20_000 }
+-- What each hut's slots cost, one row per hut number, by slot number in that hut. Every hut's first is free; a row's length is how many slots a hut has
+EmployeeHut.SLOT_PRICES = {
+	{ 0, 10_000, 20_000 },
+	{ 0, 100_000, 200_000 },
+	{ 0, 500_000, 750_000 },
+}
+
+for _, hutPrices in EmployeeHut.SLOT_PRICES do
+	table.freeze(hutPrices)
+end
 
 table.freeze(EmployeeHut.SLOT_PRICES)
 
--- Robux dev product per slot, keyed by the slot it's sold on. Each only sets the price: a receipt grants whichever slot is next
+-- Robux dev product per slot number, shared by every hut. Each only sets the price: a receipt grants whichever slot is next on the hut it was bought from
 EmployeeHut.SLOT_PRODUCT_IDS = { [2] = 3712388056, [3] = 3712388074 }
 
 table.freeze(EmployeeHut.SLOT_PRODUCT_IDS)
+
+-- How many huts one player can own at once, the repaired one included: one row of slot prices each
+EmployeeHut.MAX_HUTS = #EmployeeHut.SLOT_PRICES
+
+-- Every row is the same length, so the first stands for them all
+EmployeeHut.SLOTS_PER_HUT = #EmployeeHut.SLOT_PRICES[1]
+
+-- Employee slots across every hut: hut 1 holds 1-3, hut 2 holds 4-6 and so on, so a slot names its hut too
+EmployeeHut.MAX_EMPLOYEE_SLOTS = EmployeeHut.MAX_HUTS * EmployeeHut.SLOTS_PER_HUT
 
 -- The plot the hut stands on: nothing is offered on it until that plot is bought
 EmployeeHut.REQUIRED_PLOT = "1"
@@ -140,9 +157,60 @@ if not EmployeeHut.BROKEN_MODEL then
 	warn(`Assets.Structures.{EmployeeHut.CATEGORY}.BrokenHut is missing, no base will show a broken hut`)
 end
 
--- Whether `slot` is among the player's `unlocked` slots. Slots unlock in order, so the count is the whole of it.
-function EmployeeHut.IsSlotUnlocked(slot: number, unlocked: number): boolean
-	return slot <= unlocked
+-- The employee slot for one of a hut's own slots, the inverse of GetHutIndex.
+function EmployeeHut.GetEmployeeSlot(hutIndex: number, hutSlot: number): number
+	return (hutIndex - 1) * EmployeeHut.SLOTS_PER_HUT + hutSlot
+end
+
+-- Which hut an employee slot belongs to.
+function EmployeeHut.GetHutIndex(employeeSlot: number): number
+	return math.ceil(employeeSlot / EmployeeHut.SLOTS_PER_HUT)
+end
+
+-- How many of a hut's slots are unlocked. A hut with no entry yet has only its free first one.
+function EmployeeHut.GetUnlockedSlots(hutSlots: { number }, hutIndex: number): number
+	return hutSlots[hutIndex] or 1
+end
+
+-- Whether an employee slot is unlocked. Slots unlock in order within their hut, so its count is the whole of it.
+function EmployeeHut.IsSlotUnlocked(employeeSlot: number, hutSlots: { number }): boolean
+	local hutIndex = EmployeeHut.GetHutIndex(employeeSlot)
+	local hutSlot = employeeSlot - (hutIndex - 1) * EmployeeHut.SLOTS_PER_HUT
+
+	return hutSlot <= EmployeeHut.GetUnlockedSlots(hutSlots, hutIndex)
+end
+
+-- Huts owned, placed or still in the backpack: what MAX_HUTS caps, and which hut numbers can be equipped into.
+function EmployeeHut.CountOwnedHuts(data): number
+	local count = data.OwnedStructures[EmployeeHut.STRUCTURE_ID] or 0
+
+	for _, placed in data.Structures do
+		if placed.Type == EmployeeHut.STRUCTURE_ID then
+			count += 1
+		end
+	end
+
+	return count
+end
+
+-- The lowest hut number no placed hut holds, or nil once MAX_HUTS are down. Lowest first, so a lone hut moved gets its own back.
+function EmployeeHut.GetFreeHutIndex(structures): number?
+	for hutIndex = 1, EmployeeHut.MAX_HUTS do
+		local taken = false
+
+		for _, placed in structures do
+			if placed.Hut == hutIndex then
+				taken = true
+				break
+			end
+		end
+
+		if not taken then
+			return hutIndex
+		end
+	end
+
+	return nil
 end
 
 -- The Products id for one slot, built in one place so the config and the prompt can't drift.

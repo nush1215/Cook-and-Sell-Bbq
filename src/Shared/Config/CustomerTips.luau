@@ -30,6 +30,9 @@ CustomerTips.TIER_STEP = 0.05
 -- Seconds after a player's tip is rolled before their next can be, so two never land on top of each other
 CustomerTips.MIN_GAP = 15
 
+-- Paying customers passed over right after the tutorial, so a new player's free first tip lands on the one after
+CustomerTips.POST_TUTORIAL_QUIET_CUSTOMERS = 1
+
 -- The Gems one tip leaves, rolled per tip
 CustomerTips.STAND_GEMS_MIN = 5
 CustomerTips.STAND_GEMS_MAX = 10

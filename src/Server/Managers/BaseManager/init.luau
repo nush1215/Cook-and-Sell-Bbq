@@ -13,6 +13,7 @@ local Network = require(Shared.Network)
 local BaseUnlocks = require(Shared.Config.BaseUnlocks)
 local Plots = require(Shared.Config.Plots)
 local Structures = require(Shared.Config.Structures)
+local EmployeeHut = require(Shared.Config.EmployeeHut)
 
 -- Managers
 local StickStandManager = require(script.Parent.StickStandManager)
@@ -392,6 +393,18 @@ function BaseManager:PlaceStructureOnBase(
 		return false
 	end
 
+	-- A hut takes the lowest number no placed hut holds, so one moved gets its own back, and its slots with it
+	local hutIndex = nil
+	if structureType == EmployeeHut.STRUCTURE_ID then
+		hutIndex = EmployeeHut.GetFreeHutIndex(data.Structures)
+
+		-- Only reachable past MAX_HUTS through an admin grant, since the Cosmetic Shop caps what it sells
+		if not hutIndex then
+			self._purchasing[player] = nil
+			return false
+		end
+	end
+
 	BuildManager:ConsumeStructure(player, structureType)
 
 	-- Minted once -- it keys the structure and its contents, so it must outlive a rejoin's rebuild
@@ -402,6 +415,7 @@ function BaseManager:PlaceStructureOnBase(
 		CellX = cellX,
 		CellZ = cellZ,
 		Rotation = rotation,
+		Hut = hutIndex,
 	})
 
 	self._purchasing[player] = nil
@@ -476,6 +490,8 @@ function BaseManager:RescaleStructureCells(player: Player)
 			CellX = math.round(placed.CellX * scale),
 			CellZ = math.round(placed.CellZ * scale),
 			Rotation = placed.Rotation,
+			-- Carried over, or the hut would lose its number and the slots bought on it
+			Hut = placed.Hut,
 		})
 	end
 

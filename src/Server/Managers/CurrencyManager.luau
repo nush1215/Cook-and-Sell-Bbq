@@ -100,13 +100,20 @@ function CurrencyManager:DeductCurrency(player: Player, amount: number?, source:
 	self.OnCurrencyChanged:Fire(player, amount, source, false)
 end
 
-function CurrencyManager:CanAfford(player: Player, amount: number): (boolean, number)
-	local hasData, playerCurrency = PlayerDataManager:GetPlayerDataKey(player, "Currency"):await()
+-- Spends Gems, DeductCurrency's twin. The decrement doesn't clamp, so the caller checks CanAfford with "Gems" first.
+function CurrencyManager:DeductGems(player: Player, amount: number, source: string?)
+	PlayerDataManager:DecrementDataKey(player, "Gems", amount)
+	self.OnGemsChanged:Fire(player, amount, source, false)
+end
+
+-- Whether they hold `amount` of Bux, or of Gems with `dataKey` "Gems", and how far short they are. Yields on the data read.
+function CurrencyManager:CanAfford(player: Player, amount: number, dataKey: ("Currency" | "Gems")?): (boolean, number)
+	local hasData, balance = PlayerDataManager:GetPlayerDataKey(player, dataKey or "Currency"):await()
 	if not hasData then
-		return false
+		return false, amount
 	end
 
-	return playerCurrency >= amount, amount - playerCurrency
+	return balance >= amount, amount - balance
 end
 
 function CurrencyManager:OnInit()

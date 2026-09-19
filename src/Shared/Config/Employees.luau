@@ -324,7 +324,7 @@ Employees.MAKER_BUILD_BEST = 0.25
 Employees.MAKER_BUILD_GAMMA = 1
 
 -- Seconds a stand stays the player's after they touch it, so a skewer being built by hand is left alone
-Employees.PLAYER_BUILD_COOLDOWN = 30
+Employees.PLAYER_BUILD_COOLDOWN = 120
 
 -- How far past the hut's own edge a maker drifts while waiting for work. Measured from the wall rather than
 -- the middle, so it circles the store instead of walking through it, and stays put rather than roaming the

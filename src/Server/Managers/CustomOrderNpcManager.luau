@@ -550,7 +550,8 @@ function CustomOrderNpcManager:_scoldEmptyHanded(player: Player, npc: Model, rec
 
 	-- No toast: unlike the hurry beat, this answers a prompt they're stood in front of, so the bubble
 	-- is already in their eyeline. Limited, or a Reject toast landing at the same moment doubles up
-	SoundManager:PlaySound({ Type = "Player", Player = player }, "Reject", npc:GetPivot(), nil, { Limit = true })
+	-- On the rig's root rather than its server pivot, which played it at the stall for a customer sat at a table
+	SoundManager:PlaySound({ Type = "Player", Player = player }, "Reject", npc.HumanoidRootPart, nil, { Limit = true })
 end
 
 -- Takes the held skewer for the order, however well it matches. Never refuses one -- the price is the answer.

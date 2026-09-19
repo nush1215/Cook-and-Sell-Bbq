@@ -206,17 +206,17 @@ function HutStorageController:_buildStorageRows()
 	end
 end
 
--- Opens the Worker Hut panel, where the hut's slots are bought and its workers equipped. The first open goes to the three free Workers instead, and the hut's own panel follows once one has been taken.
-function HutStorageController:RequestOpenWorkerHut()
+-- Opens the Worker Hut panel on the hut `hutUid`, where its slots are bought and its workers equipped. The first open goes to the three free Workers instead, and that hut's own panel follows once one has been taken.
+function HutStorageController:RequestOpenWorkerHut(hutUid: string)
 	-- Off the press rather than either panel's opened signal, since which of the two comes up is beside the point
 	self.WorkerHutOpenedEvent:FireServer()
 
 	if FreeWorkersController:ShouldOffer() then
-		FreeWorkersController:Open()
+		FreeWorkersController:Open(hutUid)
 		return
 	end
 
-	WorkerHutController:Open()
+	WorkerHutController:Open(hutUid)
 end
 
 -- Re-checks every hut's prompt. Cheap, and what it offers depends on what the player is holding.

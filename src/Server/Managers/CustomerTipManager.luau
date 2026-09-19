@@ -16,6 +16,7 @@ local Ingredients = require(Shared.Config.Ingredients)
 local CustomerTips = require(Shared.Config.CustomerTips)
 
 -- Managers
+local PlayerDataManager = require(script.Parent.PlayerDataManager)
 local CurrencyManager = require(script.Parent.CurrencyManager)
 local NotificationManager = require(script.Parent.NotificationManager)
 local EffectManager = require(script.Parent.EffectManager)
@@ -26,6 +27,8 @@ local CustomerTipManager = {
 
 	_lastTipAt = {}, -- [player] = os.clock() their last tip was rolled at, which MIN_GAP counts from
 	_forcedTips = {}, -- [player] = true while their next paying customer is armed to tip, past the gap and the roll
+	-- [player] = customers still to pass over after finishing the tutorial this session, before any can tip
+	_quietCustomers = {},
 }
 
 -- What a skewer's quality multiplies a tip chance by: its cook state, any mutation and how rare its ingredients run.
@@ -116,15 +119,25 @@ function CustomerTipManager:_tryCustomerTip(
 	source: string,
 	sayTipping: () -> ()
 )
+	-- Their first tip is a given, so Gems are shown to them rather than left to luck. Never on food that couldn't earn one
+	local data = PlayerDataManager:GetLoadedPlayerData(player)
+	local isFirstTip = data ~= nil and not data.SeenCustomerTip and chance > 0
+
 	if self._forcedTips[player] then
 		self._forcedTips[player] = nil
 	else
+		local quietCustomers = self._quietCustomers[player]
+		if quietCustomers then
+			self._quietCustomers[player] = if quietCustomers > 1 then quietCustomers - 1 else nil
+			return
+		end
+
 		local lastTipAt = self._lastTipAt[player]
 		if lastTipAt and os.clock() - lastTipAt < CustomerTips.MIN_GAP then
 			return
 		end
 
-		if not RandomUtil.RollChance(chance, self._rng) then
+		if not isFirstTip and not RandomUtil.RollChance(chance, self._rng) then
 			return
 		end
 	end
@@ -133,7 +146,7 @@ function CustomerTipManager:_tryCustomerTip(
 
 	local gems = self._rng:NextInteger(gemsMin, gemsMax)
 
-	task.spawn(self._playCustomerTip, self, player, npc, gems, source, sayTipping)
+	task.spawn(self._playCustomerTip, self, player, npc, gems, source, isFirstTip, sayTipping)
 end
 
 -- Plays a rolled tip out mid-eat: the customer's line, a beat, then the Gems. A customer gone before either beat takes its tip with it.
@@ -142,6 +155,7 @@ function CustomerTipManager:_playCustomerTip(
 	npc: Model,
 	gems: number,
 	source: string,
+	isFirstTip: boolean,
 	sayTipping: () -> ()
 )
 	task.wait(CustomerTips.SAY_DELAY)
@@ -158,6 +172,11 @@ function CustomerTipManager:_playCustomerTip(
 
 	CurrencyManager:IncrementGems(player, gems, source)
 
+	-- Marked once it lands rather than at the roll, so a customer lost mid-eat leaves the first still owed
+	if isFirstTip then
+		PlayerDataManager:SetPlayerDataKey(player, "SeenCustomerTip", true)
+	end
+
 	-- The tip lets each gem pop a "+X" that adds up to the counter's jump
 	EffectManager:RunEffect("All", "CollectGems", { npc, gems, player })
 
@@ -172,6 +191,16 @@ function CustomerTipManager:_playCustomerTip(
 			Color = Colors.Gems,
 		},
 	})
+
+	-- The introduction Gems shipped without, so the first one says what they're for
+	if isFirstTip then
+		NotificationManager:NotifyNormal(player, {
+			Text = "Customers tip Gems for good BBQ! Spend them at the Cosmetic Shop",
+			Duration = 5,
+			-- Not a second Success, or the explainer reads as another tip
+			Sound = "Notify",
+		})
+	end
 end
 
 -- Arms the player's next paying customer to tip, past the gap and the roll. For testing.
@@ -180,9 +209,17 @@ function CustomerTipManager:ForceNextCustomerTip(player: Player)
 end
 
 function CustomerTipManager:OnStart()
+	-- Only the flip TutorialManager makes on finishing, so a player who finished before this session isn't held off
+	PlayerDataManager.OnDataChanged:Connect(function(player: Player, key: string, value: any)
+		if key == "TutorialCompleted" and value == true then
+			self._quietCustomers[player] = CustomerTips.POST_TUTORIAL_QUIET_CUSTOMERS
+		end
+	end)
+
 	Players.PlayerRemoving:Connect(function(player: Player)
 		self._lastTipAt[player] = nil
 		self._forcedTips[player] = nil
+		self._quietCustomers[player] = nil
 	end)
 end
 

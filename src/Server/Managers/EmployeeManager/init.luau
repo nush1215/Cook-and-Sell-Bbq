@@ -219,15 +219,16 @@ function EmployeeManager:SetEmployeeSlot(player: Player, uid: string, slot: numb
 		return false
 	end
 
-	-- Refused without a toast: the panel only offers an unlocked empty slot, and only workers not already in one
+	-- Refused without a toast: the panel only offers an unlocked empty slot on a hut they own, and only workers not already in one
 	local refused = if slot == nil
 		then record.Slot == nil
 		else type(slot) ~= "number"
 			or slot % 1 ~= 0
 			or slot < 1
-			or slot > #EmployeeHut.SLOT_PRICES
+			or slot > EmployeeHut.MAX_EMPLOYEE_SLOTS
 			or not data.HutRepaired
-			or not EmployeeHut.IsSlotUnlocked(slot, data.HutSlotsUnlocked)
+			or EmployeeHut.GetHutIndex(slot) > EmployeeHut.CountOwnedHuts(data)
+			or not EmployeeHut.IsSlotUnlocked(slot, data.HutSlots)
 			or record.Slot ~= nil
 			or self:GetEmployeeInSlot(data, slot) ~= nil
 
@@ -329,7 +330,7 @@ function EmployeeManager:HireEmployee(
 	-- Unlocks aren't checked, so a grant still goes to work on a base with no hut to have unlocked one
 	local slot = nil
 	if options and options.Equip then
-		for index = 1, #EmployeeHut.SLOT_PRICES do
+		for index = 1, EmployeeHut.MAX_EMPLOYEE_SLOTS do
 			if not self:GetEmployeeInSlot(data, index) then
 				slot = index
 				break
