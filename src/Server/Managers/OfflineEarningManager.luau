@@ -28,7 +28,6 @@ local CurrencyManager
 local GrillerManager
 local SkewerStandManager
 local CustomOrderNpcManager
-local BaseManager
 local BbqMaker
 local Cooker
 local Seller
@@ -47,6 +46,7 @@ local rng = Random.new()
 --
 local OfflineEarningManager = {
 	ShowOfflineEarningsEvent = Network.Event("ShowOfflineEarnings"), -- server -> client ({ Amount, BbqSold, SecondsAway })
+	GetOfflineEarningsFunction = Network.Function("GetOfflineEarnings"), -- client -> server, once it's listening; the show payload or nil
 	ClaimOfflineEarningsEvent = Network.Event("ClaimOfflineEarnings", {
 		Direction = "ClientToServer",
 		RateLimit = { MaxPerSecond = 2 },
@@ -743,19 +743,27 @@ function OfflineEarningManager:RunOfflineEarnings(player: Player, data)
 	self.OnOfflineEarningsSimulated:Fire(player, report)
 end
 
--- Puts the claim waiting on a player in front of them, once they're stood on their base to see it.
-function OfflineEarningManager:ShowPendingClaim(player: Player)
+-- What the welcome-back panel shows for the claim waiting on a player, or nil with none.
+function OfflineEarningManager:GetPendingClaimPayload(player: Player)
 	local report = self._pendingClaims[player]
 	if not report then
-		return
+		return nil
 	end
 
-	self.ShowOfflineEarningsEvent:FireClient(player, {
+	return {
 		-- The boosted figure, since that's what lands in their balance
 		Amount = CurrencyManager:GetBoostedAmount(player, report.Earned),
 		BbqSold = report.Sold,
 		SecondsAway = report.AwaySeconds,
-	})
+	}
+end
+
+-- Pushes the claim waiting on a player in front of them. For a loaded client; the join asks through GetOfflineEarnings instead.
+function OfflineEarningManager:ShowPendingClaim(player: Player)
+	local payload = self:GetPendingClaimPayload(player)
+	if payload then
+		self.ShowOfflineEarningsEvent:FireClient(player, payload)
+	end
 end
 
 -- Pays the claim out. The plain amount goes in, so the boosts land on it once, exactly as they do on a sale.
@@ -827,7 +835,6 @@ function OfflineEarningManager:OnInit()
 	GrillerManager = require(script.Parent.GrillerManager)
 	SkewerStandManager = require(script.Parent.SkewerStandManager)
 	CustomOrderNpcManager = require(script.Parent.CustomOrderNpcManager)
-	BaseManager = require(script.Parent.BaseManager)
 	BbqMaker = require(script.Parent.EmployeeManager.Roles.BbqMaker)
 	Cooker = require(script.Parent.EmployeeManager.Roles.Cooker)
 	Seller = require(script.Parent.EmployeeManager.Roles.Seller)
@@ -842,9 +849,9 @@ function OfflineEarningManager:OnInit()
 end
 
 function OfflineEarningManager:OnStart()
-	-- Shown once they're stood on their base, so the panel lands on a loaded client rather than a loading one
-	BaseManager.OnBaseAssigned:Connect(function(player: Player)
-		self:ShowPendingClaim(player)
+	-- Asked for by the client once it's stood on its base and listening; a push on assign was dropped by one still booting
+	self.GetOfflineEarningsFunction:OnInvoke(function(player: Player)
+		return self:GetPendingClaimPayload(player)
 	end)
 
 	self.ClaimOfflineEarningsEvent:OnServerEvent(function(player: Player)
@@ -865,8 +872,8 @@ function OfflineEarningManager:OnStart()
 		end
 	end)
 
+	-- The claim itself is left for SettleOnLastSave: this fires ahead of the profile's last save, and a wipe here would lose an unclaimed payout
 	Players.PlayerRemoving:Connect(function(player: Player)
-		self._pendingClaims[player] = nil
 		self._claiming[player] = nil
 	end)
 end
