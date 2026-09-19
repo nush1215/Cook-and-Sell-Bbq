@@ -43,6 +43,8 @@ local AnalyticsManager = {
 	_repairedHutRuns = {},
 	-- [player] = { ExpiresAt, Rolls, Luck } for the wizard boost they took, counting the pulls it covered
 	_wizardLuck = {},
+	-- [player] = os.clock() their broke relief landed, until a sale or their leaving says whether it got them going
+	_brokeRelief = {},
 }
 
 local CustomFields = Enum.AnalyticsCustomFieldKeys
@@ -104,6 +106,13 @@ end
 -- Returns a luck multiplier snapped to the nearest 0.05 as text, so the field breaks down into a few bands.
 local function getLuckBucket(luck: number): string
 	return string.format("%.2f", math.round(luck * 20) / 20)
+end
+
+-- Logs how a broke relief ended and clears it: "Sold" once it got them to a sale, "Regranted" or "Left" if it didn't. The value is seconds since it landed.
+function AnalyticsManager:_logBrokeReliefOutcome(player: Player, outcome: string)
+	local grantedAt = self._brokeRelief[player]
+	self._brokeRelief[player] = nil
+	logCustom(player, "Broke Relief Outcome", math.round(os.clock() - grantedAt), outcome)
 end
 
 -- Logs how many pulls a wizard boost covered and clears it; `ending` says whether it ran out or the player left.
@@ -302,6 +311,11 @@ function AnalyticsManager:OnStart()
 	-- Economy
 	CurrencyManager.OnCurrencyChanged:Connect(function(player, amount, source, isGain)
 		self:_onCurrencyChanged(player, "Bux", "Currency", amount, source, isGain)
+
+		-- The first sale after a broke relief is it working
+		if isGain and self._brokeRelief[player] and (source == "SkewerSale" or source == "CustomOrder") then
+			self:_logBrokeReliefOutcome(player, "Sold")
+		end
 	end)
 	CurrencyManager.OnGemsChanged:Connect(function(player, amount, source, isGain)
 		self:_onCurrencyChanged(player, "Gems", "Gems", amount, source, isGain)
@@ -362,6 +376,17 @@ function AnalyticsManager:OnStart()
 	end)
 	CosmeticShopManager.OnCosmeticPurchased:Connect(function(player, structureId, price, tierId)
 		logCustom(player, "Cosmetic Bought", price, structureId, tierId)
+	end)
+	-- How often players go broke with nothing left to sell. The Bux they were down to is both the value, for averages, and a field, for breakdowns -- never more than ~80 distinct
+	IngredientRollingManager.OnBrokeReliefGranted:Connect(function(player, ingredientIds, stickId, balance)
+		if self._brokeRelief[player] then
+			self:_logBrokeReliefOutcome(player, "Regranted")
+		end
+
+		self._brokeRelief[player] = os.clock()
+
+		local lacked = if ingredientIds and stickId then "Both" elseif ingredientIds then "Ingredients" else "Stick"
+		logCustom(player, "Broke Relief Granted", balance, lacked, tostring(balance))
 	end)
 	GrillerManager.OnCookCompleted:Connect(function(player, cookStateId, elapsed, method)
 		logCustom(player, "Cook Completed", elapsed, cookStateId, method)
@@ -685,6 +710,11 @@ function AnalyticsManager:OnStart()
 				player,
 				if workspace:GetServerTimeNow() < wizardLuck.ExpiresAt then "Left" else "Expired"
 			)
+		end
+
+		-- Left before the gift reached a sale, which is the number that says the relief isn't enough
+		if self._brokeRelief[player] then
+			self:_logBrokeReliefOutcome(player, "Left")
 		end
 
 		logCustom(player, "Session Rolls", rolls, getSessionLengthBucket(sessionLength))

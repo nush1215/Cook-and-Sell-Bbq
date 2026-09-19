@@ -344,6 +344,17 @@ function SellNpcManager:GetCustomerRecord(player: Player, npc: Model)
 	return nil
 end
 
+-- Whether any of their customers is holding a skewer taken off the stall, which either pays or comes back once it settles.
+function SellNpcManager:IsCustomerHoldingSkewer(player: Player): boolean
+	for _, record in self._npcs[player] or {} do
+		if record.skewerRecords then
+			return true
+		end
+	end
+
+	return false
+end
+
 -- Records the owner's answer; finding the NPC among their own customers is the authority check. `employeeUid` marks an answer their seller gave for them, which is judged differently from one they gave themselves.
 function SellNpcManager:AnswerOffer(player: Player, npc: Model, accepted: boolean, employeeUid: string?)
 	local tracked = self._npcs[player]

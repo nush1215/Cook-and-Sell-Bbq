@@ -38,7 +38,6 @@ local WAKE_KEYS = {
 local PlayerDataManager
 local BaseManager
 local StickManager
-local IngredientManager
 
 -- The hired staff: the roster, the claims that stop two of them chasing one station, and the tick that steps every state machine. One employee's own behaviour lives on the Employee class.
 
@@ -376,8 +375,10 @@ function EmployeeManager:ReturnEmployeeStock(player: Player, uid: string, record
 			StickManager:GrantStick(player, load.StickId, 1, true)
 		end
 
+		-- Straight to the counts rather than through GrantIngredient, which records an obtain and would inflate their index with their own stock
+		local data = PlayerDataManager:GetLoadedPlayerData(player)
 		for _, ingredientId in load.Ingredients do
-			IngredientManager:GrantIngredient(player, ingredientId, 1)
+			PlayerDataManager:SetPlayerDataKey(player, { "Ingredients", ingredientId }, (data.Ingredients[ingredientId] or 0) + 1)
 		end
 
 		PlayerDataManager:SetPlayerDataKey(player, { "Employees", uid, "Load" }, nil)
@@ -467,7 +468,6 @@ function EmployeeManager:OnInit()
 	PlayerDataManager = require(script.Parent.PlayerDataManager)
 	BaseManager = require(script.Parent.BaseManager)
 	StickManager = require(script.Parent.StickManager)
-	IngredientManager = require(script.Parent.IngredientManager)
 end
 
 function EmployeeManager:OnStart()
