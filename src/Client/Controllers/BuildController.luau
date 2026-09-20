@@ -78,6 +78,8 @@ local PLAYER_CLEARANCE = 2
 
 -- One per reason a ghost goes red. Worded as what to do, since the red already said what went wrong
 local REFUSAL_NO_SPOT = "Aim at ground you own"
+-- No grid at all rather than bad aim: the base's floors haven't streamed in yet
+local REFUSAL_NO_GROUND = "Your stall is still loading"
 local REFUSAL_OFF_GROUND = "It won't fit on ground you own"
 local REFUSAL_OCCUPIED = "Something's already built there"
 local REFUSAL_SELF = "You're standing there"
@@ -151,6 +153,7 @@ local BuildController = {
 	_floors = {}, -- the floor of every plot the player owns, which is what the ghost's ray is aimed at
 	_ground = nil, -- GridUtil.Ground?, the cells those floors add up to; nil before a base is handed over
 	_lastPlaceTime = 0,
+	_groundRefreshQueued = false,
 
 	_reportedRefusal = false, -- the verdict OnGhostRefusalChanged last fired with; false is none yet this placement
 
@@ -178,6 +181,9 @@ end
 
 -- Re-reads owned plots. The floors are both the raycast targets and what the buildable region is built from.
 function BuildController:_refreshGround()
+	-- Read first, since this yields on the replica and everything after it must see the base as it is now
+	local unlocked = PlayerDataController:GetKey("Plots") or {}
+
 	self._ground = nil
 
 	local base = self:_getBase()
@@ -193,9 +199,6 @@ function BuildController:_refreshGround()
 		warn(`[Build] {base.Name} has no {Plots.FOLDER_NAME} folder, so there's nowhere to build`)
 		return
 	end
-
-	-- Read before the clear, since this yields on the replica and clearing first would blank the ghost
-	local unlocked = PlayerDataController:GetKey("Plots") or {}
 
 	table.clear(self._floors)
 
@@ -254,6 +257,42 @@ function BuildController:_refreshRaycastParams()
 	end
 
 	self._raycastParams.FilterDescendantsInstances = self._floors
+end
+
+-- Re-reads the ground once this frame however many asked, since a base's floors stream in as a burst.
+function BuildController:_queueGroundRefresh()
+	if self._groundRefreshQueued then
+		return
+	end
+	self._groundRefreshQueued = true
+
+	-- Deferred, which also lets a floor on its way out finish leaving before it's read
+	task.defer(function()
+		self._groundRefreshQueued = false
+
+		self:_refreshGround()
+		self:_refreshRaycastParams()
+	end)
+end
+
+-- Follows the owned base's floors as they stream in and out, since a single read can land before they do.
+function BuildController:_watchBase()
+	self._baseCleaner:Clean()
+
+	local base = self:_getBase()
+
+	if base then
+		local function onDescendantChanged(descendant: Instance)
+			if descendant.Name == Plots.FLOOR_NAME then
+				self:_queueGroundRefresh()
+			end
+		end
+
+		self._baseCleaner:Connect(base.DescendantAdded, onDescendantChanged)
+		self._baseCleaner:Connect(base.DescendantRemoving, onDescendantChanged)
+	end
+
+	self:_queueGroundRefresh()
 end
 
 -- Whether the block under the cursor is clear, read off placed models so it's right on a base you visit.
@@ -518,7 +557,7 @@ function BuildController:_updateGhost(deltaTime: number)
 
 	-- Off every owned plot, or on a base with no grid, so there's nothing to snap to.
 	if not (result and ground) then
-		self:_setRefusal(REFUSAL_NO_SPOT)
+		self:_setRefusal(if ground then REFUSAL_NO_SPOT else REFUSAL_NO_GROUND)
 		self:_paintGhost(false)
 		return
 	end
@@ -1260,6 +1299,7 @@ function BuildController:OnInit()
 	self._cleaner = Trove.new()
 	self._characterCleaner = self._cleaner:Construct(Trove)
 	self._placementCleaner = self._cleaner:Construct(Trove)
+	self._baseCleaner = self._cleaner:Construct(Trove)
 	self._hookedTools = {}
 
 	-- Timed out rather than waited on -- the guide is decoration, and building shouldn't hang on it
@@ -1291,20 +1331,31 @@ function BuildController:OnStart()
 		end)
 	end
 
-	-- Both can happen with a tool in hand, so floors are re-read. Off the start thread, since it yields
+	-- Both can happen with a tool in hand, so floors are re-read. The listen is off the start thread, since it yields
 	self._cleaner:Connect(LocalPlayer:GetAttributeChangedSignal("BaseId"), function()
-		self:_refreshGround()
-		self:_refreshRaycastParams()
+		self:_watchBase()
 	end)
 
 	task.spawn(function()
 		self._cleaner:Add(PlayerDataController:ListenForChange("Plots", function()
-			self:_refreshGround()
-			self:_refreshRaycastParams()
+			self:_queueGroundRefresh()
 		end))
+	end)
 
-		self:_refreshGround()
-		self:_refreshRaycastParams()
+	-- BaseId is set before the character spawns, so the base can stream in after it -- and back as a new instance
+	task.spawn(function()
+		local baseFolder = workspace:WaitForChild("Base")
+
+		local function onBaseChanged(baseModel: Instance)
+			if baseModel.Name == LocalPlayer:GetAttribute("BaseId") then
+				self:_watchBase()
+			end
+		end
+
+		self._cleaner:Connect(baseFolder.ChildAdded, onBaseChanged)
+		self._cleaner:Connect(baseFolder.ChildRemoved, onBaseChanged)
+
+		self:_watchBase()
 	end)
 end
 
