@@ -233,8 +233,8 @@ Ingredients.Data = {
 		Price = 100,
 		CookTime = 8,
 		Color = Color3.fromRGB(130, 200, 90),
-		-- TODO: real icon -- a blank one on an undiscovered Index cell looks like the locked state
-		Icon = "rbxassetid://0",
+
+		Icon = "rbxassetid://83916454398538",
 	},
 	{
 		Id = "Carrot",
