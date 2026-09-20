@@ -62,6 +62,10 @@ Keywords.Colors = {
 	Plot = PLOT_COLOR,
 	Plots = PLOT_COLOR,
 
+	-- The currency's own blue off Shared.Colors, so the word matches the figure a tip toast counts up
+	Gem = Colors.Gems,
+	Gems = Colors.Gems,
+
 	-- The tier words, keyed off Shared.Colors so the word matches the thing it describes
 	Common = Colors.Common.TextColor,
 	Uncommon = Colors.Uncommon.TextColor,

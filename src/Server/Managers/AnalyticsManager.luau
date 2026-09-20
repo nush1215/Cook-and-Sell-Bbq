@@ -32,6 +32,8 @@ local EmployeeHutManager
 local FreeWorkersManager
 local OfflineEarningManager
 local DailyRewardManager
+local DailyQuestManager
+local CosmeticShopManager
 
 -- The one place AnalyticsService is spoken to: subscribes to every manager's signals and turns each into an event. Every call is spawned and pcall'd, so it can't block or error gameplay.
 local AnalyticsManager = {
@@ -56,9 +58,11 @@ local SOURCE_TRANSACTION_TYPES = {
 	WorkerHire = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	IngredientPurchase = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	StickPurchase = Enum.AnalyticsEconomyTransactionType.Shop.Name,
+	CosmeticPurchase = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	SauceDispenserUpgrade = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	BuxPack = Enum.AnalyticsEconomyTransactionType.Shop.Name,
 	DailyReward = Enum.AnalyticsEconomyTransactionType.TimedReward.Name,
+	DailyQuest = Enum.AnalyticsEconomyTransactionType.TimedReward.Name,
 }
 
 -- Fires a custom event behind spawn and pcall, so analytics never blocks or errors gameplay.
@@ -235,8 +239,15 @@ local function getDominantCookState(skewerRecords: { StickModel.StickRecord }): 
 	return dominant
 end
 
--- Logs a soft-currency (Bux) flow, reading the ending balance after the change.
-function AnalyticsManager:_onCurrencyChanged(player: Player, amount: number, source: string?, isGain: boolean)
+-- Logs a soft-currency flow (Bux or Gems), reading the ending balance off `dataKey` after the change.
+function AnalyticsManager:_onCurrencyChanged(
+	player: Player,
+	currencyType: string,
+	dataKey: string,
+	amount: number,
+	source: string?,
+	isGain: boolean
+)
 	if not source then
 		return
 	end
@@ -245,8 +256,8 @@ function AnalyticsManager:_onCurrencyChanged(player: Player, amount: number, sou
 	local transactionType = SOURCE_TRANSACTION_TYPES[source] or Enum.AnalyticsEconomyTransactionType.Gameplay.Name
 	task.spawn(function()
 		pcall(function()
-			PlayerDataManager:GetPlayerDataKey(player, "Currency"):andThen(function(currency)
-				AnalyticsService:LogEconomyEvent(player, flowType, "Bux", amount, currency, transactionType, source)
+			PlayerDataManager:GetPlayerDataKey(player, dataKey):andThen(function(balance)
+				AnalyticsService:LogEconomyEvent(player, flowType, currencyType, amount, balance, transactionType, source)
 			end)
 		end)
 	end)
@@ -292,17 +303,22 @@ function AnalyticsManager:OnInit()
 	FreeWorkersManager = require(script.Parent.FreeWorkersManager)
 	OfflineEarningManager = require(script.Parent.OfflineEarningManager)
 	DailyRewardManager = require(script.Parent.DailyRewardManager)
+	DailyQuestManager = require(script.Parent.DailyQuestManager)
+	CosmeticShopManager = require(script.Parent.CosmeticShopManager)
 end
 
 function AnalyticsManager:OnStart()
 	-- Economy
 	CurrencyManager.OnCurrencyChanged:Connect(function(player, amount, source, isGain)
-		self:_onCurrencyChanged(player, amount, source, isGain)
+		self:_onCurrencyChanged(player, "Bux", "Currency", amount, source, isGain)
 
 		-- The first sale after a broke relief is it working
 		if isGain and self._brokeRelief[player] and (source == "SkewerSale" or source == "CustomOrder") then
 			self:_logBrokeReliefOutcome(player, "Sold")
 		end
+	end)
+	CurrencyManager.OnGemsChanged:Connect(function(player, amount, source, isGain)
+		self:_onCurrencyChanged(player, "Gems", "Gems", amount, source, isGain)
 	end)
 
 	-- Monetization
@@ -357,6 +373,9 @@ function AnalyticsManager:OnStart()
 	end)
 	StickShopManager.OnStickPurchased:Connect(function(player, stickId, price, method)
 		logCustom(player, "Stick Bought", price, stickId, method)
+	end)
+	CosmeticShopManager.OnCosmeticPurchased:Connect(function(player, structureId, price, tierId)
+		logCustom(player, "Cosmetic Bought", price, structureId, tierId)
 	end)
 	-- How often players go broke with nothing left to sell. The Bux they were down to is both the value, for averages, and a field, for breakdowns -- never more than ~80 distinct
 	IngredientRollingManager.OnBrokeReliefGranted:Connect(function(player, ingredientIds, stickId, balance)
@@ -586,8 +605,9 @@ function AnalyticsManager:OnStart()
 			logFreeWorkerFunnelStep(player, 5, "Equipped Worker")
 		end
 	end)
-	EmployeeHutManager.OnHutSlotPurchased:Connect(function(player, slot, cost, method)
-		logCustom(player, "Hut Slot Unlocked", cost, tostring(slot), method)
+	-- The slot is the hut's own, 2 or 3, so the funnel reads the same whichever hut it was bought on
+	EmployeeHutManager.OnHutSlotPurchased:Connect(function(player, hutIndex, slot, cost, method)
+		logCustom(player, "Hut Slot Unlocked", cost, tostring(slot), method, tostring(hutIndex))
 	end)
 	EmployeeHutManager.OnHutItemStored:Connect(function(player, kind, itemId, amount, storeAll)
 		logCustom(
@@ -639,6 +659,22 @@ function AnalyticsManager:OnStart()
 				AnalyticsService:LogFunnelStepEvent(player, "Daily Rewards 1", nil, day, `Claimed Day {day}`)
 			end)
 		end)
+	end)
+
+	-- By quest and difficulty, so a quest nobody finishes stands out from its tier; the Bux land as economy events of their own
+	DailyQuestManager.OnDailyQuestClaimed:Connect(function(player, quest)
+		logCustom(player, "Daily Quest Claimed", 1, quest.Id, quest.Difficulty)
+	end)
+	-- Split on whether it was claimed or paid out at a reset, which is a board finished but never visited
+	DailyQuestManager.OnDailyQuestBoardCompleted:Connect(function(player, reward, settledAtReset)
+		logCustom(
+			player,
+			"Daily Quest Board Completed",
+			1,
+			reward.Type,
+			if reward.Type == "Worker" then `{reward.Stars} Star` else reward.Id,
+			if settledAtReset then "Reset" else "Claimed"
+		)
 	end)
 
 	-- The viewer's rating rides a field rather than the value, so opens break down by band; the second splits their own panel from a visit

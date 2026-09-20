@@ -222,6 +222,31 @@ function GuiUtil.ConvertSecondsToDHMS(totalSeconds: number): string
 	return table.concat(parts, " ")
 end
 
+-- Converts seconds to a compact "h m s" with days folded into the hours (87005 -> "24h 10m 5s"), showing only non-zero units, or "0s".
+function GuiUtil.ConvertSecondsToHMS(totalSeconds: number): string
+	local hours = math.floor(totalSeconds / 3600)
+	local minutes = math.floor((totalSeconds % 3600) / 60)
+	local seconds = math.floor(totalSeconds % 60)
+
+	local parts = {}
+
+	if hours > 0 then
+		table.insert(parts, string.format("%dh", hours))
+	end
+	if minutes > 0 then
+		table.insert(parts, string.format("%dm", minutes))
+	end
+	if seconds > 0 then
+		table.insert(parts, string.format("%ds", seconds))
+	end
+
+	if #parts == 0 then
+		return "0s"
+	end
+
+	return table.concat(parts, " ")
+end
+
 -- Converts seconds to a live countdown: units above a minute, ticking SS.hh below it. Redraw per frame.
 function GuiUtil.ConvertSecondsToCountdown(totalSeconds: number): string
 	if totalSeconds >= 60 then

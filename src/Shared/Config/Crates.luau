@@ -18,8 +18,9 @@ export type RewardType = "Ingredient" | "Stick"
 export type RewardEntry = {
 	Type: RewardType?, -- which config this id comes from; only needed in a mixed group, since load
 	-- back-fills the group's own Type onto every entry that leaves it out
-	Id: string, -- an Ingredients or Sticks id, depending on the resolved Type
+	Id: string?, -- an Ingredients or Sticks id, depending on the resolved Type; left out on a pool
 	Chance: number, -- percent this entry fills one of the group's slots; a group's chances sum to 100
+	Rewards: { RewardEntry }?, -- makes this a pool: landing on it rolls again among these, shown as the card's mystery slot
 }
 
 export type SlotGroup = {
@@ -67,16 +68,26 @@ Crates.Data = {
 		ExplodeColor = Color3.fromRGB(255, 214, 214),
 		RobuxProductIds = { [1] = 3709025712, [3] = 3709025743, [10] = 3709025774 },
 		Contents = {
-			-- Every meat, and the one crate a Common belongs in. Not Distinct on purpose -- see docs/balance.md
+			-- The everyday cuts, and the one crate a Common belongs in. Not Distinct on purpose -- see docs/balance.md
 			{
 				Type = "Ingredient",
-				Count = 5,
+				Count = 3,
 				Rewards = {
-					{ Id = "Chicken", Chance = 40 },
-					{ Id = "Pork", Chance = 30 },
-					{ Id = "Beef", Chance = 18 },
-					{ Id = "Shrimp", Chance = 9 },
-					{ Id = "Salmon", Chance = 3 },
+					{ Id = "Chicken", Chance = 30 },
+					{ Id = "Pork", Chance = 28 },
+					{ Id = "Hotdog", Chance = 25 },
+					{ Id = "Turkey", Chance = 15 },
+					-- The prime cut, Rare or better. Five entries at most, the odds frame's slot count
+					{
+						Chance = 2,
+						Rewards = {
+							{ Id = "Shrimp", Chance = 50 },
+							{ Id = "Ham", Chance = 25 },
+							{ Id = "Salmon", Chance = 15 },
+							{ Id = "Lamb", Chance = 7 },
+							{ Id = "GoatLeg", Chance = 3 },
+						},
+					},
 				},
 			},
 		},
@@ -198,7 +209,65 @@ Crates.TUTORIAL_PROMPT_DISTANCE = 12
 -- How long to wait for a crate's PrimaryPart to replicate before giving up on its billboard.
 Crates.PRIMARY_PART_WAIT = 5
 
--- Resolves each crate's model and checks every reward id, dropping anything that can't be built.
+-- Resolves every entry's Type and drops any that can't be built, recursing into pools, then warns if the chances miss 100%.
+local function resolveRewards(crate: Crate, rewards: { RewardEntry }, fallbackType: RewardType?, label: string)
+	for rewardIndex = #rewards, 1, -1 do
+		local reward = rewards[rewardIndex]
+
+		-- Resolved once, so everything past this point sees a Type on every reward
+		reward.Type = reward.Type or fallbackType
+
+		if reward.Rewards then
+			resolveRewards(crate, reward.Rewards, reward.Type, `{label} pool`)
+
+			-- A pool emptied by the checks below would roll nothing, so it goes too
+			if #reward.Rewards == 0 then
+				warn(`Crate {crate.Id}'s {label} pool has nothing left in it, it won't be rolled`)
+				table.remove(rewards, rewardIndex)
+			end
+
+			continue
+		end
+
+		if not reward.Type then
+			warn(
+				`Crate {crate.Id} rewards {reward.Id} without a Type, and its group has none to fall back on `
+					.. `-- give the entry a Type, or the group one for all of its entries to take`
+			)
+			table.remove(rewards, rewardIndex)
+			continue
+		end
+
+		local exists = if reward.Type == "Ingredient"
+			then Ingredients.GetIngredientFromId(reward.Id) ~= nil
+			else Sticks.GetStickFromId(reward.Id) ~= nil
+
+		if not exists then
+			warn(`Crate {crate.Id} rewards a {reward.Type} the config doesn't have ({reward.Id}), it won't be rolled`)
+			table.remove(rewards, rewardIndex)
+		end
+	end
+
+	local total = 0
+	for _, reward in rewards do
+		total += reward.Chance
+	end
+
+	if math.abs(total - 100) > Crates.CHANCE_SUM_TOLERANCE then
+		local direction = if total > 100 then "rarer" else "commoner"
+		local fix = if total > 100 then "lower" else "raise"
+
+		-- Rounded, since summing decimals lands on 99.99999 often enough to make the message look like the bug
+		local percent = math.round(total * 10) / 10
+
+		warn(
+			`Crate {crate.Id}'s {label} chances add up to {percent}% instead of 100%, so every one of them `
+				.. `lands {math.abs(percent - 100)}% {direction} than authored -- {fix} some Chances to bring them back`
+		)
+	end
+end
+
+-- Resolves each crate's model and checks every reward, dropping anything that can't be built.
 for index = #Crates.Data, 1, -1 do
 	local crate = Crates.Data[index]
 	local model = CratesFolder:FindFirstChild(crate.Id)
@@ -212,58 +281,10 @@ for index = #Crates.Data, 1, -1 do
 	crate.Model = model
 
 	for _, group in crate.Contents do
-		for rewardIndex = #group.Rewards, 1, -1 do
-			local reward = group.Rewards[rewardIndex]
-
-			-- Resolved once, so everything past this point sees a Type on every reward
-			reward.Type = reward.Type or group.Type
-
-			if not reward.Type then
-				warn(
-					`Crate {crate.Id} rewards {reward.Id} without a Type, and its group has none to fall back on `
-						.. `-- give the entry a Type, or the group one for all of its entries to take`
-				)
-				table.remove(group.Rewards, rewardIndex)
-				continue
-			end
-
-			local exists = if reward.Type == "Ingredient"
-				then Ingredients.GetIngredientFromId(reward.Id) ~= nil
-				else Sticks.GetStickFromId(reward.Id) ~= nil
-
-			if not exists then
-				warn(
-					`Crate {crate.Id} rewards a {reward.Type} the config doesn't have ({reward.Id}), it won't be rolled`
-				)
-				table.remove(group.Rewards, rewardIndex)
-			end
-		end
-	end
-end
-
--- Warns on a group whose chances miss 100%, or a Distinct group with fewer entries than slots.
-for _, crate in Crates.Data do
-	for _, group in crate.Contents do
 		-- A mixed group has no Type to name it by, and these warns are about the group as a whole
 		local groupName = group.Type or "mixed"
 
-		local total = 0
-		for _, reward in group.Rewards do
-			total += reward.Chance
-		end
-
-		if math.abs(total - 100) > Crates.CHANCE_SUM_TOLERANCE then
-			local direction = if total > 100 then "rarer" else "commoner"
-			local fix = if total > 100 then "lower" else "raise"
-
-			-- Rounded, since summing decimals lands on 99.99999 often enough to make the message look like the bug
-			local percent = math.round(total * 10) / 10
-
-			warn(
-				`Crate {crate.Id}'s {groupName} chances add up to {percent}% instead of 100%, so every one of them `
-					.. `lands {math.abs(percent - 100)}% {direction} than authored -- {fix} some Chances to bring them back`
-			)
-		end
+		resolveRewards(crate, group.Rewards, group.Type, groupName)
 
 		if group.Distinct and #group.Rewards < group.Count then
 			warn(

@@ -18,6 +18,8 @@ local PlayerDataManager
 local CurrencyManager = {
 	-- (player, amount, source, isGain) after every change; `source` is nil for grants outside the economy
 	OnCurrencyChanged = Signal.new(),
+	-- OnCurrencyChanged's twin for Gems, with the same arguments so analytics reads both the same way
+	OnGemsChanged = Signal.new(),
 
 	_earlyBoostDisabled = {}, -- [player] = true while an admin has their early boost switched off
 }
@@ -85,6 +87,14 @@ function CurrencyManager:IncrementCurrency(player: Player, amount: number?, sour
 	self.OnCurrencyChanged:Fire(player, amount, source, true)
 end
 
+-- Grants Gems. Never boosted and kept out of TotalEarned, since the boosts and that lifetime total are both about Bux.
+function CurrencyManager:IncrementGems(player: Player, amount: number, source: string?)
+	-- TotalGemsEarned is the Gems counterpart: income, not balance, so it never comes back down
+	PlayerDataManager:IncrementDataKey(player, "TotalGemsEarned", amount)
+	PlayerDataManager:IncrementDataKey(player, "Gems", amount)
+	self.OnGemsChanged:Fire(player, amount, source, true)
+end
+
 -- Spends currency. `source` names what it went on and rides on OnCurrencyChanged.
 function CurrencyManager:DeductCurrency(player: Player, amount: number?, source: string?)
 	amount = amount or 1
@@ -92,13 +102,20 @@ function CurrencyManager:DeductCurrency(player: Player, amount: number?, source:
 	self.OnCurrencyChanged:Fire(player, amount, source, false)
 end
 
-function CurrencyManager:CanAfford(player: Player, amount: number): (boolean, number)
-	local hasData, playerCurrency = PlayerDataManager:GetPlayerDataKey(player, "Currency"):await()
+-- Spends Gems, DeductCurrency's twin. The decrement doesn't clamp, so the caller checks CanAfford with "Gems" first.
+function CurrencyManager:DeductGems(player: Player, amount: number, source: string?)
+	PlayerDataManager:DecrementDataKey(player, "Gems", amount)
+	self.OnGemsChanged:Fire(player, amount, source, false)
+end
+
+-- Whether they hold `amount` of Bux, or of Gems with `dataKey` "Gems", and how far short they are. Yields on the data read.
+function CurrencyManager:CanAfford(player: Player, amount: number, dataKey: ("Currency" | "Gems")?): (boolean, number)
+	local hasData, balance = PlayerDataManager:GetPlayerDataKey(player, dataKey or "Currency"):await()
 	if not hasData then
-		return false
+		return false, amount
 	end
 
-	return playerCurrency >= amount, amount - playerCurrency
+	return balance >= amount, amount - balance
 end
 
 function CurrencyManager:OnInit()

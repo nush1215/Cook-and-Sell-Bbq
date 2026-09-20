@@ -245,12 +245,7 @@ function BuildController:_refreshRaycastParams()
 end
 
 -- Whether the block under the cursor is clear, read off placed models so it's right on a base you visit.
-function BuildController:_isBlockFreeLocally(
-	cellX: number,
-	cellZ: number,
-	footprintX: number,
-	footprintZ: number
-): boolean
+function BuildController:_isBlockFreeLocally(candidate: Structures.PlacedStructure): boolean
 	local base = self:_getBase()
 	local folder = base and base:FindFirstChild(Structures.FOLDER_NAME)
 	if not folder then
@@ -259,28 +254,18 @@ function BuildController:_isBlockFreeLocally(
 
 	-- Only what's streamed in; wrong further off than anyone builds, and Base:IsBlockFree decides
 	for _, model in folder:GetChildren() do
+		local placedType = model:GetAttribute(Structures.TYPE_ATTRIBUTE)
 		local placedX = model:GetAttribute(Structures.CELL_X_ATTRIBUTE)
 		local placedZ = model:GetAttribute(Structures.CELL_Z_ATTRIBUTE)
+		local placedRotation = model:GetAttribute(Structures.ROTATION_ATTRIBUTE)
 
-		if not placedX or not placedZ then
+		if not placedType or not placedX or not placedZ or not placedRotation then
 			continue
 		end
 
-		local placedFootprintX = model:GetAttribute(Structures.FOOTPRINT_X_ATTRIBUTE) or 1
-		local placedFootprintZ = model:GetAttribute(Structures.FOOTPRINT_Z_ATTRIBUTE) or 1
+		local placed = { Type = placedType, CellX = placedX, CellZ = placedZ, Rotation = placedRotation }
 
-		if
-			Structures.BlocksOverlap(
-				cellX,
-				cellZ,
-				footprintX,
-				footprintZ,
-				placedX,
-				placedZ,
-				placedFootprintX,
-				placedFootprintZ
-			)
-		then
+		if Structures.Overlaps(placed, candidate) then
 			return false
 		end
 	end
@@ -288,18 +273,14 @@ function BuildController:_isBlockFreeLocally(
 	return true
 end
 
--- Whoever is standing in the block, or nil. The one check the server doesn't repeat -- it would have moved.
-function BuildController:_getPlayerInBlock(
-	ground: GridUtil.Ground,
-	cellX: number,
-	cellZ: number,
-	footprintX: number,
-	footprintZ: number
-): Player?
-	local minX = cellX * Structures.CELL_SIZE - PLAYER_CLEARANCE
-	local minZ = cellZ * Structures.CELL_SIZE - PLAYER_CLEARANCE
-	local maxX = (cellX + footprintX) * Structures.CELL_SIZE + PLAYER_CLEARANCE
-	local maxZ = (cellZ + footprintZ) * Structures.CELL_SIZE + PLAYER_CLEARANCE
+-- Whoever is standing on a cell the candidate blocks, or nil. The one check the server doesn't repeat -- it would have moved.
+function BuildController:_getPlayerInBlock(ground: GridUtil.Ground, candidate: Structures.PlacedStructure): Player?
+	local structure = Structures.GetStructureFromId(candidate.Type)
+
+	-- Flat enough to lay underfoot; anything else is checked against the cells it blocks, so a tent's gap is free
+	if structure.Flat then
+		return nil
+	end
 
 	for _, player in Players:GetPlayers() do
 		local character = player.Character
@@ -312,8 +293,15 @@ function BuildController:_getPlayerInBlock(
 
 		local point = ground.Origin:PointToObjectSpace(root.Position)
 
-		if point.X > minX and point.X < maxX and point.Z > minZ and point.Z < maxZ then
-			return player
+		for _, rect in structure.Blocks[candidate.Rotation] do
+			local minX = (candidate.CellX + rect.MinX) * Structures.CELL_SIZE - PLAYER_CLEARANCE
+			local minZ = (candidate.CellZ + rect.MinZ) * Structures.CELL_SIZE - PLAYER_CLEARANCE
+			local maxX = (candidate.CellX + rect.MaxX) * Structures.CELL_SIZE + PLAYER_CLEARANCE
+			local maxZ = (candidate.CellZ + rect.MaxZ) * Structures.CELL_SIZE + PLAYER_CLEARANCE
+
+			if point.X > minX and point.X < maxX and point.Z > minZ and point.Z < maxZ then
+				return player
+			end
 		end
 	end
 
@@ -534,16 +522,17 @@ function BuildController:_updateGhost(deltaTime: number)
 
 	-- A reason, not a boolean, so a refused click can name the check; re-deriving it would test a later frame
 	local refusal = nil
+	local candidate = { Type = structure.Id, CellX = cellX, CellZ = cellZ, Rotation = self._rotation }
 
 	-- Ahead of the aim checks: a structure that isn't allowed down at all is the real reason, wherever it's pointed
 	if self._placeCategory and structure.Category ~= self._placeCategory then
 		refusal = self._placeRefusal or REFUSAL_LOCKED
 	elseif not GridUtil.IsBlockOnGround(ground, cellX, cellZ, footprintX, footprintZ) then
 		refusal = REFUSAL_OFF_GROUND
-	elseif not self:_isBlockFreeLocally(cellX, cellZ, footprintX, footprintZ) then
+	elseif not self:_isBlockFreeLocally(candidate) then
 		refusal = REFUSAL_OCCUPIED
 	else
-		local blockingPlayer = self:_getPlayerInBlock(ground, cellX, cellZ, footprintX, footprintZ)
+		local blockingPlayer = self:_getPlayerInBlock(ground, candidate)
 
 		if blockingPlayer then
 			refusal = if blockingPlayer == LocalPlayer then REFUSAL_SELF else REFUSAL_PLAYER

@@ -37,15 +37,17 @@ local REQUEST_TIMEOUT = 3
 -- Skill is 0-1 and LayoutOrder an integer, so it's scaled up before being negated into a best-first order
 local LAYOUT_ORDER_SCALE = 10_000
 
--- The Worker Hut panel: the hut's slots, bought in order, and the workers equipped into them. Everything drawn is read off player data; the portraits are baked by the server into this player's own PlayerGui.
+-- The Worker Hut panel: one hut's slots, bought in order, and the workers equipped into them. Everything drawn is read off player data; the portraits are baked by the server into this player's own PlayerGui.
 local WorkerHutController = {
-	PurchaseHutSlotEvent = Network.Event("PurchaseHutSlot"),
-	EquipEmployeeEvent = Network.Event("EquipEmployee"),
+	PurchaseHutSlotEvent = Network.Event("PurchaseHutSlot"), -- client -> server (hutIndex, slot)
+	RequestHutSlotProductEvent = Network.Event("RequestHutSlotProduct"), -- client -> server (hutIndex)
+	EquipEmployeeEvent = Network.Event("EquipEmployee"), -- client -> server (uid, employee slot)
 	UnequipEmployeeEvent = Network.Event("UnequipEmployee"),
 	HutSlotSelectedEvent = Network.Event("HutSlotSelected"), -- client -> server (no args)
 
-	_slots = {}, -- [slot] = { Frame, BuyRobux?, PortraitCleaner, Uid? }
-	_selectingSlot = nil, -- the slot the worker list is picking for, while it's up
+	_hutIndex = nil, -- the number of the hut the panel is open on
+	_slots = {}, -- [slot in the hut] = { Frame, BuyRobux?, PortraitCleaner, Uid? }
+	_selectingSlot = nil, -- the hut's slot the worker list is picking for, while it's up
 	_requesting = false, -- the client half of the debounce; the server holds the authoritative one
 	_workerCleaner = Trove.new(), -- the worker list's cards, rebuilt every time it's shown
 }
@@ -86,12 +88,12 @@ function WorkerHutController:_drawEmployee(panel, uid: string, record, portraitC
 	end
 end
 
--- Paints every slot as unlocked, next in line to buy, or locked behind the one before it.
+-- Paints the open hut's slots as unlocked, next in line to buy, or locked behind the one before it.
 function WorkerHutController:RefreshSlots()
-	local unlocked = PlayerDataController:GetKey("HutSlotsUnlocked")
+	local unlocked = EmployeeHut.GetUnlockedSlots(PlayerDataController:GetKey("HutSlots"), self._hutIndex)
 	local employees = PlayerDataController:GetKey("Employees")
 
-	-- [slot] = uid, gathered in one pass rather than a scan per slot
+	-- [employee slot] = uid, gathered in one pass rather than a scan per slot
 	local equipped = {}
 	for uid, record in employees do
 		if record.Slot then
@@ -101,15 +103,18 @@ function WorkerHutController:RefreshSlots()
 
 	for slot, state in self._slots do
 		local frame = state.Frame
-		local isUnlocked = EmployeeHut.IsSlotUnlocked(slot, unlocked)
+		local isUnlocked = slot <= unlocked
 		local buyable = slot == unlocked + 1
-		local uid = if isUnlocked then equipped[slot] else nil
+		local uid = if isUnlocked then equipped[EmployeeHut.GetEmployeeSlot(self._hutIndex, slot)] else nil
 
 		state.Uid = uid
 
 		frame.Title.Visible = buyable
 		frame.Price.Visible = buyable
 		frame.Buy.Visible = buyable
+
+		-- Repainted rather than written once, since every hut prices its slots differently
+		frame.Price.Text = `${GuiUtil.ConvertNumberWithCommas(EmployeeHut.SLOT_PRICES[self._hutIndex][slot])}`
 
 		if state.BuyRobux then
 			state.BuyRobux.Visible = buyable
@@ -131,7 +136,7 @@ function WorkerHutController:RefreshSlots()
 	end
 end
 
--- Builds one card per worker not in a slot, best first, each equipping into `slot`. Returns how many it built.
+-- Builds one card per worker not in a slot, best first, each equipping into the open hut's `slot`. Returns how many it built.
 function WorkerHutController:_buildWorkerCards(slot: number): number
 	self._workerCleaner:Clean()
 
@@ -162,7 +167,7 @@ function WorkerHutController:_buildWorkerCards(slot: number): number
 
 		-- The card's Holder springs under the press, not the template root around it
 		self._workerCleaner:Add(UIController:BindButtonClick(holder.Button, function()
-			if self:_request(self.EquipEmployeeEvent, uid, slot) then
+			if self:_request(self.EquipEmployeeEvent, uid, EmployeeHut.GetEmployeeSlot(self._hutIndex, slot)) then
 				self:ShowSlots()
 			end
 		end, true, false, { ShowFrame = holder }).Disconnect)
@@ -223,12 +228,19 @@ function WorkerHutController:Refresh()
 	self:RefreshSlots()
 end
 
--- Opens the panel on its slots. Shuts it again on a repeat, since OpenFrame toggles.
-function WorkerHutController:Open()
+-- Opens the panel on the slots of the hut `hutUid`. Shuts it again on a repeat, since OpenFrame toggles.
+function WorkerHutController:Open(hutUid: string)
 	if not self.UI then
 		return
 	end
 
+	-- Numbered by the server in the same write that places it, so a hut without one is data still on its way
+	local placed = PlayerDataController:GetKey("Structures")[hutUid]
+	if not placed or not placed.Hut then
+		return
+	end
+
+	self._hutIndex = placed.Hut
 	self:ShowSlots()
 	UIController:OpenFrame(self.UI.Holder)
 end
@@ -258,12 +270,12 @@ function WorkerHutController:OnStart()
 		UIController:CloseFrame(holder)
 	end, true)
 
-	-- Bound once here rather than per open: a hidden button can't be pressed, so the bindings stay live
-	for slot, price in EmployeeHut.SLOT_PRICES do
+	-- Bound once here rather than per open: a hidden button can't be pressed, so the bindings stay live. Each acts on whichever hut the panel is open on
+	for slot = 1, EmployeeHut.SLOTS_PER_HUT do
 		local frame = holder.SlotContainer[tostring(slot)]
 		local details = frame.EquippedDetails
 
-		-- Only a slot sold for Robux carries that button, and slot 1 never is: it comes with the repair
+		-- Only a slot sold for Robux carries that button, and slot 1 never is: every hut's comes free
 		local state = {
 			Frame = frame,
 			BuyRobux = if EmployeeHut.SLOT_PRODUCT_IDS[slot] then frame.BuyRobux else nil,
@@ -272,19 +284,17 @@ function WorkerHutController:OnStart()
 		}
 		self._slots[slot] = state
 
-		-- A price never moves, so it's written once rather than repainted
-		frame.Price.Text = `${GuiUtil.ConvertNumberWithCommas(price)}`
-
 		-- Left pressable when they can't afford it, so the server is the one that says why
 		UIController:BindButtonClick(frame.Buy, function()
-			self:_request(self.PurchaseHutSlotEvent, slot)
+			self:_request(self.PurchaseHutSlotEvent, self._hutIndex, slot)
 		end, true)
 
 		if state.BuyRobux then
 			local stringId = EmployeeHut.GetSlotProductStringId(slot)
 
+			-- Prompted by the server, which remembers the hut, since the receipt names only the buyer
 			UIController:BindButtonClick(state.BuyRobux, function()
-				ShopController:PromptProductPurchaseFromId(stringId)
+				self.RequestHutSlotProductEvent:FireServer(self._hutIndex)
 			end, true)
 
 			-- The first read of a price yields, so it's fetched off this thread with "-" holding its place
@@ -330,7 +340,7 @@ function WorkerHutController:OnStart()
 			self:Refresh()
 		end)
 
-		PlayerDataController:ListenForChange("HutSlotsUnlocked", function()
+		PlayerDataController:ListenForChange("HutSlots", function()
 			self._requesting = false
 			self:Refresh()
 		end)

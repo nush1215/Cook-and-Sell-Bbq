@@ -44,6 +44,7 @@ local NpcRig = {
 	_descCache = {}, -- [userId] = HumanoidDescription, so each friend's look is fetched at most once
 	_friendIds = {}, -- [player] = { userId, ... }, the owner's friend list fetched once per player
 	_fallbackDescriptions = {}, -- Assets.NPC's looks, worn when there's no friend to dress a customer as
+	_fallbackNames = {}, -- each fallback look's rig name, at the same index, so a saved customer can be dressed the same again
 }
 
 -- Resolves the base's spawn/stand parts, or nil if the player has no base in the world.
@@ -128,6 +129,7 @@ function NpcRig.BuildPool()
 
 	for _, rig in FallbackNpcFolder:GetChildren() do
 		table.insert(NpcRig._fallbackDescriptions, rig:FindFirstChildOfClass("Humanoid"):GetAppliedDescription())
+		table.insert(NpcRig._fallbackNames, rig.Name)
 	end
 
 	for _ = 1, SellNpc.NPC_POOL_SIZE do
@@ -176,8 +178,41 @@ function NpcRig.Release(npc: Model)
 	end
 end
 
--- A random friend's HumanoidDescription, falling back to an Assets.NPC look. Cached, since both web calls are throttled.
-function NpcRig.GetCustomerDescription(player: Player, rng: Random): HumanoidDescription?
+-- A random Assets.NPC look, and the rig name that finds it again.
+function NpcRig.GetFallbackDescription(rng: Random): (HumanoidDescription?, string?)
+	if #NpcRig._fallbackDescriptions == 0 then
+		return nil, nil
+	end
+
+	local index = rng:NextInteger(1, #NpcRig._fallbackDescriptions)
+	return NpcRig._fallbackDescriptions[index], NpcRig._fallbackNames[index]
+end
+
+-- A customer's HumanoidDescription and the look that dresses them the same again: `look`'s own if it can still be had, else a random friend's, falling back to an Assets.NPC look. Cached, since both web calls are throttled.
+function NpcRig.GetCustomerDescription(
+	player: Player,
+	rng: Random,
+	look: (number | string)?
+): (HumanoidDescription?, (number | string)?)
+	-- A look is a friend's UserId or an Assets.NPC rig's name; a friend dropped since still comes back as who they were
+	local fallbackIndex = if typeof(look) == "string" then table.find(NpcRig._fallbackNames, look) else nil
+	if fallbackIndex then
+		return NpcRig._fallbackDescriptions[fallbackIndex], look
+	elseif typeof(look) == "number" then
+		local description = NpcRig._descCache[look]
+		if not description then
+			-- Left uncached: ClearPlayer frees by friend list, so one no longer on it would never be freed
+			local success, result = pcall(function()
+				return Players:GetHumanoidDescriptionFromUserId(look)
+			end)
+			description = if success then result else nil
+		end
+
+		if description then
+			return description, look
+		end
+	end
+
 	local friendIds = NpcRig._friendIds[player]
 	if not friendIds then
 		local success, pages = pcall(function()
@@ -185,7 +220,7 @@ function NpcRig.GetCustomerDescription(player: Player, rng: Random): HumanoidDes
 		end)
 		-- Only cached on success, so one throttled call doesn't hold them on fallbacks all session
 		if not success then
-			return RandomUtil.GetRandomFromArray(NpcRig._fallbackDescriptions, nil, rng)
+			return NpcRig.GetFallbackDescription(rng)
 		end
 
 		friendIds = {}
@@ -196,7 +231,7 @@ function NpcRig.GetCustomerDescription(player: Player, rng: Random): HumanoidDes
 	end
 
 	if #friendIds == 0 then
-		return RandomUtil.GetRandomFromArray(NpcRig._fallbackDescriptions, nil, rng)
+		return NpcRig.GetFallbackDescription(rng)
 	end
 
 	local userId = friendIds[rng:NextInteger(1, #friendIds)]
@@ -206,13 +241,13 @@ function NpcRig.GetCustomerDescription(player: Player, rng: Random): HumanoidDes
 			return Players:GetHumanoidDescriptionFromUserId(userId)
 		end)
 		if not success then
-			return RandomUtil.GetRandomFromArray(NpcRig._fallbackDescriptions, nil, rng)
+			return NpcRig.GetFallbackDescription(rng)
 		end
 		description = result
 		NpcRig._descCache[userId] = description
 	end
 
-	return description
+	return description, userId
 end
 
 -- Dresses a rig in `cosmetics` -- hair or a hat, a face and a skin tone -- keeping whatever it was authored
@@ -445,6 +480,37 @@ end
 -- Equips an NPCSkewerTool holding the skewer built from `record`. `scale` defaults to the customer's shrunken display size; staff carrying one hold it at the size a player does.
 function NpcRig.GiveSkewer(npc: Model, record, scale: number?): (Tool, Model?)
 	return NpcRig.GiveCarried(npc, StickModel.BuildStickModel(record), scale)
+end
+
+-- Fades the skewer's ingredients out in order over `duration`, so the food looks eaten off the stick. Yields for `duration`.
+function NpcRig.EatSkewerIngredients(skewer: Model, duration: number)
+	local ingredients = {}
+	for _, child in skewer:GetChildren() do
+		if child:GetAttribute("SkewerIndex") then
+			table.insert(ingredients, child)
+		end
+	end
+	table.sort(ingredients, function(a, b)
+		return a:GetAttribute("SkewerIndex") < b:GetAttribute("SkewerIndex")
+	end)
+
+	if #ingredients == 0 then
+		task.wait(duration)
+		return
+	end
+
+	local slice = duration / #ingredients
+	local fadeInfo = TweenInfo.new(slice)
+	for _, ingredient in ingredients do
+		for _, descendant in ingredient:GetDescendants() do
+			if descendant:IsA("BasePart") or descendant:IsA("Decal") then
+				TweenService:Create(descendant, fadeInfo, { Transparency = 1 }):Play()
+			elseif descendant:IsA("ParticleEmitter") then
+				descendant.Enabled = false
+			end
+		end
+		task.wait(slice)
+	end
 end
 
 -- Walks the NPC to `destination`, re-issuing MoveTo until it arrives or WALK_TIMEOUT elapses.

@@ -40,8 +40,7 @@ DailyRewards.CLAIM_INTERVAL = 24 * 60 * 60
 -- Seconds a claim may land early, so the two clocks can't disagree over the moment a day unlocks
 DailyRewards.CLAIM_GRACE = 0.5
 
--- Borrowed from Stop-The-Timer's daily rewards until this game has an icon of its own
-DailyRewards.TOPBAR_ICON = "rbxassetid://100722723335796"
+DailyRewards.TOPBAR_ICON = "rbxassetid://119338889483852"
 
 -- The tile image for a worker day
 DailyRewards.WORKER_ICON = "rbxassetid://121105918005378"

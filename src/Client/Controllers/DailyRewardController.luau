@@ -251,7 +251,7 @@ function DailyRewardController:OnStart()
 
 	-- oneClick keeps it momentary; autoDeselect is off, or pressing it would un-mute the game, as the Codes button notes
 	local icon = TopbarPlus.new()
-	icon:setLabel("Daily Rewards")
+	icon:setCaption("Daily Rewards")
 	icon:setImage(DailyRewards.TOPBAR_ICON)
 	icon:autoDeselect(false)
 	icon:oneClick(true)

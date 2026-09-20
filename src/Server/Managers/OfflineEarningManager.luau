@@ -21,6 +21,7 @@ local Employees = require(Shared.Config.Employees)
 local EmployeeHut = require(Shared.Config.EmployeeHut)
 local Rating = require(Shared.Config.Rating)
 local OfflineEarnings = require(Shared.Config.OfflineEarnings)
+local CustomerTips = require(Shared.Config.CustomerTips)
 
 --
 local PlayerDataManager
@@ -28,6 +29,7 @@ local CurrencyManager
 local GrillerManager
 local SkewerStandManager
 local CustomOrderNpcManager
+local CustomerTipManager
 local BbqMaker
 local Cooker
 local Seller
@@ -524,7 +526,8 @@ function OfflineEarningManager:SimulateOfflineEarnings(data, horizon: number)
 	end
 
 	-- Every item settles at the last resting place it reached inside the window: sold, out on the sell stand, or on a stick stand. Anything still in a pair of hands or on a grill is put back where it started, chest stock included
-	local report = { WorkedSeconds = 0, Made = 0, Cooked = 0, Sold = 0, Earned = 0, Stopped = stopped }
+	local report =
+		{ WorkedSeconds = 0, Made = 0, Cooked = 0, Sold = 0, Earned = 0, Tips = 0, TipGems = 0, Stopped = stopped }
 	local result = {
 		Report = report,
 		Takes = {}, -- [hutUid] = { Sticks = [id] = n, Ingredients = [id] = n }
@@ -543,12 +546,15 @@ function OfflineEarningManager:SimulateOfflineEarnings(data, horizon: number)
 		report.Cooked += 1
 	end
 
+	local sales = {} -- every BBQ sold, for the tip pass once they can be walked in the order they went
+
 	local function countSale(item)
 		local cookStateId = StickModel.GetCookStateId(item.Record)
 		result.SoldCookStateCounts[cookStateId] = (result.SoldCookStateCounts[cookStateId] or 0) + 1
 		report.Sold += 1
 		report.Earned += item.Offer
 		report.WorkedSeconds = math.max(report.WorkedSeconds, item.SoldAt)
+		table.insert(sales, item)
 	end
 
 	local function takeStock(item)
@@ -625,6 +631,30 @@ function OfflineEarningManager:SimulateOfflineEarnings(data, horizon: number)
 	for _, item in result.OnStands do
 		takeStock(item)
 		report.Made += 1
+	end
+
+	-- The Gems away customers left, rolled on the chance a watched one tips at and spaced by the same gap, walked
+	-- in the order the sales landed. Held off until they've met Gems live, so the free first tip stays a live one
+	if data.SeenCustomerTip then
+		table.sort(sales, function(left, right)
+			return left.SoldAt < right.SoldAt
+		end)
+
+		local lastTipAt = -math.huge
+
+		for _, item in sales do
+			if item.SoldAt - lastTipAt < CustomerTips.MIN_GAP then
+				continue
+			end
+
+			if not RandomUtil.RollChance(CustomerTipManager:GetStandTipChance(item.Record), rng) then
+				continue
+			end
+
+			lastTipAt = item.SoldAt
+			report.Tips += 1
+			report.TipGems += rng:NextInteger(CustomerTips.STAND_GEMS_MIN, CustomerTips.STAND_GEMS_MAX)
+		end
 	end
 
 	report.WorkedSeconds = math.min(report.WorkedSeconds, horizon)
@@ -753,6 +783,8 @@ function OfflineEarningManager:GetPendingClaimPayload(player: Player)
 	return {
 		-- The boosted figure, since that's what lands in their balance
 		Amount = CurrencyManager:GetBoostedAmount(player, report.Earned),
+		-- Never boosted, as no Gems are
+		Gems = report.TipGems,
 		BbqSold = report.Sold,
 		SecondsAway = report.AwaySeconds,
 	}
@@ -776,7 +808,7 @@ function OfflineEarningManager:ClaimOfflineEarnings(player: Player)
 	local report = self._pendingClaims[player]
 	if not report then
 		self._claiming[player] = nil
-		self.OfflineEarningsClaimResultEvent:FireClient(player, { Success = false, Amount = 0 })
+		self.OfflineEarningsClaimResultEvent:FireClient(player, { Success = false, Amount = 0, Gems = 0 })
 		return
 	end
 
@@ -787,8 +819,12 @@ function OfflineEarningManager:ClaimOfflineEarnings(player: Player)
 	local payout = CurrencyManager:GetBoostedAmount(player, report.Earned)
 	CurrencyManager:IncrementCurrency(player, report.Earned, "OfflineEarnings")
 
+	if report.TipGems > 0 then
+		CurrencyManager:IncrementGems(player, report.TipGems, "OfflineTip")
+	end
+
 	self._claiming[player] = nil
-	self.OfflineEarningsClaimResultEvent:FireClient(player, { Success = true, Amount = payout })
+	self.OfflineEarningsClaimResultEvent:FireClient(player, { Success = true, Amount = payout, Gems = report.TipGems })
 	self.OnOfflineEarningsClaimed:Fire(player, report, payout)
 end
 
@@ -799,6 +835,9 @@ function OfflineEarningManager:SettleOnLastSave(player: Player, data)
 		local payout = CurrencyManager:GetBoostedAmount(player, report.Earned)
 		data.Currency += payout
 		data.TotalEarned += payout
+		-- Gems stay out of TotalEarned, which is a lifetime of Bux, and run their own lifetime total
+		data.Gems += report.TipGems
+		data.TotalGemsEarned += report.TipGems
 		self._pendingClaims[player] = nil
 	end
 
@@ -835,6 +874,7 @@ function OfflineEarningManager:OnInit()
 	GrillerManager = require(script.Parent.GrillerManager)
 	SkewerStandManager = require(script.Parent.SkewerStandManager)
 	CustomOrderNpcManager = require(script.Parent.CustomOrderNpcManager)
+	CustomerTipManager = require(script.Parent.CustomerTipManager)
 	BbqMaker = require(script.Parent.EmployeeManager.Roles.BbqMaker)
 	Cooker = require(script.Parent.EmployeeManager.Roles.Cooker)
 	Seller = require(script.Parent.EmployeeManager.Roles.Seller)

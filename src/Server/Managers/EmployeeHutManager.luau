@@ -10,6 +10,7 @@ local Signal = require(Packages.Signal)
 -- Managers
 local CollisionManager = require(script.Parent.CollisionManager)
 local EffectManager = require(script.Parent.EffectManager)
+local ShopManager = require(script.Parent.ShopManager)
 
 -- Modules
 local NpcRig = require(script.Parent.Parent.Modules.NpcRig)
@@ -53,7 +54,8 @@ local rng = Random.new()
 -- The employee hut's purchases: repairing it, and the slots its workers are equipped into. The repair hands over the hut as a structure, so from then on the build system owns where it sits.
 local EmployeeHutManager = {
 	RepairHutEvent = Network.Event("RepairHut"),
-	PurchaseHutSlotEvent = Network.Event("PurchaseHutSlot"), -- client -> server (slot)
+	PurchaseHutSlotEvent = Network.Event("PurchaseHutSlot"), -- client -> server (hutIndex, slot)
+	RequestHutSlotProductEvent = Network.Event("RequestHutSlotProduct"), -- client -> server (hutIndex)
 	StoreItemEvent = Network.Event("StoreHutItem"),
 	WithdrawItemEvent = Network.Event("WithdrawHutItem"), -- client -> server (hutUid, kind, id)
 
@@ -79,11 +81,12 @@ local EmployeeHutManager = {
 
 	OnWorkerHutOpened = Signal.new(), -- (player, freeWorkersClaimed); only once the hut is repaired
 	OnHutSlotSelected = Signal.new(), -- (player)
-	OnHutSlotPurchased = Signal.new(), -- (player, slot, cost, method); a Robux receipt's cost is 0
+	OnHutSlotPurchased = Signal.new(), -- (player, hutIndex, slot, cost, method); slot is the hut's own, a Robux receipt's cost is 0
 	OnHutItemStored = Signal.new(), -- (player, kind, itemId, amount, storeAll?)
 	OnHutItemWithdrawn = Signal.new(), -- (player, kind, itemId); an employee taking from the store isn't one
 
 	_purchasing = {}, -- [player] = true, held across the CanAfford -> DeductCurrency window
+	_pendingSlotHut = {}, -- [player] = the hut number their open slot Robux prompt was raised from
 	_scheduled = {}, -- [player] = the token for the wait on their running repair -- see ScheduleRepair
 	_storing = {}, -- [player] = true across a deposit's read -> write window, so a mashed prompt banks once
 	_builders = {}, -- [player] = their repair's builder; also the token its lap loop checks it's still the live one
@@ -115,6 +118,11 @@ local function getColorizedItemName(kind: string, id: string): string
 
 	local stick = Sticks.GetStickFromId(id)
 	return if stick then GuiUtil.Colorize(`{stick.Name} Stick`, stick.TextColor) else "Stick"
+end
+
+-- Whether a hut number off a remote is one a hut could hold; anything can arrive there, so it's checked before it's read.
+local function isHutIndex(value: any): boolean
+	return type(value) == "number" and value % 1 == 0 and value >= 1 and value <= EmployeeHut.MAX_HUTS
 end
 
 -- Announces that the player opened the hut's repair panel.
@@ -633,8 +641,17 @@ function EmployeeHutManager:ReturnContentsToPlayer(player: Player, data, _uid: s
 	return true
 end
 
--- Unlocks the next hut slot. Slots are bought in order, so the only one on sale is the one after the last unlocked. `skipCurrencyCost` is a Robux receipt's, which is already paid for.
-function EmployeeHutManager:PurchaseHutSlot(player: Player, slot: number, skipCurrencyCost: boolean?): boolean
+-- Unlocks the next slot on one hut. Slots are bought in order within a hut, so the only one on sale is the one after its last unlocked. `skipCurrencyCost` is a Robux receipt's, which is already paid for.
+function EmployeeHutManager:PurchaseHutSlot(
+	player: Player,
+	hutIndex: number,
+	slot: number?,
+	skipCurrencyCost: boolean?
+): boolean
+	if not isHutIndex(hutIndex) then
+		return false
+	end
+
 	if self._purchasing[player] then
 		if not skipCurrencyCost then
 			return false
@@ -657,14 +674,20 @@ function EmployeeHutManager:PurchaseHutSlot(player: Player, slot: number, skipCu
 		return false
 	end
 
+	local unlocked = EmployeeHut.GetUnlockedSlots(data.HutSlots, hutIndex)
+
 	-- A receipt can't be refused, so it takes whichever slot is next by now rather than the one its button showed
 	if skipCurrencyCost then
-		slot = data.HutSlotsUnlocked + 1
+		slot = unlocked + 1
 	end
 
-	-- Refused without a toast: the panel only offers the next slot on a repaired hut. A receipt skips the hut, since an early slot is harmless
-	local price = EmployeeHut.SLOT_PRICES[slot]
-	if not price or slot ~= data.HutSlotsUnlocked + 1 or (not skipCurrencyCost and not data.HutRepaired) then
+	-- Refused without a toast: the panel only offers the next slot on a repaired hut they own. A receipt skips both, since an early slot is harmless
+	local price = EmployeeHut.SLOT_PRICES[hutIndex][slot]
+	local refused = not price
+		or slot ~= unlocked + 1
+		or (not skipCurrencyCost and (not data.HutRepaired or hutIndex > EmployeeHut.CountOwnedHuts(data)))
+
+	if refused then
 		self._purchasing[player] = nil
 
 		-- Only a receipt landing with every slot already unlocked gets here, and a paid purchase shouldn't vanish silently
@@ -690,10 +713,18 @@ function EmployeeHutManager:PurchaseHutSlot(player: Player, slot: number, skipCu
 		CurrencyManager:DeductCurrency(player, price, "HutSlot")
 	end
 
-	PlayerDataManager:SetPlayerDataKey(player, "HutSlotsUnlocked", slot)
+	-- Written whole and gap-free, since a DataStore hands gapped integer keys back as strings
+	local hutSlots = table.clone(data.HutSlots)
+	for index = #hutSlots + 1, hutIndex - 1 do
+		hutSlots[index] = 1
+	end
+	hutSlots[hutIndex] = slot
+
+	PlayerDataManager:SetPlayerDataKey(player, "HutSlots", hutSlots)
 
 	self.OnHutSlotPurchased:Fire(
 		player,
+		hutIndex,
 		slot,
 		if skipCurrencyCost then 0 else price,
 		if skipCurrencyCost then "Robux" else "Currency"
@@ -711,6 +742,73 @@ function EmployeeHutManager:PurchaseHutSlot(player: Player, slot: number, skipCu
 	return true
 end
 
+-- Raises the Robux prompt for a hut's next slot, remembering which hut here since the receipt names only the buyer.
+function EmployeeHutManager:PromptHutSlotProduct(player: Player, hutIndex: number)
+	if not isHutIndex(hutIndex) then
+		return
+	end
+
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData or hutIndex > EmployeeHut.CountOwnedHuts(data) then
+		return
+	end
+
+	-- The panel hides the button on a full hut, so a slot with no product is a stale press
+	local nextSlot = EmployeeHut.GetUnlockedSlots(data.HutSlots, hutIndex) + 1
+	if not EmployeeHut.SLOT_PRODUCT_IDS[nextSlot] then
+		return
+	end
+
+	self._pendingSlotHut[player] = hutIndex
+	ShopManager:AttemptProductPurchase(player, EmployeeHut.GetSlotProductStringId(nextSlot))
+end
+
+-- Unlocks a slot once its product clears: on the hut it was bought from, else the lowest-numbered hut with one left, rather than dropping a paid purchase.
+function EmployeeHutManager:GrantHutSlotFromProduct(player: Player)
+	local hutIndex = self._pendingSlotHut[player]
+	self._pendingSlotHut[player] = nil
+
+	local hasData, data = PlayerDataManager:GetPlayerData(player):await()
+	if not hasData then
+		return
+	end
+
+	-- A receipt retried on a later join has no pending hut, and one filled since the prompt has no slot left
+	if not hutIndex or EmployeeHut.GetUnlockedSlots(data.HutSlots, hutIndex) >= EmployeeHut.SLOTS_PER_HUT then
+		hutIndex = nil
+
+		-- At least hut 1, since a receipt never needed the hut to be there, and never past the huts with prices
+		for candidate = 1, math.clamp(EmployeeHut.CountOwnedHuts(data), 1, EmployeeHut.MAX_HUTS) do
+			if EmployeeHut.GetUnlockedSlots(data.HutSlots, candidate) < EmployeeHut.SLOTS_PER_HUT then
+				hutIndex = candidate
+				break
+			end
+		end
+
+		if not hutIndex then
+			warn(`[EmployeeHutManager] {player.Name} bought a hut slot with none left to unlock`)
+			return
+		end
+	end
+
+	self:PurchaseHutSlot(player, hutIndex, nil, true)
+end
+
+-- Folds the one slot count saved before huts were several into hut 1's, and numbers any hut placed before huts had numbers.
+function EmployeeHutManager:MigrateLegacyHutSlotsOnLoad(data)
+	-- The larger of the two, since an older server still running re-adds the old key at 1 and can sell a slot against it
+	if data.HutSlotsUnlocked then
+		data.HutSlots[1] = math.max(EmployeeHut.GetUnlockedSlots(data.HutSlots, 1), data.HutSlotsUnlocked)
+		data.HutSlotsUnlocked = nil
+	end
+
+	for _, placed in data.Structures do
+		if placed.Type == EmployeeHut.STRUCTURE_ID and not placed.Hut then
+			placed.Hut = EmployeeHut.GetFreeHutIndex(data.Structures)
+		end
+	end
+end
+
 function EmployeeHutManager:OnInit()
 	PlayerDataManager = require(script.Parent.PlayerDataManager)
 	CurrencyManager = require(script.Parent.CurrencyManager)
@@ -719,6 +817,11 @@ function EmployeeHutManager:OnInit()
 	BaseManager = require(script.Parent.BaseManager)
 	IngredientManager = require(script.Parent.IngredientManager)
 	StickManager = require(script.Parent.StickManager)
+
+	-- On Init, so the fold is in place before any profile can finish loading
+	PlayerDataManager:RegisterPostLoadCallback(function(_, data)
+		self:MigrateLegacyHutSlotsOnLoad(data)
+	end)
 end
 
 function EmployeeHutManager:OnStart()
@@ -747,8 +850,12 @@ function EmployeeHutManager:OnStart()
 		self:WithdrawStoredItem(player, hutUid, kind, id)
 	end)
 
-	self.PurchaseHutSlotEvent:OnServerEvent(function(player: Player, slot: number)
-		self:PurchaseHutSlot(player, slot)
+	self.PurchaseHutSlotEvent:OnServerEvent(function(player: Player, hutIndex: number, slot: number)
+		self:PurchaseHutSlot(player, hutIndex, slot)
+	end)
+
+	self.RequestHutSlotProductEvent:OnServerEvent(function(player: Player, hutIndex: number)
+		self:PromptHutSlotProduct(player, hutIndex)
 	end)
 
 	-- Off the handover rather than PlayerAdded, since finishing one has to place a hut on a base they own
@@ -767,6 +874,7 @@ function EmployeeHutManager:OnStart()
 		self:DespawnRepairBuilder(player)
 
 		self._purchasing[player] = nil
+		self._pendingSlotHut[player] = nil
 		self._scheduled[player] = nil
 		self._storing[player] = nil
 	end)

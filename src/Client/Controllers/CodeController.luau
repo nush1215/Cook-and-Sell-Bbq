@@ -65,11 +65,11 @@ function CodeController:OnStart()
 
 	-- Temporary until HudUI has a Codes button. oneClick keeps it momentary; autoDeselect is off, or pressing it would un-mute the game
 	local codesButton = TopbarPlus.new()
-	codesButton:setLabel("Codes")
+	codesButton:setCaption("Codes")
 	codesButton:autoDeselect(false)
 	codesButton:oneClick(true)
 	codesButton:setOrder(3)
-	codesButton:setImage("rbxassetid://78885144432591")
+	codesButton:setImage("rbxassetid://111797172481695")
 	codesButton:align("Right")
 
 	codesButton.selected:Connect(function()

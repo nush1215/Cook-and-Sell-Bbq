@@ -13,6 +13,7 @@ local Network = require(Shared.Network)
 local BaseUnlocks = require(Shared.Config.BaseUnlocks)
 local Plots = require(Shared.Config.Plots)
 local Structures = require(Shared.Config.Structures)
+local EmployeeHut = require(Shared.Config.EmployeeHut)
 
 -- Managers
 local StickStandManager = require(script.Parent.StickStandManager)
@@ -385,11 +386,23 @@ function BaseManager:PlaceStructureOnBase(
 	end
 
 	rotation = math.floor(rotation) % 4
-	local footprintX, footprintZ = Structures.GetFootprint(structure, rotation)
+	local candidate = { Type = structureType, CellX = cellX, CellZ = cellZ, Rotation = rotation }
 
-	if not base:IsBlockFree(cellX, cellZ, footprintX, footprintZ, data.Structures, data.Plots, data.HutRepaired) then
+	if not base:IsBlockFree(candidate, data.Structures, data.Plots, data.HutRepaired) then
 		self._purchasing[player] = nil
 		return false
+	end
+
+	-- A hut takes the lowest number no placed hut holds, so one moved gets its own back, and its slots with it
+	local hutIndex = nil
+	if structureType == EmployeeHut.STRUCTURE_ID then
+		hutIndex = EmployeeHut.GetFreeHutIndex(data.Structures)
+
+		-- Only reachable past MAX_HUTS through an admin grant, since the Cosmetic Shop caps what it sells
+		if not hutIndex then
+			self._purchasing[player] = nil
+			return false
+		end
 	end
 
 	BuildManager:ConsumeStructure(player, structureType)
@@ -402,6 +415,7 @@ function BaseManager:PlaceStructureOnBase(
 		CellX = cellX,
 		CellZ = cellZ,
 		Rotation = rotation,
+		Hut = hutIndex,
 	})
 
 	self._purchasing[player] = nil
@@ -476,6 +490,8 @@ function BaseManager:RescaleStructureCells(player: Player)
 			CellX = math.round(placed.CellX * scale),
 			CellZ = math.round(placed.CellZ * scale),
 			Rotation = placed.Rotation,
+			-- Carried over, or the hut would lose its number and the slots bought on it
+			Hut = placed.Hut,
 		})
 	end
 
@@ -517,16 +533,13 @@ function BaseManager:ReclaimStrandedStructures(player: Player)
 
 	for _, uid in uids do
 		local placed = data.Structures[uid]
-		local structure = Structures.GetStructureFromId(placed.Type)
 
 		-- One the config no longer has takes up no cells, and the pickup can't hand it back either
-		if not structure then
+		if not Structures.GetStructureFromId(placed.Type) then
 			continue
 		end
 
-		local footprintX, footprintZ = Structures.GetFootprint(structure, placed.Rotation)
-
-		if base:IsBlockFree(placed.CellX, placed.CellZ, footprintX, footprintZ, kept, data.Plots, data.HutRepaired) then
+		if base:IsBlockFree(placed, kept, data.Plots, data.HutRepaired) then
 			kept[uid] = placed
 			continue
 		end
@@ -534,8 +547,7 @@ function BaseManager:ReclaimStrandedStructures(player: Player)
 		table.insert(stranded, {
 			Uid = uid,
 			-- Which of the two reasons to name below; IsBlockFree folds them into one answer
-			TookHutCells = hutBlock ~= nil
-				and Structures.Overlaps(hutBlock, placed.CellX, placed.CellZ, footprintX, footprintZ),
+			TookHutCells = hutBlock ~= nil and Structures.Overlaps(hutBlock, placed),
 		})
 	end
 

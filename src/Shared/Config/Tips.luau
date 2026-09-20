@@ -8,7 +8,7 @@ local Tips = {}
 Tips.INITIAL_DELAY = 60
 
 -- Seconds between tips after that; over this list it's a full rotation in a little under an hour
-Tips.INTERVAL = 120
+Tips.INTERVAL = 360
 
 -- What every line opens with, so a tip reads apart from the system messages it shares a channel with
 Tips.PREFIX = "💡 Tip: "

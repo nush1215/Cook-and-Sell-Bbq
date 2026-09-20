@@ -270,6 +270,17 @@ function CrateManager:RollCrateContents(crate: Crates.Crate, rng: Random): { Cra
 			end
 
 			taken[reward] = true
+
+			-- Landing on a pool rolls again among its own entries, so the slot pays out whatever that lands on
+			while reward.Rewards do
+				local poolWeighted = {}
+				for _, entry in reward.Rewards do
+					table.insert(poolWeighted, { entry, entry.Chance })
+				end
+
+				reward = RandomUtil.GetResultFromWeight(poolWeighted, rng)
+			end
+
 			table.insert(rewards, { Type = reward.Type, Id = reward.Id })
 		end
 	end

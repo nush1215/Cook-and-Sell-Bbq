@@ -26,12 +26,12 @@ which in practice means re-solving the whole column rather than picking a number
 
 | Tier | Price | CookTime | ValueMultiplier | PityThreshold |
 |---|---|---|---|---|
-| Common | 100 | 10 | 1.3 | — |
-| Uncommon | 3,000 | 24 | 1.1 | — |
-| Rare | 18,000 | 40 | 1.07 | 65 |
-| Epic | 65,000 | 60 | 1.05 | 350 |
-| Legendary | 100,000 | 85 | 1 | 650 |
-| Mythic | 400,000 | 110 | 1 | 1,500 (inert) |
+| Common | 100 | 13 | 1.5 | — |
+| Uncommon | 3,000 | 40 | 1.25 | — |
+| Rare | 18,000 | 82 | 1.2 | 65 |
+| Epic | 65,000 | 150 | 1.2 | 350 |
+| Legendary | 100,000 | 225 | 1.2 | 650 |
+| Mythic | 400,000 | 300 | 1.18 | 3,000 |
 
 **Price** is the anchor a tier's entries are priced *around* — move it to shift a whole tier, reprice the
 entries to change how far apart they sit. Price is both what an ingredient costs off a stand and what its
@@ -51,31 +51,33 @@ actually is (dense things that must cook through at the top of the band, small w
 
 **ValueMultiplier is the smaller half of what rarity pays, and it has to stay that way.** Price already
 separates the tiers by more than a thousand times end to end, so this only decides how much better the
-return is per dollar spent — 3.1x on a common against 5.3x on a legendary. It used to run to 4.2 at the
-top, set when the price ladder was flat enough to need the help; against today's prices that was
-multiplying an enormous gap by a large number, and the tail of the roster ran away with the economy.
+return is per dollar spent — and it now *descends*, 2.57x on a common against 2.06x on a legendary and
+2.02x on a mythic. It used to run to 4.2 at the top, set when the price ladder was flat enough to need the
+help; against today's prices that was multiplying an enormous gap by a large number, and the tail of the
+roster ran away with the economy. Rarity is paid in price, and the commonest tier gets the kindest rate
+back because it is the one a player is living off.
 
 Steepening this is almost never the fix: repricing a tier moves what it pays, this moves whether it's a
 good deal, and only the second is what the knob is for.
 
-Ballpark for a new entry — **Chance**: Common 9–51, Uncommon 55–137, Rare 170–450, Epic 700–1.2K,
-Legendary ~2K, Mythic ~10K. **Price**: Common 75–260, Uncommon 1K–7K, Rare 10.5K–30K, Epic 50K–85K,
-Legendary 100K; past that, omit Price and take the tier's. Mythic ships empty on purpose — headroom for
-the luxurious stuff (wagyu, lobster, truffle) that costs nothing to leave sitting there. These bands are
-what's left once the chance column is re-solved; they'll move again the next time the roster grows.
+Ballpark for a new entry — **Chance**: Common 10–64, Uncommon 122–285, Rare 365–1.2K, Epic 1.35K–2.4K,
+Legendary 3.5K–4.6K, Mythic 17K–24K. **Price**: Common 75–260, Uncommon 1K–7K, Rare 10.5K–30K, Epic
+55K–85K, Legendary 100K–150K, Mythic 300K–500K. Mythic opened on 2026-09-20 with Caviar and Mango Caviar —
+the luxurious stuff (wagyu, lobster, truffle) still has room above them. These bands are what's left once
+the chance column is re-solved; they'll move again the next time the roster grows.
 
 ### Pity
 
 A tier naming a `PityThreshold` gets a counter in player data; once that counter reaches it,
 `IngredientRollingManager` forces the next roll to that tier. It is counted in **rolls**, not lever pulls,
 so a six-stand base reaches it in a sixth of the pulls and the guarantee means the same to everybody.
-Common and Uncommon name none — at 1 in 1.2 and 1 in 7 there's no drought to protect anyone from.
+Common and Uncommon name none — at 1 in 1.2 and 1 in 8 there's no drought to protect anyone from.
 
 The thresholds are tight on purpose: short enough that the counter, not luck, is what mostly delivers the
-rare tiers. Lamb averages 2,200 rolls on its own odds, and a guarantee at 650 means about three in four of
-them arrive on the counter — a Legendary is something a player grinds *to* rather than gets lucky into,
-which is the feel this ladder is tuned for. Rare at 65 against its 46-roll average is the mildest rung;
-Epic and Legendary lean on pity progressively harder.
+rare tiers. Lamb averages 3,550 rolls on its own odds, and a guarantee at 650 means the overwhelming
+majority arrive on the counter — a Legendary is something a player grinds *to* rather than gets lucky into,
+which is the feel this ladder is tuned for. Rare at 65 against its 52-roll average is the mildest rung;
+Epic, Legendary and Mythic lean on pity progressively harder.
 
 A counter watches "this tier **or better**", so it's walked rarest first: a Lamb clears the Rare counter
 as well as its own, and pity can never force a Rare onto someone who just pulled a Legendary. What a
@@ -94,6 +96,10 @@ not a rounding difference — measured over three million rolls:
 | Rare | 1 in 52 | 1 in 40 | 1.30x |
 | Epic | 1 in 442 | 1 in 297 | 1.49x |
 | Legendary | 1 in 2,200 | 1 in 563 | 3.91x |
+
+**The `Really` column is stale as of 2026-09-20** and needs re-simulating. The 2026-09-20 batch widened
+Epic to 1 in 250 and Legendary to 1 in 989 on the label, and opened Mythic at 1 in 10,000 against a 3,000
+threshold. Only the `Label` column above has been re-derived; the measured rates behind it have not.
 
 The labels are the authored odds and stay that way: pity is meant to be something the player feels rather
 than reads. **So don't "fix" a rate that comes in ahead of its label** — the gap *is* the pity, and it
@@ -128,18 +134,18 @@ Three things are checked at load rather than left to be noticed in-game:
 
 ### Other knobs
 
-- `SALE_VALUE_MULTIPLIER` (1.45) — the global economy dial, on top of every tier's ValueMultiplier. Raise
+- `SALE_VALUE_MULTIPLIER` (1) — the global economy dial, on top of every tier's ValueMultiplier. Raise
   it to make selling more lucrative across the board; retune ValueMultiplier to change how steeply rarity
   pays.
-- `ADDITIONAL_SLOT_FACTOR` (0.75) — what each slot past the slowest adds, as a fraction of its own
+- `ADDITIONAL_SLOT_FACTOR` (0.95) — what each slot past the slowest adds, as a fraction of its own
   CookTime. The skewer cooks in one piece, so the slowest ingredient sets the length and the rest only add
   heat to shift, which is what makes capacity worth paying for: a full stick isn't a full stick's worth of
   waiting. Short of 1 so filling a stick pays, and clear of 0 so it still costs something — value has no
   falloff at all, so at 0 an extra slot would be free money.
 - `ProductPriceBands` — thresholds rather than a band named per entry, so a new ingredient places itself
   from its Price alone. The last repricing moved every entry above Common by ten times or more and this
-  list never needed touching, which is the point of it. The `T1: Corn - Jalapeno` style labels go stale on
-  any repricing and are worth re-deriving rather than trusting.
+  list never needed touching, which is the point of it. The `T1: Corn - Lettuce` style labels go stale on
+  any repricing and are worth re-deriving rather than trusting; they were last re-derived 2026-09-20.
 - `COOL_TIER_INDEX` — where the ladder starts being worth making a fuss over: a landing here or above gets
   the cool sting, and it's the floor a teaser draws from. A position rather than a list of ids, so a tier
   added above Rare is celebrated automatically.
@@ -205,6 +211,39 @@ Three things follow from capping `PERFECT_END` rather than `RAW_END`:
 `CookSpeed` still trades against the window in the same direction: it shrinks `cookTime`, and
 `min(0.25 × cookTime, MAX_PERFECT_SECONDS)` is monotone in `cookTime`, so a faster grill is still a
 tighter window.
+
+### The perfect window's floor
+
+The ceiling's mirror. Because the band is a *share* of the bar, capping the top left the bottom free to
+taper indefinitely: a lone Corn's 3.3s is tighter than a new player's reaction, and both `CookSpeed` and
+`EarlyBoost.EARLY_COOK_SCALE` make it worse rather than better, since they divide the whole bar.
+`MIN_PERFECT_SECONDS` puts a floor under it in the same place the ceiling is applied:
+
+```
+headroom   = 1 - RAW_END - MIN_COOKED_SHARE
+window     = min(PERFECT_END - RAW_END, MAX_PERFECT_SECONDS / cookTime)
+window     = max(window, min(MIN_PERFECT_SECONDS / cookTime, headroom))
+perfectEnd = RAW_END + window
+```
+
+`MIN_COOKED_SHARE` is what stops the floor writing a cheque the bar can't cash. Without it, a bar of 15s
+or less let Perfect swallow everything past Raw, `perfectEnd` landed on 1, and **the Perfect/Cooked
+divider had nowhere to sit** — the cooking bar drew a single mark instead of two and read as broken.
+Reserving Cooked 5% of the bar caps `perfectEnd` at 0.95, so both bands always have a mark and
+overshooting always has somewhere on-bar to land.
+
+| Bar | Window before | After | perfectEnd |
+|---|---|---|---|
+| 6.7s (Corn, Solar Grill, under 10k) | 1.7s | 2.3s | 0.95 |
+| 11.1s (Corn, Rusty Grill, under 10k) | 2.8s | 3.9s | 0.95 |
+| 16.5s (average common) | 4.1s | 5.8s | 0.95 |
+| 21.7s | 5.4s | 6.0s | 0.88 |
+| 24s and up | unchanged | unchanged | 0.85 |
+
+The floor bites **below a 24s bar**, so a 2-ingredient common skewer and everything above it is untouched
+— it reaches only the short cooks the ceiling was never looking at. Below a **17.1s** bar the headroom is
+the binding constraint rather than the 6s, so the window is 35% of the bar rather than a flat six
+seconds: short cooks get proportionally more room, not an absolute guarantee.
 
 ### Where an offline cook parks
 
@@ -567,7 +606,8 @@ doing, where a rich one rewards what they already did.
 
 **One order at a time until the kitchen can run two.** `CONCURRENT_ORDER_MARKS` is a ladder of placed builds
 — a base runs as many orders at once as the rows it clears, in order — and today's second row is 3 grillers
-**and** 2 stick stands. A second order never arrives with the first: a fresh customer only comes in while
+**and** 2 stick stands. Rows three and four also need table seats (6, then 12; see Tables below), so four
+orders at once is the ceiling. A second order never arrives with the first: a fresh customer only comes in while
 every custom order customer already on the base is stood waiting for its BBQ, never beside the introduction
 order, and still through the same roll and `COOLDOWN`. Orders a player left behind are the exception, and
 come back together on rejoin, since each was already owed. On a two-order base the roll stops waiting for
@@ -632,7 +672,8 @@ deliberate: pricing off the delivered stick would let an order go unfulfillable.
 
 ### The clock
 
-`Ingredients.GetTotalCookTime(ids) / CookStates.RAW_END + LEEWAY_BASE + LEEWAY_PER_INGREDIENT * slots`.
+`Ingredients.GetTotalCookTime(ids) / CookStates.RAW_END + LEEWAY_BASE + LEEWAY_PER_INGREDIENT * slots`,
+where a rich order swaps the pair for `RICH_LEEWAY_BASE` and `RICH_LEEWAY_PER_INGREDIENT`.
 
 The division is not optional: `GetTotalCookTime` is *ingredient* seconds and the bar runs that over
 `RAW_END`, exactly as `GrillerManager:StartCookRecord` does it. A clock built on the undivided figure
@@ -642,6 +683,9 @@ The leeway is split because the two costs scale differently: `LEEWAY_BASE` cover
 the trip to a grill however big the order is, while `LEEWAY_PER_INGREDIENT` covers rolling for and
 claiming each slot, which is per-ingredient by nature. A 3-slot order with a Rare in it lands around
 `5m 20s`.
+
+A rich order gets two thirds of both (60 and 30), never less cooking time -- the Rare+ cook is untouched,
+only the slack around it. A 3-Rare order goes from `10m 21s` to `9m 6s`: its premium is paid for in pace.
 
 ### Biasing the rolls
 
@@ -655,6 +699,58 @@ This matters for the same reason the section above does: the authored `Chance` c
 the label, and what changes is only how often a forced roll fires — which is already the documented gap
 between the labels and the real rates. A flat reweighting would instead make every *other* ingredient
 rarer than its printed number, which is the direction the 100% rule exists to protect.
+
+### Tables
+
+Tables are structures in the `Tables` category. Their `Seats` folder holds one `Seat` per place, and
+`Structures` counts them at load as `SeatCount`. Seats keep `CanTouch` off, so a player can never sit in one;
+the server seats customers with `Seat:Sit`.
+
+- **Where they wait.** Once an order is accepted, the customer claims a free seat and waits there instead of
+  beside the stand. With no seat free it stands aside as before, so a base without tables plays exactly as
+  it used to. Picking the table up from under it sends it to another seat, or back to standing, without
+  touching its clock.
+- **Where they eat.** A seated customer eats there for `SEATED_EAT_DURATION` (15s) instead of
+  `SellNpc.EAT_DURATION` (8s). One sent to the stand to collect walks back to its seat to eat.
+- **Seat choice.** A rich customer prefers a table with a `RichChanceBonus`. Everyone then prefers the best
+  `CustomerPayoutMultiplier`, and ties are random.
+- **Golden Table.** `CustomerPayoutMultiplier` 1.2: the graded payout is multiplied by it for a customer
+  that waited there, and the toast names the table. The offer card still shows the plain quote, since the
+  seat is only claimed on accept.
+- **Fancy Table.** `RichChanceBonus` 25 for the first placed copy and `RichChanceExtraBonus` 5 for each one
+  after, added to `RICH_CHANCE`, which is 0: no Fancy Table, no rich customer. It is also the seat a rich
+  one heads for.
+
+**Free seats bring customers faster.** Each seat no customer has claimed adds `SEAT_SPAWN_CHANCE_STEP` to
+`SPAWN_CHANCE`, up to `SEAT_SPAWN_CHANCE_MAX_BONUS`, and takes `SEAT_COOLDOWN_STEP` seconds off `COOLDOWN`,
+down to `SEAT_COOLDOWN_MIN`. The pacing rule is unchanged: a new customer still only comes in once every
+present one is waiting for its BBQ.
+
+| Free seats | Spawn chance | Cooldown | Expected wait past the cooldown |
+|---|---|---|---|
+| 0 | 60% | 100s | ~17s |
+| 6 | 72% | 82s | ~14s |
+| 12 | 84% | 64s | ~12s |
+| 15+ | 90% | 60s | ~11s |
+
+### The rich customer
+
+`RICH_CHANCE` is 0, so a visit is only rich off a placed table's `RichChanceBonus` -- a base without a Fancy
+Table never draws one. The first adds 25 and each one after it 5, capped at `RICH_CHANCE_MAX` (50), so one
+table is 25% and every one after is another 5 up to six tables. The first copy is the step that matters and
+the rest are a slow climb, so owning one is the draw and stacking them is the long game. Never the
+introduction order.
+
+- **What it asks for.** Tiers off `RICH_TIER_WEIGHTS` only (Rare, Epic, Legendary), with the same reach rule
+  as any order. A tier with nothing reachable steps down, then up, but never below Rare. If nothing Rare or
+  better is in reach, the visit is an ordinary one instead.
+- **What it pays.** The ordinary quote, with `RICH_MULTIPLIER_BONUS` (0.1) added to the premium and its cap.
+  Its Rare+ recipe already makes it the biggest order a player sees, so the premium only nudges it.
+- **How long it gets.** `RICH_LEEWAY_BASE` (60) and `RICH_LEEWAY_PER_INGREDIENT` (30) in place of the
+  ordinary 90 and 45. The counterweight to how often a table draws one: the same order, on a tighter clock.
+- **What it looks like.** A `ServerStorage.Assets.RichNPC` rig with `RichUI` and `RichParticles`, shared with
+  the stand's rich customer. It speaks the ordinary `CustomNPC*` lines.
+- **Daily quests.** Delivering one counts toward `ServeRichCustomer`.
 
 | Knob | Higher | Lower |
 |---|---|---|
@@ -674,6 +770,97 @@ rarer than its printed number, which is the direction the 100% rule exists to pr
 | `OFFER_TIMEOUT` | players can wander off mid-ask | the cooldown frees sooner, slow players lose orders |
 | `ROLL_PITY_THRESHOLD` | the steer is barely felt | the stand may as well hand it over |
 | `HURRY_THRESHOLD` | a long anxious run-out | no warning worth having |
+| `SEAT_SPAWN_CHANCE_*` / `SEAT_COOLDOWN_*` | tables flood the base with orders | seats stop mattering to pace |
+| `SEATED_EAT_DURATION` | seats stay taken longer, slowing the next | the seated beat is over before the tip lands |
+| `RICH_CHANCE` / `RICH_CHANCE_MAX` | rich orders are routine | the Fancy Table barely shows |
+| `RICH_LEEWAY_*` | a rich order is just a bigger ordinary one | the premium can't be collected |
+| `RICH_TIER_WEIGHTS` | rich orders lean Legendary | every rich order is Rare |
+| `RICH_MULTIPLIER_BONUS` | rich orders outpay everything | only the recipe makes them rich |
+
+## Selling — customer tips
+
+`Shared/Config/CustomerTips.luau`, run by `CustomerTipManager`. On top of what it paid, a customer can leave a
+tip in **Gems**, the second currency.
+- The tip is rolled as the customer starts eating.
+- On a hit, the customer says its `{prefix}Tipping` line `SAY_DELAY` seconds into the eat. `PAY_DELAY` seconds
+  later the Gems land, with the `CollectGems` effect and a toast.
+- A stand customer tips `STAND_GEMS_MIN..MAX` (5–10). A custom order customer tips `CUSTOM_ORDER_GEMS_MIN..MAX` (15–20).
+- A custom order customer eating seated at a table tips `SEATED_GEMS_MIN..MAX` (20–30), and its chance is
+  multiplied by `SEATED_CHANCE_MULTIPLIER` (1.2), so a good order (85% standing) becomes a certain tip.
+- A rich custom order customer tips `RICH_GEMS_MIN..MAX` (35–50), seated or not. Seated, it also gets the
+  chance boost.
+
+**The chance starts at 1 in 5, and good BBQ raises it.** The multipliers stack:
+
+```
+boost = COOK_STATE_MULTIPLIERS[state] × (mutated ? MUTATION_MULTIPLIER : 1) × (1 + TIER_STEP × (meanTier − 1))
+stand = STAND_CHANCE × boost × (full stick ? FULL_STICK_MULTIPLIER : 1)
+order = CUSTOM_ORDER_CHANCE × accuracy × boost ÷ COOK_STATE_MULTIPLIERS.Perfect × (seated ? SEATED_CHANCE_MULTIPLIER : 1)
+```
+
+- `STAND_CHANCE` is priced for an **ordinary** stand BBQ: Cooked, plain, Common, on a stick with room left.
+- `CUSTOM_ORDER_CHANCE` is priced for a **good** order: an exact fill, cooked Perfect. That's why the order line
+  divides the Perfect multiplier back out.
+- A cook state missing from `COOK_STATE_MULTIPLIERS` never tips. That covers Raw and Charred. It's also the safe
+  default for a state added later.
+- `meanTier` is read the same way the Menu rating reads it, so an all-Common stick adds nothing.
+- `accuracy` is the order's existing grade: `matched/slots − extras × EXTRA_INGREDIENT_PENALTY`.
+- **Custom orders have no full-stick term.** The order fixes the ingredient count, so otherwise a 3-slot order on
+  an 8-slot stick would be penalised.
+- **A rich customer's haul gets one roll**, on the mean chance across its skewers.
+- **Anything past 100 is a certain tip.** Nothing is capped.
+
+| BBQ | Stand | Custom order | Custom order, seated |
+|---|---|---|---|
+| Cooked, plain, Common (ordinary) | 20% | 68% | 81.6% |
+| Cooked, full stick | 22% | — | — |
+| Perfect | 25% | 85% | certain (102%) |
+| Perfect, full stick | 27.5% | — | — |
+| Perfect, full, Golden | 34.4% | certain (106.25%) | certain |
+| Perfect, full, Rare average | 30.25% | 93.5% | certain (112.2%) |
+| Overcooked | 10% | 34% | 40.8% |
+| Raw / Charred | never | never | never |
+| Order: 2 of 3 ingredients, Perfect | — | 56.7% | 68% |
+
+**Tips are gapped per player.** After a tip lands, no customer of that player can tip for `MIN_GAP` seconds.
+- The gap is shared between the stand and custom orders.
+- It lives in server memory, so a rejoin resets it.
+- The roll happens at the eat, not the sale, so a tip always lands a fixed `SAY_DELAY + PAY_DELAY` after its roll,
+  and the gap spaces out the payouts themselves.
+- A customer that never reaches its eat spot doesn't use up the gap.
+
+**Expected earnings.** Assuming mostly Perfect cooks on full sticks, expect roughly ~110 Gems/hr early, ~330 mid
+and ~490 late. The rate is driven mostly by how fast the player sells, and about 1 in 4 to 1 in 5 stand customers
+tip. `MIN_GAP` caps a player at 240 tips an hour.
+
+**Other rules:**
+- **A player's first tip is guaranteed** (`SeenCustomerTip`), so everyone meets Gems, including live players when the
+  update ships.
+  - It lands on the first paying customer whose food could earn a tip.
+  - It comes with a one-time explainer toast that points them to the Cosmetic Shop.
+  - A new player's first `POST_TUTORIAL_QUIET_CUSTOMERS` (1) customers after finishing the tutorial are passed over,
+    so the free tip lands on their second.
+  - That hold-off is session-only, so a player who leaves before serving one gets the free tip on their next first
+    customer instead.
+- Gems are never boosted. x2 Bux, friends and the early boost are all promises about Bux, and Gems stay out of
+  `TotalEarned`.
+- Sales answered by seller employees tip at the same odds. The tip is for the food.
+- No tips from the wizard (it pays in luck) or in the tutorial. Away customers do tip — see Offline earnings.
+- A player who leaves mid-eat forfeits the tip, since the rig is destroyed before the Gems land.
+- Analytics log tips as Gems economy sources `CustomerTip` and `CustomOrderTip`.
+- The Cosmetic Shop is what spends them, logged as the Gems sink `CosmeticPurchase` (see Cosmetic Shop).
+
+| Knob | Higher | Lower |
+|---|---|---|
+| `STAND_CHANCE` | stand tips become routine | they're a rare surprise |
+| `CUSTOM_ORDER_CHANCE` | a good order is a near-sure tip | orders tip no more often than the stand |
+| `COOK_STATE_MULTIPLIERS` | cooking well pays off in Gems | how it cooked stops mattering |
+| `FULL_STICK_MULTIPLIER` | filling the stick is worth the trip | a half-built skewer tips the same |
+| `MUTATION_MULTIPLIER` / `TIER_STEP` | a rich kitchen out-tips a skilled one | only the cook matters |
+| `MIN_GAP` | tips spread out, and the real rate falls below the chance | tips land back to back |
+| `SEATED_CHANCE_MULTIPLIER` | tables make a tip near-certain | seating stops mattering to tips |
+| `*_GEMS_MIN` / `*_GEMS_MAX` | Gems pile up faster | each tip feels small |
+| `SAY_DELAY` / `PAY_DELAY` | the tip lands late in the eat | the line and the Gems crowd the eating beat |
 
 ## Crates
 
@@ -767,7 +954,8 @@ over the edge.
 against the size it was saved at — so halving `CELL_SIZE` would otherwise collapse every existing build to
 half its spread. `StructureCellSize` in player data records what each build was written under and
 `BaseManager:RescaleStructureCells` rescales it on handover; anything that no longer fits afterwards is
-handed back by `ReclaimStrandedStructures`. See `docs/player-data.md`.
+handed back by `ReclaimStrandedStructures`. See `docs/player-data.md`. `EmployeeHut.CELL_X`/`CELL_Z` are cells
+too and are **not** rescaled for you — scale them by the same ratio, or the hut moves.
 
 A structure is measured against its **`Hitbox`** if it has one, else the model's bounding box. A Hitbox is
 how a model *states* what it occupies rather than having it guessed, which is what lets a chimney hang off
@@ -782,11 +970,103 @@ config about how big a thing is.
 Collision is plain integer AABB overlap and is the whole model: nothing is ever queried against the world,
 so only the cells a structure claimed matter.
 
+A structure blocks its whole footprint unless it has **several `Hitbox` parts**. Those are legs: each
+blocks only the cells it reaches into, rounded outward, so a canopy's four legs block and the cells under
+it stay free for anything else. The box around all of them is the footprint, which is what must sit on
+owned ground and what centres the model. The blocked rects are measured once at load and pre-turned for
+all four rotations, so the collision check stays the same rect-vs-rect loop.
+
+A **`Flat`** structure (a path) sits on its own layer: it only collides with other Flat pieces, so anything
+can be built over it, and it skips the "someone's standing there" check. A **`Roof`** model inside a
+structure is made non-collidable on build, so players walk through a canopy instead of snagging on it.
+
 A structure drops in **from above at full size** — the opposite of a bought unlock rising out of the
 ground (see `BaseUnlocks.LAYOUT_RISE`). The spring is shared, so only the start differs. The server waits
 `PLACE_SETTLE_DELAY` before settling its own copy, because the drop is the client's to play and the server
 has no signal for when the spring landed; that wait is also what makes a late-arriving client spring from
 the settled pose (a no-op) rather than replay the drop on a structure built minutes ago.
+
+## Cosmetic Shop
+
+`Shared/Config/CosmeticShop.luau`, run by `CosmeticShopManager`. The first thing that spends **Gems**: cosmetics,
+tables and extra Worker Huts, sold out of `Core.Zones.CosmeticShop`. The structures themselves are ordinary
+`Config.Structures` entries, so a purchase is a `BuildManager:GrantStructure` and they build like anything else;
+this config only says what each tier offers and what it costs.
+
+- **Rotation.** Every hour (`ROTATION_INTERVAL` in the manager) the shop draws new offers. The seed is the hour, so
+  every server shows the same shop, and there's no restock product to step one server off it.
+- **Tiers.** Each rotation draws `Slots` distinct offers per tier, weighted by `Weight`: 1 Featured, 2 Great and
+  3 Good. The Featured slot is the Worker Hut or the Fancy Table. Great is the other tables and the canopies. Good is
+  the paths, fences, Hanging Light and Picnic Parasol. A structure's `Rarity` follows the tier it's sold in: Good is
+  Common/Uncommon, Great Rare (the Golden Table Epic), Fancy Table Epic, Worker Hut Legendary.
+- **Stock.** A player can buy `STOCK` (1) of each offer per rotation. It's per player, so one buyer never takes
+  anything off another's shop.
+- **Bundles.** An offer's `Amount` is how many one purchase hands over: paths come x3 and fences x2, read as
+  "x3 Medium Dirt Path". Stock counts purchases, not structures.
+- **Prices that climb.** Both Featured offers cost more every time one is bought. `PriceStep` adds a flat amount per
+  copy and `PriceMultiplier` multiplies by one, counted off how many that player owns (`Structures.CountOwned`,
+  placed or in the backpack) less any `FreeCopies` the shop never sold them. The Fancy Table is 600 and climbs 100 a
+  copy; the Worker Hut is 550 and doubles, with `FreeCopies` 1 so the repaired one isn't charged for. Both huts
+  together come to 1,650 and six Fancy Tables to 5,100. Nothing else moves. A structure taken down goes back to the
+  backpack rather than being sold, so the count can't be walked back for a cheap one.
+- **Worker Hut.** Refused until the broken hut is repaired, since the repaired one always counts as one of
+  `EmployeeHut.MAX_HUTS` (3). Refused again once they own 3, placed or in the backpack. The shop only ever sells the
+  two after the repaired one, at 550 Gems and then 1,100. Every hut's first slot is free, and slots 2 and 3 are
+  bought per hut in Bux from that hut's row of `EmployeeHut.SLOT_PRICES` — see `HutSlots` in `docs/player-data.md`.
+  Later huts cost far more to fill, since a player only reaches them well into the game:
+
+  | Hut | Slot 1 | Slot 2 | Slot 3 | To fill |
+  |---|---|---|---|---|
+  | 1 (the repaired one) | free | 10,000 | 20,000 | 30,000 |
+  | 2 | free | 100,000 | 200,000 | 300,000 |
+  | 3 | free | 500,000 | 750,000 | 1,250,000 |
+
+  The Robux slot products are still one per slot number and shared by every hut, so a slot bought for Robux costs
+  the same Robux on any hut.
+
+**Prices follow what an offer does for the player.** They're set against the customer tip estimate of ~110 Gems/hr
+early, ~330 mid and ~490 late (see Selling — customer tips). They're placeholders until a proper balancing pass.
+- **What earns is priced by what it earns.**
+  - **Tables** are priced by their seats. Each free seat speeds custom orders up, 6 and 12 seats open a third and fourth order at once, and a
+  seated order tips surer and bigger (a Perfect one certain at 20–30 Gems, against 85% at 15–20 standing). That's
+  about +10 Gems an order, so a first table pays for itself in Gems inside an hour or two.
+  - The **Golden Table** makes seated orders pay 1.2x, the **Fancy Table** adds rich visits (six reach the cap), and the
+  **Worker Hut** is another free worker slot with room to buy two more — the goal the shop is saved toward.
+- **What's only looks stays cheap.** Paths, fences, the light, the parasol and both canopies can be bought on a
+  whim, so nobody has to choose between decorating and getting ahead. The canopies sit in the Great tier but are
+  priced like decorations.
+
+The plain tables cost **60 Gems a seat**, so twelve seats (the fourth concurrent order) is about 720 Gems, and fifteen
+(where the seat bonuses cap) about 900. The seat counts are the models' own (`SeatCount`), so reprice a table whose
+`Seats` folder changes. The Golden and Fancy Tables have two seats each and are priced for their bonus instead.
+
+| Kind | Offer | Seats | Per buy | Gems | Time at mid |
+|---|---|---|---|---|---|
+| Earns | Worker Hut (Featured) | — | x1 | 550, then 1,100 | ~1.7 h, then ~3.3 h |
+| Earns | Fancy Table (Featured) | 2 | x1 | 600, +100 a copy (to 1,100 at the sixth) | ~1.8 h, to ~3.3 h |
+| Earns | Golden Table | 2 | x1 | 1,000 | ~3 h |
+| Earns | Large Wooden Table | 6 | x1 | 360 | ~1.1 h |
+| Earns | Medium Wooden Table | 4 | x1 | 240 | ~45 min |
+| Earns | Circular Table | 3 | x1 | 180 | ~33 min |
+| Earns | Small Wooden Table | 2 | x1 | 120 | ~22 min |
+| Looks | Medium / Large Canopy | — | x1 | 60 / 90 | 11–16 min |
+| Looks | Hanging Light / Picnic Parasol | — | x1 | 40 / 50 | 7–9 min |
+| Looks | Small / Medium / Long / Large / Big Stone Path | — | x3 | 15 / 20 / 25 / 30 / 40 | 3–7 min |
+| Looks | Small / Medium / Long / Large / Big Dirt Path | — | x3 | 10 / 15 / 20 / 25 / 30 | 2–5 min |
+| Looks | Small / Medium / Long Fence | — | x2 | 10 / 15 / 25 | 2–5 min |
+
+**Weights.** Featured is 1 each, a coin flip. Great is 3 each and the Golden Table 2, the one table there that pays
+more. Good is 1 per path and 2 for everything else — ten paths at an even weight would fill two thirds of the Good
+slots, where this keeps them to about half.
+
+| Knob | Higher | Lower |
+|---|---|---|
+| `Price` | a purchase is a goal | Gems stop meaning anything |
+| `Amount` | a bundle builds a whole path in one go | a path takes several rotations to lay |
+| `Weight` | that offer turns up most hours | a rare sight worth waiting for |
+| `STOCK` | a good rotation empties a wallet | one of each is all an hour holds |
+| `Slots` | more on sale every hour | the shop is mostly waiting |
+| `ROTATION_INTERVAL` | a rotation is worth coming back for | the shop churns before it's read |
 
 ## The early boost
 
@@ -819,6 +1099,24 @@ Measured against what they're **holding** rather than what they've earned, so it
 spent everything on a plot. That also means the pool climbs the ladder on its own as they get richer: $100
 in hand draws from the whole cool roster, $10,000 from Lamb alone, and past $20,000 there's nothing dear
 enough left to show them — the teaser bowing out on its own, before the fade gets to it.
+
+**`EARLY_COOK_SCALE`** (0.75) — what a cook's length is multiplied by early on, applied in
+`GrillerManager:GetCookTime` so every cook-time consumer inherits it. Two things set it apart from the
+four dials above:
+
+- **It is flat, not faded.** It does not ease out; it steps back to full length in one sale, a 33% jump.
+  That is a deliberate simplicity trade — if the step ever reads as the game slowing down,
+  `1 - 0.25 * (1 - getFade(totalEarned))` puts it on the shared curve with no other change.
+- **It runs off its own `EARLY_COOK_THRESHOLD`** (10,000) rather than `THRESHOLD`, because the cook wait
+  is a *first-minutes* problem rather than a whole-early-game one. That covers roughly 9–15 cooks — about
+  four minutes at the grill — after which cook times are the established ones. Since it is far short of
+  `THRESHOLD`, the "no head start" sentinel `CurrencyManager:GetEarlyBoostEarnings` returns still reads
+  as past it, so an admin switch-off and an unloaded profile both get full-length cooks.
+
+Because `CookSpeed` and this both divide the **whole bar**, a shorter cook is also a narrower perfect
+window — 2× Corn+Lettuce goes from a 7.2s window to 5.4s. `MIN_PERFECT_SECONDS` is what keeps that from
+reaching the short cooks; the two are tuned against each other, and this should not be lowered further
+without checking the floor still covers it.
 
 ### THRESHOLD, and why it is where it is
 
@@ -1078,12 +1376,28 @@ nothing can vanish into a half-finished trip, and the stand's six slots are hono
 because the stage behind it was missing — `NoCooker`, `NoGrill` or `NoSeller`. A run that simply reached the
 horizon carries nil: they were still working when the player came back.
 
+### Tips
+
+Away customers tip Gems on the same terms watched ones do. Once the sales are walked in the order they
+landed, each rolls `CustomerTipManager:GetStandTipChance` — the one formula the live stand uses, so the cook
+state, the mutation, the ingredients' mean tier and a filled stick all pay off offline exactly as they do
+live — and `CustomerTips.MIN_GAP` spaces the hits against the simulated clock. A hit leaves
+`STAND_GEMS_MIN..MAX`, as a stand customer's does. There is no separate rate: the sim's own customer cadence
+(~16.5s a customer) sits just above `MIN_GAP`, so a base selling flat out tips at close to the live rate, and
+everything that throttles the Bux — chest stock, grills, cookers, the stand's slots — throttles the Gems with
+it.
+
+**No offline tips until the player has met Gems live** (`SeenCustomerTip`). The guaranteed first tip is an
+introduction with an explainer toast attached, and it has to land on a customer they watch.
+
 ### The claim
 
 The plain offer total waits in server memory and is paid through `CurrencyManager:IncrementCurrency` when the
 panel's Claim (or its Exit) is pressed, so the gamepass, friend and early boosts land on it once, exactly as
-on a sale; the panel shows the boosted figure. Leaving with it unclaimed pays it on the last save. Offline
-sales feed the lifetime counters and never the rating's sale window — see `docs/player-data.md`.
+on a sale; the panel shows the boosted figure. The tips ride along on the same press through
+`IncrementGems` as the Gems source `OfflineTip`, unboosted and out of `TotalEarned` as all Gems are. Leaving
+with it unclaimed pays both on the last save. Offline sales feed the lifetime counters and never the rating's
+sale window — see `docs/player-data.md`.
 
 | Knob | Higher | Lower |
 |---|---|---|

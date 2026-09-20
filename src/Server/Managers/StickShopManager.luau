@@ -40,7 +40,7 @@ local StickShopManager = {
 	PurchaseStickEvent = Network.Event("PurchaseStick"), -- client -> server (stickId, buyAll)
 	StickPurchaseResultEvent = Network.Event("StickPurchaseResult"), -- server -> client (success, stickId)
 
-	-- (player, stickId, price, method) on a grant; price is 0 on a Robux buy
+	-- (player, stickId, price, method, amount) on a grant; price is 0 on a Robux buy
 	OnStickPurchased = Signal.new(),
 
 	_purchasing = {}, -- [player] = true, held across the CanAfford -> DeductCurrency yield window
@@ -152,7 +152,7 @@ function StickShopManager:PurchaseStick(player: Player, stickId: string, buyAll:
 	StickManager:GrantStick(player, stickId, amount)
 	PlayerDataManager:SetPlayerDataKey(player, { "StickShop", "Bought", stickId }, bought + amount)
 	StatsManager:RecordSticksBought(player, amount)
-	self.OnStickPurchased:Fire(player, stickId, totalPrice, if buyAll then "CurrencyBuyAll" else "Currency")
+	self.OnStickPurchased:Fire(player, stickId, totalPrice, if buyAll then "CurrencyBuyAll" else "Currency", amount)
 
 	self._purchasing[player] = nil
 
@@ -175,7 +175,7 @@ function StickShopManager:GrantStickFromProduct(player: Player, productId: strin
 
 	StickManager:GrantStick(player, productId)
 	StatsManager:RecordSticksBought(player)
-	self.OnStickPurchased:Fire(player, productId, 0, "Robux")
+	self.OnStickPurchased:Fire(player, productId, 0, "Robux", 1)
 end
 
 function StickShopManager:OnInit()

@@ -5,6 +5,29 @@ this holds the reasoning behind the ones where the shape is a decision.
 
 ## Core game
 
+**`Gems`** — the second currency, beside `Currency` (Bux). Today its only source is customer tips (see
+`CustomerTipManager` and the customer-tips section of `docs/balance.md`), paid through
+`CurrencyManager:IncrementGems`.
+- **Never boosted.** Every boost is a promise about Bux.
+- **Not added to `TotalEarned`**, because that total drives the early boost and the richest leaderboard, and both
+  are about Bux.
+- **Spent through `CurrencyManager:DeductGems`**, whose only caller so far is the Cosmetic Shop. The decrement
+  doesn't clamp, so every spend checks `CanAfford(player, amount, "Gems")` first, behind its manager's purchase guard.
+- **Not in `TutorialManager`'s `PROGRESS_RESET_KEYS`.** Nothing can earn Gems in an unfinished run, since tips stay
+  off while the tutorial has customers guaranteed, so the wipe would only ever reset a 0 or an admin grant. It also
+  means Gems bought for Robux later can't be lost to a tutorial wipe.
+
+**`TotalGemsEarned`** — the lifetime counterpart to `Gems`, exactly as `TotalEarned` is to `Currency`: every Gem
+ever taken in, where `Gems` is only what's left after the Cosmetic Shop. Written in `IncrementGems`, so every
+source — tips, codes, the admin grant, an offline tip claim — is covered by the one call, and never in
+`DeductGems`, so it only ever climbs.
+- **Added after Gems shipped**, so it reads as *Gems earned since this key landed*, not a true lifetime. Existing
+  profiles pick it up at 0 through `Reconcile`; there is no migration and nothing to backfill it from.
+- **Also written by `OfflineEarningManager:SettleOnLastSave`**, the direct-write path for a claim never pressed,
+  alongside its `TotalEarned` line.
+- **Not in `PROGRESS_RESET_KEYS`**, for the same reason `Gems` isn't -- despite every other lifetime counter being
+  in there. Nothing tips during the tutorial, so a wipe would only ever clear an admin grant.
+
 **`Plots`** — plots bought, keyed by name in the base's Plots folder. The starting plot isn't here: it's
 the `START` cell in `Config.Plots`' grid, owned from handover. A plot is priced off *how many* of these
 there are rather than *which*, so the choice is where to expand and never how much for.
@@ -18,6 +41,9 @@ The cell is the *base's*, not a plot's — one lattice across the whole base (se
 buying a plot opens up cells rather than starting a new grid.
 
 `Grillers` and `StickStands` are keyed by these same uids: whatever is sitting on each.
+
+A Worker Hut's record also carries **`Hut`**, its number from 1 to `EmployeeHut.MAX_HUTS`. It's what that hut's
+slots and workers are keyed by, since the uid doesn't survive a move — see `HutSlots` below.
 
 **`StructureCellSize`** — a cell index only means a *distance* against the `Structures.CELL_SIZE` it was
 saved at, so that size is stored beside the cells rather than assumed. `BaseManager:RescaleStructureCells`
@@ -123,6 +149,11 @@ claimed; a past value is one sitting ready. Absolute rather than a countdown, so
 empty and resets on the next buy. Each shop has its **own** `Seed` rather than a shared one: the two run
 separate clocks and either can be re-rolled on its own by its restock product.
 
+**`CosmeticShop`** — the same `{ Seed, Bought }` ledger for the hourly Gems rotation (`CosmeticShopManager`),
+on a clock of its own. `Bought` counts **purchases, not structures**: one buy of a path bundle hands over three
+paths but counts once against `Config.CosmeticShop.STOCK`, which is what the shop's stock is measured in. There
+is no restock product, so its `Seed` is the clock's window seed as it stands.
+
 **`HiringBoard`** — the same shape for the worker board: `{ Seed, Hired }`, where `Hired` marks which of the
 window's four slots this player has already taken. It rotates on its own clock at twelve and a half
 minutes, and a stale `Seed` reads as nothing hired, so it self-cleans on every rotation rather than growing
@@ -151,6 +182,17 @@ teach it. Saved rather than session-scoped, so a rejoin neither re-hands the les
 **`SeenRichCustomer`** — whether a rich customer has ever visited. Their first is given rather than rolled
 for (`SellNpcManager:TrySendFirstRichVisit`) the moment their stand first holds `RichNpc.MIN_SKEWERS`,
 because otherwise whether they ever meet one is down to luck. Saved for the same reason as above.
+
+**`SeenCustomerTip`** — whether a customer has ever tipped them. Their first tip is given rather than rolled for
+(`CustomerTipManager:_tryCustomerTip`), and it comes with a one-time explainer toast. Gems shipped as an update, so
+this is what introduces them to live players.
+- **Who gets it when.** A live player gets it on their first paying customer after the update. A new player gets it on
+  their second customer after the tutorial, since the first is passed over (`CustomerTips.POST_TUTORIAL_QUIET_CUSTOMERS`).
+- **Skipped when the food couldn't earn a tip.** Raw, Charred or a wrong order has a chance of 0, so it doesn't use
+  up the free tip.
+- **Set when the Gems land, not at the roll.** A customer lost mid-eat leaves the free tip still owed. The 15s gap
+  stops a second customer claiming it in the meantime.
+- **Not in `PROGRESS_RESET_KEYS`**, for the same reason `Gems` isn't: nothing tips during the tutorial.
 
 **`LastSaleAt`** — when they last completed a sale of any kind. Written in
 `StatsManager:RecordSaleCompleted` rather than in `SellNpcManager`, so rich hauls and custom order
@@ -221,6 +263,18 @@ ceiling, because a cook has a safe place to stop at and an order does not.
 `Counts` is deliberately not saved: it is `countIngredients(Ingredients)`, and keeping a second copy of
 the same fact in the profile only creates something to fall out of step.
 
+`Rich` is `true` on a rich customer's order and absent otherwise, so entries saved before rich orders
+existed read as ordinary with no migration. A restored rich order comes back on a rich rig and tips at the
+rich rate. The table seat it held is not saved: a restored accepted order claims whatever seat is free.
+
+`Look` is who the customer was, so a restored order comes back as the same character: a friend's `UserId`
+(a number) or an `Assets.NPC` rig's name (a string) for an ordinary one, a `RichNPC` rig's name for a rich
+one. It's absent on entries saved before looks were kept, and those roll a fresh look as they always did.
+A look that can't be had any more — a rig since renamed or removed, or a friend's appearance that fails to
+load — rolls fresh too, and the new one is what the next save keeps. A friend since unfriended still comes
+back as themselves; that look is fetched without going into `NpcRig`'s cache, which only frees friends it
+can find on the owner's friend list.
+
 **`CustomOrderHistory`** — the last `Rating.ORDER_WINDOW` resolved orders, oldest first. This
 is the `RecentSales` idiom and it is here for the same reason: a rating has to be able to fall as well as
 climb, which a lifetime tally never can, and it is **stored as facts rather than a score** so retuning
@@ -273,7 +327,8 @@ trusting the sweep, since a roll can land in the gap between two of them.
 entry. It isn't an unlock because no `LockStyle` swaps one model for another, and because the repaired hut
 isn't rendered from a level at all: repairing hands the player a `RepairedHut` **structure**, so from that
 moment it lives in `Structures`/`OwnedStructures` like any other build and moves with the hammer. The flag is
-only what stops it being bought twice.
+only what stops it being bought twice, and what the Cosmetic Shop waits on before it sells a second hut: the
+repaired one always counts as one of the `EmployeeHut.MAX_HUTS`, so the shop only ever sells the ones after it.
 
 **`HutRepairEndsAt`** — when a running repair lands, absolute on `workspace:GetServerTimeNow()` so it
 finishes while the player is offline, with `-1` as the resting value. The two keys together make three states:
@@ -314,27 +369,52 @@ rebalancing employees is a config edit and never a migration.
 `Role` is one of `Config.Employees.ROLES` and never changes. An employee works one station, so its star means
 one thing; a base is staffed by hiring three of them, not by assigning three jobs to one.
 
-**`Slot`** is the hut slot that worker is equipped in, `1` upward, and absent while unequipped. Only an
-equipped worker is on `EmployeeManager`'s roster with a rig in the world; an unequipped one is nothing but its
-record, so equipping it later is an ordinary add. Owning is uncapped — a worker hired is kept for good, and
-every hire starts unequipped — while how many can be out is how many slots are unlocked. Which worker sits in
-a slot is **scanned for rather than stored a second time** on the slot side, since a second copy would only be
-something to fall out of step. Unequipping leaves `Carrying` and `Load` on the record, so a worker put back
+**`Slot`** is the employee slot that worker is equipped in, and absent while unequipped. It **runs across
+huts**: `(hut number - 1) * EmployeeHut.SLOTS_PER_HUT + the slot in that hut`, so 1-3 is hut 1's and 4-6 hut
+2's (`EmployeeHut.GetEmployeeSlot` / `GetHutIndex`). One number rather than a `{ Hut, Slot }` pair so that every
+record saved before there were several huts, whose `Slot` was 1-3, already means hut 1 without a migration.
+Only an equipped worker is on `EmployeeManager`'s roster with a rig in the world; an unequipped one is nothing
+but its record, so equipping it later is an ordinary add. Owning is uncapped — a worker hired is kept for good,
+and every hire starts unequipped — while how many can be out is how many slots are unlocked. Which worker sits
+in a slot is **scanned for rather than stored a second time** on the slot side, since a second copy would only
+be something to fall out of step. Unequipping leaves `Carrying` and `Load` on the record, so a worker put back
 to work picks straight back up what it was holding.
 
-**`HutSlotsUnlocked`** — how many hut slots are unlocked, counted from slot 1, so `3` means slots 1 to 3. A
-**count rather than a set** because slots are bought strictly in order: `EmployeeHutManager:PurchaseHutSlot`
-only ever sells the next one, and the price of each slot is `Config.EmployeeHut.SLOT_PRICES[slot]`. The
-default is `1` because slot 1 comes with the repair; equipping into any slot still requires `HutRepaired`.
+**`HutSlots`** — how many slots each hut has unlocked, `[hut number] = count`, each counted from that hut's
+slot 1, so `{ 3, 1 }` is hut 1 full and hut 2 on its first. A **count rather than a set** because a hut's slots
+are bought strictly in order: `EmployeeHutManager:PurchaseHutSlot` only ever sells a hut's next one, priced
+`Config.EmployeeHut.SLOT_PRICES[hut][slot]` — a row per hut number, so a later hut's slots cost more (see Cosmetic
+Shop in `docs/balance.md`). A missing entry reads as `1`
+(`EmployeeHut.GetUnlockedSlots`), since every hut's first slot is free — so a hut bought, or granted any other
+way, needs nothing written for it. Equipping into any slot still requires `HutRepaired`, and a hut number no
+higher than the huts owned.
 
-Slots 2 and 3 are also sold for Robux (`Config.EmployeeHut.SLOT_PRODUCT_IDS`), and a receipt grants **whichever
-slot is next when it lands**, not the slot its button showed — the same doctrine as the `BaseUnlocks` products.
-A paid receipt can't be refused, so it must never name a slot that a currency buy or a second receipt has
-already unlocked; the product only sets the price.
+It's a **dense array, always written whole** with any gap filled by `1`s: a DataStore hands gapped integer keys
+back as strings, the same trap as `HiringBoard.Hired`, and slot 2 bought on hut 3 before anything on hut 2 would
+otherwise save `{ [1] = 3, [3] = 2 }`.
 
-It belongs to the **player, not a hut**. `HutStorage` is keyed by structure uid, but picking a hut up and
-placing it again mints a new uid, and slots paid for with currency can't be allowed to vanish on a move. It's
-in `TutorialManager`'s `PROGRESS_RESET_KEYS` beside `Employees`.
+It's keyed by **hut number, not uid**. `HutStorage` is keyed by structure uid, but picking a hut up and placing it
+again mints a new uid, and slots paid for with currency can't be allowed to vanish on a move. So each placed hut
+carries a number (`Structures[uid].Hut`), and `BaseManager:PlaceStructureOnBase` gives a hut the **lowest
+number no placed hut holds** (`EmployeeHut.GetFreeHutIndex`): a lone hut moved gets its own number, slots and
+workers back. Picking up two and putting them down swaps which is which, but nothing bought is lost. There are
+never more than `EmployeeHut.MAX_HUTS` numbers, which is why placement refuses a hut past that (only reachable
+through an admin grant — the Cosmetic Shop caps what it sells).
+
+Slots 2 and 3 are also sold for Robux (`Config.EmployeeHut.SLOT_PRODUCT_IDS`, one per slot number, shared by every
+hut), and a receipt grants **whichever slot is next when it lands**, not the slot its button showed — the same
+doctrine as the `BaseUnlocks` products. The receipt names only the buyer, so the hut comes from
+`EmployeeHutManager:PromptHutSlotProduct` remembering which hut the prompt was raised from, as
+`BaseManager:PromptPlotProduct` does for plots. A receipt landing with no hut remembered (retried on a later join)
+or on a hut filled since goes to the lowest-numbered hut with a slot left. A paid receipt can't be refused, so it
+must never name a slot that a currency buy or a second receipt has already unlocked; the product only sets the price.
+
+**Migration.** This replaced `HutSlotsUnlocked`, one count for the one hut there used to be.
+`EmployeeHutManager:MigrateLegacyHutSlotsOnLoad` folds it into `HutSlots[1]` on load and numbers any hut placed
+before huts had numbers — the lowest free, so today's hut becomes hut 1 and keeps its slots and its workers
+(whose `Slot` 1-3 already means hut 1). The fold takes the **larger** of the two counts rather than overwriting:
+an older server still running during an update re-adds `HutSlotsUnlocked` at `1` through `Reconcile`, and can
+even sell a slot against it. `HutSlots` is in `TutorialManager`'s `PROGRESS_RESET_KEYS` beside `Employees`.
 
 **`FreeWorkersClaimed`** — whether the three free workers have been taken. The first time a repaired hut is
 opened the hut's own panel is held back for a panel of three candidates, one per role and all
@@ -440,6 +520,39 @@ handover and destroyed at the claim.
 
 Neither key is in `TutorialManager`'s `PROGRESS_RESET_KEYS`: the manager refuses a claim before
 `TutorialCompleted`, so there is never a tutorial-time claim for the wipe to undo.
+
+## Daily quests
+
+**`DailyQuests`**: the player's quest board, `{ Count, StartedAt, Quests, Reward, RewardClaimed }`.
+
+- **`Count`**: how many boards they've been rolled. Seeds the roll and the worker reward's three faces through `Config.DailyQuests.GetSeed`. That seed is offset half a stride from the daily rewards' seed, so the two never share faces.
+- **`StartedAt`**: when the board was rolled, absolute on `workspace:GetServerTimeNow()`. The next board rolls `RESET_INTERVAL` after it, counted per player the way daily rewards are. The template's `0` reads as long past, so the first roll needs no special case.
+- **`Quests`**: a dense list of `{ Id, Target, Progress, Claimed }` in tile order (Easy, Medium, Hard). It is dense rather than keyed because a DataStore hands integer keys back as strings.
+  - `Target` is copied off the pool at the roll, so retuning a quest can't move a board that's already live.
+  - `Id` is how the quest's Title and Type are looked up, so a pool entry's Id must never change.
+- **`Reward`**: the board reward, rolled with the quests and saved rather than derived, for the same retune reason. The template's `false` stands in for "never rolled".
+- **`RewardClaimed`**: whether that reward has been handed over.
+
+**Rolling.** `DailyQuestManager:RollDailyQuestsIfDue` rolls the first board once `TutorialCompleted` flips, and then on the base handover and on a per-player `task.delay` to the reset. Nothing polls. A lapsed board is settled before it's replaced:
+- every finished, unclaimed quest's Bux is paid;
+- a fully finished board's unclaimed reward is granted too. A worker reward hires one of its three candidates, picked off the old seed.
+
+The new board is written **before** any grant, since a grant can yield. Progress that lands after a board's reset time is dropped rather than counted toward it.
+
+**Claiming.** `ClaimDailyQuest` stamps `Claimed` before paying `QUEST_REWARD`, as a redeemed code does.
+- Claiming the last quest grants a crate reward on the spot.
+- A worker reward waits on a pick off its cards (`ClaimDailyQuestReward`). Only the slot crosses the wire, as the daily rewards' worker days do. Its portraits are baked into a disabled `DailyQuestWorkerPortraits` ScreenGui on handover and destroyed at the claim or the reset.
+
+The key isn't in `TutorialManager`'s `PROGRESS_RESET_KEYS`: no board exists before `TutorialCompleted`, so there's no tutorial-time progress for the wipe to undo.
+
+## Update log
+
+**`LastSeenUpdateLog`** — the `Title` of the newest `Config.UpdateLogs` entry whose log the player has had on screen, with `""` as "none". `UpdateLogController` puts the log up on join whenever this isn't the newest Title, and stamps it through `UpdateLogManager:MarkUpdateLogSeen` once the panel actually opens, by hand or on its own.
+- **Live profiles** get the key through `Reconcile` at `""`, so every returning player is shown the newest update once.
+- **New players** are stamped with the newest Title by a post-load callback while `TutorialCompleted` is false, so the log never comes up on its own for someone who has nothing to catch up on.
+- **Keyed by Title:** renaming a shipped update's Title shows it to everyone again.
+
+It isn't in `TutorialManager`'s `PROGRESS_RESET_KEYS`: a mid-tutorial wipe leaves the stamp, and the next load stamps it again anyway.
 
 ## Tutorial
 

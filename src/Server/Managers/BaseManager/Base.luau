@@ -553,29 +553,33 @@ function Base:GetCellPose(
 	return Structures.GetPlacementPivot(structure.Model, surface, rotation)
 end
 
--- Whether a footprint fits: every cell on owned ground, nothing built in the way, clear of the hut's reserved cells. Authoritative.
+-- Whether a structure fits: its whole footprint on owned ground, nothing built in the way, clear of the hut's reserved cells. Authoritative.
 function Base:IsBlockFree(
-	cellX: number,
-	cellZ: number,
-	footprintX: number,
-	footprintZ: number,
+	candidate: Structures.PlacedStructure,
 	structures: { [string]: Structures.PlacedStructure },
 	plots: { [string]: boolean },
 	hutRepaired: boolean
 ): boolean
+	local structure = Structures.GetStructureFromId(candidate.Type)
 	local ground = self:GetGround(plots)
 
-	if not ground or not GridUtil.IsBlockOnGround(ground, cellX, cellZ, footprintX, footprintZ) then
+	if not structure or not ground then
+		return false
+	end
+
+	local footprintX, footprintZ = Structures.GetFootprint(structure, candidate.Rotation)
+
+	if not GridUtil.IsBlockOnGround(ground, candidate.CellX, candidate.CellZ, footprintX, footprintZ) then
 		return false
 	end
 
 	-- Held for the repaired hut while it's still broken, so it always has somewhere to land. Passed in rather than read off self, or the hut's own placement would race the render listener
-	if not hutRepaired and self._hutBlock and Structures.Overlaps(self._hutBlock, cellX, cellZ, footprintX, footprintZ) then
+	if not hutRepaired and self._hutBlock and Structures.Overlaps(self._hutBlock, candidate) then
 		return false
 	end
 
 	for _, placed in structures do
-		if Structures.Overlaps(placed, cellX, cellZ, footprintX, footprintZ) then
+		if Structures.Overlaps(placed, candidate) then
 			return false
 		end
 	end
@@ -601,25 +605,41 @@ function Base:BuildStructure(uid: string, placed: Structures.PlacedStructure, an
 		return nil
 	end
 
-	local footprintX, footprintZ = Structures.GetFootprint(structure, placed.Rotation)
-
 	local model = structure.Model:Clone()
 	model.Name = uid
 
 	-- Made inert, or every structure would carry an invisible wall. Query stays on for the pickup tool's raycast
-	local hitbox = model:FindFirstChild(Structures.HITBOX_NAME)
-	if hitbox and hitbox:IsA("BasePart") then
+	for _, hitbox in Structures.GetHitboxes(model) do
 		hitbox.CanCollide = false
 		hitbox.CanTouch = false
+	end
+
+	-- Customers' seats only: a Seat takes a sitter by touch, so off it no player can sit, while Seat:Sit still seats an NPC
+	for _, descendant in model:GetDescendants() do
+		if descendant:IsA("Seat") then
+			descendant.CanTouch = false
+		end
 	end
 
 	-- Solid to the owner, passable to customers. Stamped per copy rather than on the replicated template
 	CollisionManager:SetModelGroup(model, CollisionManager.STRUCTURE)
 
+	-- Walked through, bumping a canopy being more annoying than it's worth. Still queryable, so it can be picked up
+	local roof = model:FindFirstChild(Structures.ROOF_NAME)
+	if roof then
+		for _, descendant in roof:GetDescendants() do
+			if descendant:IsA("BasePart") then
+				descendant.CanCollide = false
+			end
+		end
+	end
+
 	-- Whole or not at all: under default mode a class ends up holding destroyed parts on a still-tagged model
 	model.ModelStreamingMode = Enum.ModelStreamingMode.Atomic
 
 	model:SetAttribute("SlotCFrame", pose)
+	-- The template's own scale, so the client's drop doesn't spring a model scaled in Studio back to 1
+	model:SetAttribute("SlotScale", model:GetScale())
 	model:SetAttribute(Structures.UID_ATTRIBUTE, uid)
 	model:SetAttribute(Structures.OWNER_ATTRIBUTE, self._owner.UserId)
 
@@ -629,8 +649,7 @@ function Base:BuildStructure(uid: string, placed: Structures.PlacedStructure, an
 	-- On the model, not data, since data only reaches its owner and the ghost must be right on every client
 	model:SetAttribute(Structures.CELL_X_ATTRIBUTE, placed.CellX)
 	model:SetAttribute(Structures.CELL_Z_ATTRIBUTE, placed.CellZ)
-	model:SetAttribute(Structures.FOOTPRINT_X_ATTRIBUTE, footprintX)
-	model:SetAttribute(Structures.FOOTPRINT_Z_ATTRIBUTE, footprintZ)
+	model:SetAttribute(Structures.ROTATION_ATTRIBUTE, placed.Rotation)
 
 	-- Drops in at full size where an upgrade rises small, so building and upgrading read differently. A rejoin snaps
 	if animate then
@@ -698,6 +717,7 @@ function Base:RenderStructures(structures: { [string]: Structures.PlacedStructur
 			model:SetAttribute("SlotCFrame", pose)
 			model:SetAttribute(Structures.CELL_X_ATTRIBUTE, placed.CellX)
 			model:SetAttribute(Structures.CELL_Z_ATTRIBUTE, placed.CellZ)
+			model:SetAttribute(Structures.ROTATION_ATTRIBUTE, placed.Rotation)
 			model:PivotTo(pose)
 		end
 	end

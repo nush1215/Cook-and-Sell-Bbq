@@ -37,6 +37,9 @@ local DIM_TWEEN = TweenInfo.new(0.2)
 -- How long the shop takes to scroll down to the Bux packs when the currency button opens it.
 local BUX_SCROLL_TWEEN = TweenInfo.new(0.5, Enum.EasingStyle.Sine)
 
+-- Seconds a mystery slot's silhouette holds each reward before cycling to the next.
+local MYSTERY_ICON_INTERVAL = 2
+
 --
 local ShopController = {
 	RequestProductPurchase = Network.Event("RequestProductPurchase"),
@@ -152,6 +155,28 @@ local function resolveRewardDisplay(item: { Id: string, Type: Crates.RewardType 
 	}
 end
 
+-- Paints one reward onto a slot, on a crate card or the odds frame alike.
+local function fillRewardSlot(slot: Frame, reward: Crates.RewardEntry)
+	local display = resolveRewardDisplay(reward)
+	if not display then
+		return
+	end
+
+	slot.Icon.Image = display.Icon
+	slot.IngredientName.Text = display.Name
+	slot.Value.Text = `${GuiUtil.ConvertNumberWithSuffix(display.Price)}`
+	slot.Rays.ImageColor3 = display.Color
+
+	-- The odds carry the rarity colour -- a crate slot has no rarity word, so the number must say how good it is
+	slot.Chance.Text = `{reward.Chance}%`
+	slot.Chance.TextColor3 = display.TextColor
+
+	local stroke = slot.Chance:FindFirstChildWhichIsA("UIStroke")
+	if stroke then
+		stroke.Color = display.StrokeColor
+	end
+end
+
 -- Fills one crate's card. Preview slots are numbered in config order, so the rarest land on the special ones.
 function ShopController:_setupCrateCard(crate: Crates.Crate, card: Frame)
 	local slotIndex = 0
@@ -162,28 +187,97 @@ function ShopController:_setupCrateCard(crate: Crates.Crate, card: Frame)
 
 			-- Too few slots shows the first few, rather than erroring and leaving the rest of the shop unbuilt
 			local slot = card.Container:FindFirstChild(tostring(slotIndex))
-			local display = slot and resolveRewardDisplay(reward)
-			if not display then
+			if not slot then
 				continue
 			end
 
-			slot.Icon.Image = display.Icon
-			slot.IngredientName.Text = display.Name
-			slot.Value.Text = `${GuiUtil.ConvertNumberWithSuffix(display.Price)}`
-			slot.Rays.ImageColor3 = display.Color
-
-			-- The odds carry the rarity colour -- a crate slot has no rarity word, so the number must say how good it is
-			slot.Chance.Text = `{reward.Chance}%`
-			slot.Chance.TextColor3 = display.TextColor
-
-			local stroke = slot.Chance:FindFirstChildWhichIsA("UIStroke")
-			if stroke then
-				stroke.Color = display.StrokeColor
+			-- A pool takes one slot however many rewards it holds, the rest living in the odds frame
+			if reward.Rewards then
+				self:_setupMysterySlot(slot, reward)
+			else
+				fillRewardSlot(slot, reward)
 			end
 		end
 	end
 
 	self:_bindCrateBundles(crate, card.Buttons)
+end
+
+-- A black silhouette cycling through everything the pool can give, its odds opening from the slot's Odds button.
+function ShopController:_setupMysterySlot(slot: Frame, pool: Crates.RewardEntry)
+	local oddsFrame = self.UI.CrateOddsFrame
+
+	slot.Icon.ImageColor3 = Color3.new(0, 0, 0)
+
+	UIController:BindButtonClick(slot.Odds, function()
+		-- Filled per press, since every pool shares the one frame; slots past the pool's rewards hide
+		for _, oddsSlot in oddsFrame.Container:GetChildren() do
+			local index = tonumber(oddsSlot.Name)
+			if not index then
+				continue
+			end
+
+			local reward = pool.Rewards[index]
+			oddsSlot.Visible = reward ~= nil
+
+			if reward then
+				fillRewardSlot(oddsSlot, reward)
+			end
+		end
+
+		-- A swap rather than a stack, so the shop closes under it; _setupCrateOdds reopens it on the way out
+		UIController:OpenFrame(oddsFrame)
+	end, true)
+
+	slot.IngredientName.Text = "???"
+	slot.Value.Text = "$?????"
+
+	-- The odds of hitting the pool at all; what lands inside it is the odds frame's job
+	slot.Chance.Text = `{pool.Chance}%`
+
+	local icons = {}
+	for _, reward in pool.Rewards do
+		table.insert(icons, resolveRewardDisplay(reward).Icon)
+	end
+
+	task.spawn(function()
+		local index = 0
+
+		while true do
+			index = index % #icons + 1
+			slot.Icon.Image = icons[index]
+			task.wait(MYSTERY_ICON_INTERVAL)
+		end
+	end)
+end
+
+-- Binds the odds frame's exit, and hands back to the shop whenever it closes without another panel taking over.
+function ShopController:_setupCrateOdds()
+	local holder = self.UI.Holder
+	local oddsFrame = self.UI.CrateOddsFrame
+	oddsFrame.Visible = false
+
+	local exit = oddsFrame:FindFirstChild("Exit", true)
+	if exit then
+		UIController:BindButtonClick(exit, function()
+			UIController:CloseFrame(oddsFrame)
+		end, true)
+	else
+		warn("CrateOddsFrame has no Exit button, so it can only be closed with B or by opening another frame")
+	end
+
+	UIController.OnFrameClosed:Connect(function(frame)
+		if frame ~= oddsFrame then
+			return
+		end
+
+		-- Deferred, since swapping to another panel closes this before recording the new one taking its place
+		task.defer(function()
+			if not UIController:GetOpenFrame() then
+				UIController:OpenFrame(holder)
+			end
+		end)
+	end)
 end
 
 -- Binds a crate's bundle frames, each named for the product it buys, so adding one is authoring a frame.
@@ -418,6 +512,7 @@ end
 -- Fades the dim with the panel, hooked to UIController's signals since another frame opening also closes this.
 function ShopController:_setupDim()
 	local holder = self.UI.Holder
+	local oddsFrame = self.UI.CrateOddsFrame
 	local dim = self.UI:FindFirstChild("Dim")
 
 	if not dim then
@@ -427,14 +522,15 @@ function ShopController:_setupDim()
 
 	dim.BackgroundTransparency = 1
 
+	-- The odds frame dims too, so swapping to it from the shop doesn't flash the world back in
 	UIController.OnFrameOpened:Connect(function(frame)
-		if frame == holder then
+		if frame == holder or frame == oddsFrame then
 			TweenService:Create(dim, DIM_TWEEN, { BackgroundTransparency = DIM_TRANSPARENCY }):Play()
 		end
 	end)
 
 	UIController.OnFrameClosed:Connect(function(frame)
-		if frame == holder then
+		if frame == holder or frame == oddsFrame then
 			TweenService:Create(dim, DIM_TWEEN, { BackgroundTransparency = 1 }):Play()
 		end
 	end)
@@ -481,6 +577,7 @@ function ShopController:_setupUI()
 	holder.Visible = false
 
 	self:_setupDim()
+	self:_setupCrateOdds()
 	self:_setupBuxPurchaseCelebration()
 
 	-- Nothing else opens this panel, so a missing button isn't a dead press but an unreachable shop

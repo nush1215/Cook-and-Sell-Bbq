@@ -1451,6 +1451,50 @@ local NpcDialogue = {
 		"Nothing compares, nothing",
 	},
 
+	-- Mid-eat, handing over a tip. Only the cook states that can tip get variants; Perfect and Golden take these
+	NPCTipping = {
+		"Yoo this is yummy!",
+		"This deserves a tip",
+		"Keep the change, chef",
+		"Here, take a little extra",
+		"Chef, you earned this",
+		"Too good not to tip",
+		"Tip for the chef!",
+		"Yoo, take this, you cooked",
+		"That's worth a tip, easy",
+		"Here's something extra, chef",
+		"Ok this is tip worthy",
+		"Take this, you deserve it",
+		"A little bonus for you",
+		"Bussin, here's a tip",
+		"Chef, here, for real",
+		"Yummy! Have a little extra",
+	},
+	NPCTippingCooked = {
+		"Not bad, have a little extra",
+		"Decent. Here, keep the change",
+		"Solid enough, here you go",
+		"Fair play, have a tip",
+		"It hit the spot, here",
+		"Good enough for a tip",
+		"Alright, have something extra",
+		"Not the best, but here's a tip",
+		"Fine work, take this",
+		"You tried, have a little tip",
+	},
+	NPCTippingOvercooked = {
+		"Bit dry, but here's a tip",
+		"Chewy, but you tried. Here",
+		"Tough one, but take this",
+		"A bit much on the grill, here",
+		"I respect the effort, here",
+		"Dry, but I'm feeling generous",
+		"Less time next go. Here, anyway",
+		"Take this, for the effort",
+		"Needs work, but here you go",
+		"Crunchy, but have a tip",
+	},
+
 	-- Heading back out once it's done.
 	NPCLeaving = {
 		"See ya!",
@@ -2010,6 +2054,22 @@ local NpcDialogue = {
 		"I shall recommend you widely",
 		"My palate approves",
 		"I've had far worse for more",
+	},
+
+	-- Mid-eat, leaving a gratuity on top of the haul.
+	RichNPCTipping = {
+		"Do accept a small gratuity",
+		"A little something, chef",
+		"For your trouble, chef",
+		"Splendid. Keep the change",
+		"Marvellous. Take this",
+		"A token of my appreciation",
+		"My compliments, and this",
+		"You've earned a gratuity",
+		"Consider this a small bonus",
+		"Pocket change, but it's yours",
+		"Exquisite. Do take this",
+		"A gem for a gem of a chef",
 	},
 
 	-- Heading back out with the haul.
@@ -2587,6 +2647,22 @@ local NpcDialogue = {
 		"Really tasty",
 		"Mmm, cheers",
 		"That's the one",
+	},
+
+	-- Mid-eat, tipping on the order. Nothing about how right it was, since a partial fill can tip too
+	CustomNPCTipping = {
+		"Yoo this is yummy!",
+		"Worth the wait, have a tip",
+		"Here's a little extra, chef",
+		"Cheers, take this",
+		"You made my day, here",
+		"That's earned you a tip",
+		"Lovely stuff, keep the change",
+		"Have a little something",
+		"Tip for the chef!",
+		"Mmm, here, take this",
+		"Glad I asked. Here you go",
+		"Enjoy a little extra, chef",
 	},
 
 	-- Walking off once it's finished eating

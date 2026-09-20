@@ -5,6 +5,7 @@ local ServerScriptService = game:GetService("ServerScriptService")
 local Managers = ServerScriptService.Server.Managers
 local StickManager = require(Managers.StickManager)
 local IngredientManager = require(Managers.IngredientManager)
+local CurrencyManager = require(Managers.CurrencyManager)
 
 export type Code = {
 	Code: string, -- what the player types, matched case-insensitively
@@ -33,6 +34,14 @@ Codes.Data = {
 			IngredientManager:GrantIngredient(player, "Tomato")
 			IngredientManager:GrantIngredient(player, "Jalapeno")
 			IngredientManager:GrantIngredient(player, "Chicken")
+		end,
+	},
+
+	{
+		Code = "UPDATE1",
+		OnClaimMessage = "Enjoy 50 Gems for the update! 💎",
+		Callback = function(player: Player)
+			CurrencyManager:IncrementGems(player, 50, "Code")
 		end,
 	},
 }

@@ -1,6 +1,8 @@
 return {
 	PlayerDataTemplate = {
 		Currency = 100,
+		-- The second currency, tipped by customers. Never boosted and kept out of TotalEarned -- see docs/player-data.md
+		Gems = 0,
 		TotalPlaytime = 0,
 
 		-- Core Game
@@ -14,7 +16,7 @@ return {
 		Plots = {}, -- [plotId] = true
 
 		-- The build, keyed by a uid minted at placement. Cells and quarter-turns, not poses -- see docs/player-data.md
-		Structures = {}, -- [uid] = { Type, CellX, CellZ, Rotation }
+		Structures = {}, -- [uid] = { Type, CellX, CellZ, Rotation, Hut? }; Hut is a Worker Hut's number, 1 to MAX_HUTS
 		-- The CELL_SIZE those cells were saved under; 4 is what every profile predating this key wrote
 		StructureCellSize = 4,
 		-- Owned but unplaced. Seeded with one of each, since a new player needs both to have a game at all
@@ -27,10 +29,10 @@ return {
 		HutRepairEndsAt = -1,
 		-- The three free workers offered on the first open of a repaired hut; true once one has been taken
 		FreeWorkersClaimed = false,
-		-- Hired employees, keyed by a uid minted at hire. Skill is 0-1, not stars -- see docs/player-data.md
+		-- Hired employees, keyed by a uid minted at hire. Skill is 0-1, not stars; Slot runs across huts, 1-3 hut 1's -- see docs/player-data.md
 		Employees = {}, -- [uid] = { Role, Skill, Body, Name, Cosmetics, Slot?, Carrying?, Load?, HiredAt }
-		-- Hut slots unlocked, counted from slot 1. Bought in order, so 3 means slots 1-3; slot 1 comes with the repair
-		HutSlotsUnlocked = 1,
+		-- Slots unlocked per hut number; a missing entry is 1, the free first. Dense, since a DataStore strings gapped keys -- see docs/player-data.md
+		HutSlots = {}, -- [hutNumber] = slots unlocked in that hut
 		-- The worker board's per-window hires. A stale Seed means the window rolled over, so Hired reads as
 		-- empty. Dense rather than sparse: a DataStore hands integer keys back as strings -- see docs/player-data.md
 		HiringBoard = { Seed = 0, Hired = { false, false, false, false } },
@@ -52,6 +54,11 @@ return {
 		DailyRewardStreak = 0,
 		-- When the last was claimed, absolute on workspace:GetServerTimeNow(); 0 is never, which reads as unlocked
 		LastDailyRewardClaim = 0,
+
+		-- Daily Quests
+		-- The board, rolled RESET_INTERVAL after the last. Count seeds the roll and the worker cards; StartedAt 0 reads as due
+		-- Quests carry their own Target, so a retune can't move a board mid-day -- see docs/player-data.md
+		DailyQuests = { Count = 0, StartedAt = 0, Quests = {}, Reward = false, RewardClaimed = false },
 
 		-- Ingredient Rolling
 		Ingredients = {}, -- [ingredientId] = amount owned
@@ -94,6 +101,10 @@ return {
 		-- The same per-window ledger for structures, with its own Seed since the two shops run separate clocks
 		GrillStandShop = { Seed = 0, Bought = {} }, -- Bought = [structureId] = amount bought this window
 
+		-- Cosmetic Shop
+		-- The same ledger again for the hourly Gems rotation, which runs a clock of its own
+		CosmeticShop = { Seed = 0, Bought = {} }, -- Bought = [structureId] = purchases this rotation
+
 		-- Sell Stall
 		-- When the last rich customer was sent. Wall-clock, so a rejoin can't hand out a fresh one
 		LastRichVisit = 0,
@@ -103,6 +114,8 @@ return {
 		SeenHaggle = false,
 		-- Whether a rich customer has ever visited; the first is given, so meeting one isn't down to luck
 		SeenRichCustomer = false,
+		-- Whether a customer has ever tipped them; the first is given, so Gems get introduced rather than left to luck
+		SeenCustomerTip = false,
 		-- When they last completed a sale, of any kind. Wall-clock; 0 means they never have
 		LastSaleAt = 0,
 		-- When the last checking customer was sent. Wall-clock, so a rejoin can't hand out a fresh one
@@ -116,7 +129,7 @@ return {
 		-- Whether one has ever visited; the first is given the moment they can fill one, not rolled for
 		SeenCustomOrder = false,
 		-- The orders they're part-way through, banked as each is owed and cleared as it resolves -- see docs/player-data.md
-		ActiveCustomOrders = {}, -- [funnelId] = { Phase, Ingredients, StickId, Value, Quote, Seconds, SecondsLeft?, TierIndex, FirstVisit?, FunnelId }
+		ActiveCustomOrders = {}, -- [funnelId] = { Phase, Ingredients, StickId, Value, Quote, Seconds, SecondsLeft?, TierIndex, Rich?, Look?, FirstVisit?, FunnelId }
 		-- The last Rating.ORDER_WINDOW resolved orders, oldest first. Facts rather than a score -- see docs/player-data.md
 		CustomOrderHistory = {},
 
@@ -129,6 +142,10 @@ return {
 
 		-- Group Reward
 		GroupRewardClaimed = false, -- one claim per player, forever; also hides the HUD's Gift button
+
+		-- Update Log
+		-- The Title of the newest update whose log they've had up; "" is none, so a returning player is shown it on join
+		LastSeenUpdateLog = "",
 
 		-- Tutorial
 		-- The onboarding runs once; leaving unfinished wipes gameplay progress on the way out
@@ -146,6 +163,7 @@ return {
 		SticksBought = 0, -- sticks bought from the stick shop, however they were paid for
 		SkewersSauced = 0, -- skewers that came off a dispenser with a flavour on them
 		TotalEarned = 0, -- every dollar ever taken in, boosts included; Currency is only what's left of it
+		TotalGemsEarned = 0, -- the same lifetime total for Gems; 0 for anyone who played before it shipped
 		-- [cookStateId] = lifetime cooks settled there; grows on demand, so a new CookStates entry needs nothing
 		CookStateCounts = {},
 		-- The sell-side counterpart, kept apart because the two diverge -- see docs/player-data.md

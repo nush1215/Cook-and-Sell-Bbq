@@ -20,6 +20,12 @@ EarlyBoost.MAX_TEASE_CHANCE = 7
 -- How far out of reach a teaser must be, measured on Bux held so it tracks someone who just spent.
 EarlyBoost.TEASE_AFFORD_MARGIN = 2
 
+-- What a cook's length is multiplied by early on. Flat, not faded -- it steps back to full length in one go
+EarlyBoost.EARLY_COOK_SCALE = 0.75
+
+-- Lifetime earnings the shorter cook runs out at. Its own, far short of THRESHOLD -- the wait is a first-minutes problem
+EarlyBoost.EARLY_COOK_THRESHOLD = 10_000
+
 -- Lifetime earnings where the boost ends. Sized on where the fade is steepest -- see docs/balance.md.
 EarlyBoost.THRESHOLD = 150_000
 
@@ -44,6 +50,11 @@ end
 -- What the walk-off chance is multiplied by. 1 past THRESHOLD, so a caller can apply it unconditionally.
 function EarlyBoost.GetDeclineScale(totalEarned: number): number
 	return 1 - EarlyBoost.MAX_DECLINE_REDUCTION * (1 - getFade(totalEarned))
+end
+
+-- What a cook's length is multiplied by. 1 past EARLY_COOK_THRESHOLD, so a caller can apply it unconditionally.
+function EarlyBoost.GetCookTimeScale(totalEarned: number): number
+	return if totalEarned < EarlyBoost.EARLY_COOK_THRESHOLD then EarlyBoost.EARLY_COOK_SCALE else 1
 end
 
 -- The teaser chance at `totalEarned`, as a percentage. Zero past THRESHOLD, so a caller can roll it unconditionally.

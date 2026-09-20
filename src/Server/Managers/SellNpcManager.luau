@@ -1,7 +1,6 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local ServerStorage = game:GetService("ServerStorage")
-local TweenService = game:GetService("TweenService")
 local HttpService = game:GetService("HttpService")
 local Players = game:GetService("Players")
 
@@ -29,13 +28,16 @@ local Employees = require(Shared.Config.Employees)
 local CookStates = require(Shared.Config.CookStates)
 local EarlyBoost = require(Shared.Config.EarlyBoost)
 
+-- Managers
+local CustomerTipManager = require(script.Parent.CustomerTipManager)
+
 -- Assets
 local RichNpcFolder = ServerStorage.Assets.RichNPC
 local RichUiTemplate = ReplicatedStorage.Assets.UI.RichUI
 local RichParticlesTemplate = ReplicatedStorage.Assets.Particles.RichParticles
 local WizardNpcTemplate = ServerStorage.Assets.Wizard
 
-local RICH_LABEL = `<font color="#ffd400">RICH</font>`
+local RICH_LABEL = RichNpc.LABEL
 local WIZARD_LABEL = `<font color="#b57bff">WIZARD</font>`
 
 -- A pool rather than one string, since this fires on every offer until the refusals decay
@@ -77,7 +79,7 @@ local SellNpcManager = {
 	NpcOfferResponseEvent = Network.Event("NpcOfferResponse"),
 	NpcSayEvent = Network.Event("NpcSay"),
 
-	-- (player, offer, skewerRecords, customerType, byEmployee) once a customer's offer is taken and paid out; byEmployee is whether their seller gave the final answer
+	-- (player, offer, skewerRecords, customerType, byEmployee, counterRounds) once a customer's offer is taken and paid out; byEmployee is whether their seller gave the final answer
 	OnSaleCompleted = Signal.new(),
 	-- (player, offer, skewerRecords, customerType, reason, byEmployee) on a leave; reason is "Declined" or "TimedOut"
 	OnSaleDeclined = Signal.new(),
@@ -106,9 +108,11 @@ local function validatePlayer(player: Player): boolean
 	return player:IsDescendantOf(Players) and player:GetAttribute("BaseId") ~= nil
 end
 
--- Clones a random rich rig with its badge and particles. Not pooled -- each is its own character.
-function SellNpcManager:_acquireRichNpc(): Model
-	local npc = RandomUtil.GetRandomFromArray(RichNpcFolder:GetChildren(), nil, self._rng):Clone()
+-- Clones a rich rig with its badge and particles: the one named `name` if it's still there, else a random one. Not pooled -- each is its own character, so it's destroyed on the way out.
+function SellNpcManager:AcquireRichNpc(name: string?): Model
+	local template = name and RichNpcFolder:FindFirstChild(name)
+		or RandomUtil.GetRandomFromArray(RichNpcFolder:GetChildren(), nil, self._rng)
+	local npc = template:Clone()
 	CollisionManager:SetModelGroup(npc, CollisionManager.NPC)
 
 	-- Whole or not at all: under default mode the tag lands on the client long before the head the billboards hang off
@@ -310,37 +314,6 @@ function SellNpcManager:_despawnNpc(player: Player, record)
 		if index then
 			table.remove(tracked, index)
 		end
-	end
-end
-
--- Fades the skewer's ingredients out in order over `duration`, so the food looks eaten off the stick.
-function SellNpcManager:_eatSkewerIngredients(skewer: Model, duration: number)
-	local ingredients = {}
-	for _, child in skewer:GetChildren() do
-		if child:GetAttribute("SkewerIndex") then
-			table.insert(ingredients, child)
-		end
-	end
-	table.sort(ingredients, function(a, b)
-		return a:GetAttribute("SkewerIndex") < b:GetAttribute("SkewerIndex")
-	end)
-
-	if #ingredients == 0 then
-		task.wait(duration)
-		return
-	end
-
-	local slice = duration / #ingredients
-	local fadeInfo = TweenInfo.new(slice)
-	for _, ingredient in ingredients do
-		for _, descendant in ingredient:GetDescendants() do
-			if descendant:IsA("BasePart") or descendant:IsA("Decal") then
-				TweenService:Create(descendant, fadeInfo, { Transparency = 1 }):Play()
-			elseif descendant:IsA("ParticleEmitter") then
-				descendant.Enabled = false
-			end
-		end
-		task.wait(slice)
 	end
 end
 
@@ -714,7 +687,7 @@ function SellNpcManager:_negotiateSale(
 	record.skewerRecords = nil
 
 	StatsManager:RecordSaleCompleted(player, soldRecords)
-	self.OnSaleCompleted:Fire(player, offer, soldRecords, customerType, record.answeredByEmployee == true)
+	self.OnSaleCompleted:Fire(player, offer, soldRecords, customerType, record.answeredByEmployee == true, counterRounds)
 
 	-- Down here because it yields, which is only safe once the record's skewers are cleared
 	self:ForgiveSaleRefusal(player)
@@ -734,11 +707,11 @@ function SellNpcManager:_negotiateSale(
 	})
 	self.NpcSayEvent:FireAllClients(npc, `{prefix}PlayerAccepted`)
 
-	self:_eatAndLeave(player, npc, record, humanoid, spawnPart, standPosition, prefix)
+	self:_eatAndLeave(player, npc, record, humanoid, spawnPart, standPosition, prefix, soldRecords)
 	return true
 end
 
--- Walks a customer that bought to an eat spot, eats what it holds, then walks it out and despawns it.
+-- Walks a customer that bought to an eat spot, eats what it holds, then walks it out and despawns it. `soldRecords` is what it paid for, which a tip rolls on.
 function SellNpcManager:_eatAndLeave(
 	player: Player,
 	npc: Model,
@@ -746,7 +719,8 @@ function SellNpcManager:_eatAndLeave(
 	humanoid: Humanoid,
 	spawnPart: BasePart,
 	standPosition: Vector3,
-	prefix: string
+	prefix: string,
+	soldRecords: { StickModel.StickRecord }?
 )
 	NpcRig.WalkTo(humanoid, NpcRig.GetEatPosition(spawnPart, standPosition, self._rng))
 	if npc.Parent == nil then
@@ -759,9 +733,16 @@ function SellNpcManager:_eatAndLeave(
 	NpcRig.PlayAnimation(record, "Eat", self._rng)
 	self.NpcSayEvent:FireAllClients(npc, `{prefix}Eating`)
 
+	-- Never in the tutorial, whose beats a tip would talk over. The wizard paid in luck, so it passes nothing sold
+	if soldRecords and not self._guaranteed[player] then
+		CustomerTipManager:RollSaleTip(player, npc, soldRecords, function()
+			self.NpcSayEvent:FireAllClients(npc, `{prefix}Tipping`)
+		end)
+	end
+
 	-- A rich customer only built the skewer it holds; the rest of its haul it just carries off
 	if record.skewerModel then
-		self:_eatSkewerIngredients(record.skewerModel, SellNpc.EAT_DURATION)
+		NpcRig.EatSkewerIngredients(record.skewerModel, SellNpc.EAT_DURATION)
 	else
 		task.wait(SellNpc.EAT_DURATION)
 	end
@@ -873,7 +854,7 @@ function SellNpcManager:_spawnRichCustomer(player: Player, firstVisit: boolean?)
 	-- The ordinary customers' slot allocator, so a rich one lines up beside them rather than inside them.
 	local slot, standPosition = NpcRig.ClaimStandPosition(player, spawnPart, standPart)
 
-	local npc = self:_acquireRichNpc()
+	local npc = self:AcquireRichNpc()
 	local humanoid = npc:FindFirstChildOfClass("Humanoid")
 
 	-- Tracked before anything yields, so the roll, cleanup and guarded-visit release all see it

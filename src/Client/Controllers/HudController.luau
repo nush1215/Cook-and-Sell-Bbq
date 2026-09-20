@@ -59,6 +59,14 @@ local HIDE_HUD_FOR_UI = {
 		"BottomRight",
 	},
 
+	QuestsUI = {
+		"Top",
+		"Left",
+		"Right",
+		"BottomLeft",
+		"BottomRight",
+	},
+
 	ShopUI = {
 		"Top",
 		"Left",
@@ -84,14 +92,16 @@ local HIDE_HUD_FOR_UI = {
 	},
 }
 
--- Frames that come down on their own while a UI is open. The shop keeps Currency, which is what a Bux browser is watching
+-- Frames that come down on their own while a UI is open. The shop keeps Currency, which is what a Bux browser is watching; nothing there costs Gems
 local HIDE_IN_BOTTOM_LEFT = {
 	ShopUI = {
 		"FriendBoost",
+		"Gems",
 	},
 
 	HireEmployeeUI = {
 		"FriendBoost",
+		"Gems",
 	},
 }
 
@@ -245,6 +255,39 @@ function HudController:SetHudFrameHiddenFor(owner: any, frameName: string, hidde
 
 	self._hudFrameHideOwners[hudFrame] = nil
 	self:_setHudFrameHidden(hudFrame, false, true)
+end
+
+-- SetHudFrameHiddenFor's twin for a frame inside BottomLeft, which comes down on its own rather than sliding off with the rest.
+function HudController:SetBottomLeftFrameHiddenFor(owner: any, frameName: string, hidden: boolean)
+	local bottomLeftFrame = self.UI.BottomLeft:FindFirstChild(frameName)
+	if not bottomLeftFrame then
+		return
+	end
+
+	local owners = self._bottomLeftFrameHideOwners[bottomLeftFrame]
+
+	if hidden then
+		if not owners then
+			owners = {}
+			self._bottomLeftFrameHideOwners[bottomLeftFrame] = owners
+		end
+
+		owners[owner] = true
+		bottomLeftFrame.Visible = false
+		return
+	end
+
+	if not owners or not owners[owner] then
+		return
+	end
+
+	owners[owner] = nil
+	if next(owners) then
+		return
+	end
+
+	self._bottomLeftFrameHideOwners[bottomLeftFrame] = nil
+	bottomLeftFrame.Visible = true
 end
 
 -- The configured position for a HUD frame, or an inferred offscreen hide position.
