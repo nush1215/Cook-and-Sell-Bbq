@@ -3,6 +3,10 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
+-- Shared
+local Shared = ReplicatedStorage.Shared
+local Structures = require(Shared.Config.Structures)
+
 -- Assets
 local Assets = ReplicatedStorage.Assets
 
@@ -182,15 +186,7 @@ end
 
 -- Huts owned, placed or still in the backpack: what MAX_HUTS caps, and which hut numbers can be equipped into.
 function EmployeeHut.CountOwnedHuts(data): number
-	local count = data.OwnedStructures[EmployeeHut.STRUCTURE_ID] or 0
-
-	for _, placed in data.Structures do
-		if placed.Type == EmployeeHut.STRUCTURE_ID then
-			count += 1
-		end
-	end
-
-	return count
+	return Structures.CountOwned(data, EmployeeHut.STRUCTURE_ID)
 end
 
 -- The lowest hut number no placed hut holds, or nil once MAX_HUTS are down. Lowest first, so a lone hut moved gets its own back.

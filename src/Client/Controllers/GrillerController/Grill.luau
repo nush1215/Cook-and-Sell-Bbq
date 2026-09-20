@@ -1101,9 +1101,10 @@ function Grill:RefreshInteraction()
 	end
 
 	-- Owner only and locked through the tutorial. Not a second stop -- it buys the result outright
-	-- Only over a live bar, and held off for the tutorial's whole run
+	-- Only over a raw bar -- past the band it's cooked already, so there's nothing left to buy out
 	if self._skipCookPrompt then
 		self._skipCookPrompt.Enabled = self._cookingUI ~= nil
+			and self._cookingState == "Raw"
 			and not GrillerController:IsSkipLocked()
 			and self._cookTime >= SKIP_MIN_COOK_TIME
 	end

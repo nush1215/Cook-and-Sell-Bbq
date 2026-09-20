@@ -149,7 +149,10 @@ function CosmeticShopManager:PurchaseCosmetic(player: Player, structureId: strin
 		end
 	end
 
-	local canAfford = CurrencyManager:CanAfford(player, offer.Price, "Gems")
+	-- Only known once we know how many they have, since every copy bought raises the next one's price
+	local price = CosmeticShop.GetPrice(offer, data)
+
+	local canAfford = CurrencyManager:CanAfford(player, price, "Gems")
 	if not canAfford then
 		self._purchasing[player] = nil
 		NotificationManager:NotifyNormal(player, {
@@ -161,10 +164,10 @@ function CosmeticShopManager:PurchaseCosmetic(player: Player, structureId: strin
 		return false
 	end
 
-	CurrencyManager:DeductGems(player, offer.Price, "CosmeticPurchase")
+	CurrencyManager:DeductGems(player, price, "CosmeticPurchase")
 	BuildManager:GrantStructure(player, structureId, offer.Amount)
 	PlayerDataManager:SetPlayerDataKey(player, { "CosmeticShop", "Bought", structureId }, bought + 1)
-	self.OnCosmeticPurchased:Fire(player, structureId, offer.Price, tier.Id)
+	self.OnCosmeticPurchased:Fire(player, structureId, price, tier.Id)
 
 	self._purchasing[player] = nil
 

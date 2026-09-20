@@ -149,7 +149,7 @@ return {
 
 		-- Tutorial
 		-- The onboarding runs once; leaving unfinished wipes gameplay progress on the way out
-		TutorialCompleted = true,
+		TutorialCompleted = false,
 		-- Furthest funnel step reached, for analytics only. An index into that variant's own funnel
 		TutorialStep = 0,
 

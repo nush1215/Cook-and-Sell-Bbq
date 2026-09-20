@@ -34,9 +34,9 @@ CustomOrderNpc.SEAT_COOLDOWN_MIN = 60
 -- Seconds a seated customer spends eating, where a standing one takes SellNpc.EAT_DURATION
 CustomOrderNpc.SEATED_EAT_DURATION = 15
 
--- Chance out of 100 a visit is a rich customer, plus every placed table's RichChanceBonus, up to the max
-CustomOrderNpc.RICH_CHANCE = 10
-CustomOrderNpc.RICH_CHANCE_MAX = 40
+-- Chance out of 100 a visit is a rich customer. 0, so only a placed table's RichChanceBonus draws one, up to the max
+CustomOrderNpc.RICH_CHANCE = 0
+CustomOrderNpc.RICH_CHANCE_MAX = 50
 
 -- What a rich customer asks for, out of 100. Rare and up only: a tier missing here is never asked for
 CustomOrderNpc.RICH_TIER_WEIGHTS = {
@@ -47,6 +47,10 @@ CustomOrderNpc.RICH_TIER_WEIGHTS = {
 
 -- Added to a rich order's premium and its cap, kept small since the Rare+ recipe already carries the value
 CustomOrderNpc.RICH_MULTIPLIER_BONUS = 0.1
+
+-- The leeway a rich order gets instead of the pair below, so its premium is paid for in pace rather than given
+CustomOrderNpc.RICH_LEEWAY_BASE = 60
+CustomOrderNpc.RICH_LEEWAY_PER_INGREDIENT = 30
 
 -- The two ways a visit opens. Named rather than a boolean, so the command bar can ask for one by name
 CustomOrderNpc.VARIATIONS = {

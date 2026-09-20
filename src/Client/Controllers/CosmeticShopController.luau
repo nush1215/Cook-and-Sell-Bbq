@@ -71,7 +71,8 @@ function CosmeticShopController:_refreshSlots()
 	end
 
 	-- A ledger from an older rotation reads as nothing bought yet, the same as the server treats it
-	local ledger = PlayerDataController:GetKey("CosmeticShop")
+	local data = PlayerDataController:GetData()
+	local ledger = data.CosmeticShop
 	local bought = if ledger.Seed == self._replica.Data.Seed then ledger.Bought else {}
 
 	for tierId, frameNames in TIER_SLOTS do
@@ -112,7 +113,7 @@ function CosmeticShopController:_refreshSlots()
 			end
 
 			frame.Stocks.Text = `x{CosmeticShop.STOCK - (bought[structureId] or 0)} Stock`
-			frame.GemsPurchase.Holder.Amount.Text = GuiUtil.ConvertNumberWithSuffix(offer.Price)
+			frame.GemsPurchase.Holder.Amount.Text = GuiUtil.ConvertNumberWithSuffix(CosmeticShop.GetPrice(offer, data))
 		end
 	end
 end
@@ -192,6 +193,11 @@ function CosmeticShopController:OnStart()
 		self:_refreshSlots()
 
 		PlayerDataController:ListenForChange("CosmeticShop", function()
+			self:_refreshSlots()
+		end)
+
+		-- Every grant lands here, and a climbing offer's price is only right against what they own
+		PlayerDataController:ListenForChange("OwnedStructures", function()
 			self:_refreshSlots()
 		end)
 	end)

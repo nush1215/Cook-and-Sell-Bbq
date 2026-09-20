@@ -42,7 +42,8 @@ export type Structure = {
 	CookInstability: number?, -- how far this grill's cook rate swings either side of 1, or nil for steady.
 	-- Costs no cook time -- it removes the ability to time the window, not to reach it. Held under MAX_INSTABILITY
 	CustomerPayoutMultiplier: number?, -- table-only: what a custom order seated here pays, times its graded payout
-	RichChanceBonus: number?, -- table-only: added per placed copy to CustomOrderNpc.RICH_CHANCE, out of 100
+	RichChanceBonus: number?, -- table-only: what the first placed copy adds to CustomOrderNpc.RICH_CHANCE, out of 100
+	RichChanceExtraBonus: number?, -- table-only: what each copy past the first adds, the smaller top-up on the draw
 	Footprint: Footprint?, -- grid cells occupied; derived from the model's Hitbox when absent
 	Flat: boolean?, -- lies on the ground like a path: it only blocks other Flat pieces, so anything builds over it
 	Model: Model, -- not authored below, back-filled from Assets.Structures
@@ -529,7 +530,8 @@ Structures.Data = {
 		StrokeColor = Color3.fromRGB(60, 30, 90),
 		Rarity = "Epic",
 		Restockable = false,
-		RichChanceBonus = 15,
+		RichChanceBonus = 25,
+		RichChanceExtraBonus = 5,
 	},
 
 	{
@@ -776,6 +778,19 @@ end
 function Structures.IsCategory(typeId: string, category: string): boolean
 	local structure = Structures.GetStructureFromId(typeId)
 	return structure ~= nil and structure.Category == category
+end
+
+-- How many of a structure a player has, placed or still in the backpack.
+function Structures.CountOwned(data, structureId: string): number
+	local count = data.OwnedStructures[structureId] or 0
+
+	for _, placed in data.Structures do
+		if placed.Type == structureId then
+			count += 1
+		end
+	end
+
+	return count
 end
 
 -- Cells taken once turned, which is what actually gets reserved. A quarter-turn swaps the two.

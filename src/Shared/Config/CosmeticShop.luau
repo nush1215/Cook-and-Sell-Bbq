@@ -10,7 +10,10 @@ local Structures = require(Shared.Config.Structures)
 --
 export type Offer = {
 	Id: string, -- a Structures id, which is what a purchase grants
-	Price: number, -- Gems per purchase
+	Price: number, -- Gems for the first one bought here
+	PriceStep: number?, -- Gems the price climbs per copy already bought, nil for one that never moves
+	PriceMultiplier: number?, -- what the price is multiplied by per copy already bought, nil for one that never moves
+	FreeCopies: number?, -- copies handed over outside the shop (the repaired hut), which the climb doesn't count
 	Amount: number?, -- how many one purchase grants, nil for one. Read as "x3 Name" wherever it's shown
 	Weight: number, -- this offer's share of its tier's draws
 }
@@ -34,10 +37,10 @@ CosmeticShop.Tiers = {
 		Id = "Featured",
 		Slots = 1,
 		Offers = {
-			-- The goal the shop saves toward: a hut is another free worker slot and room to buy two more
-			{ Id = "RepairedHut", Price = 2_500, Weight = 1 },
-			-- Rich orders, and their bigger tips, on top of its two seats; two tables reach RICH_CHANCE_MAX
-			{ Id = "FancyTable", Price = 1_200, Weight = 1 },
+			-- The goal the shop saves toward: a hut is another free worker slot and room to buy two more. Doubles per hut, the repaired one aside, so the third is the real ask
+			{ Id = "RepairedHut", Price = 550, PriceMultiplier = 2, FreeCopies = 1, Weight = 1 },
+			-- The only draw for rich orders, and their bigger tips, on top of its two seats; six tables reach RICH_CHANCE_MAX, each 100 dearer than the last
+			{ Id = "FancyTable", Price = 600, PriceStep = 100, Weight = 1 },
 		},
 	},
 
@@ -114,6 +117,14 @@ function CosmeticShop.GetOffer(structureId: string): (Offer?, Tier?)
 	end
 
 	return nil, nil
+end
+
+-- What one more costs that player: the base price climbed by every copy they already bought here, so each is dearer than the last.
+function CosmeticShop.GetPrice(offer: Offer, data): number
+	local bought = math.max(0, Structures.CountOwned(data, offer.Id) - (offer.FreeCopies or 0))
+	local price = (offer.Price + (offer.PriceStep or 0) * bought) * (offer.PriceMultiplier or 1) ^ bought
+
+	return math.floor(price)
 end
 
 -- An offer as the shop names it: "x3 Medium Dirt Path" for a bundle, the plain name for one.

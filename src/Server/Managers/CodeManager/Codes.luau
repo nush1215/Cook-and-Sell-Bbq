@@ -41,7 +41,7 @@ Codes.Data = {
 		Code = "UPDATE1",
 		OnClaimMessage = "Enjoy 250 Gems for the update! 💎",
 		Callback = function(player: Player)
-			CurrencyManager:IncrementGems(player, 250, "Code")
+			CurrencyManager:IncrementGems(player, 100, "Code")
 		end,
 	},
 }

@@ -296,6 +296,12 @@ function CustomOrderNpcManager:_buildOrder(data, rich: boolean?)
 	-- GetTotalCookTime is ingredient seconds; the bar runs that over RAW_END, so the clock has to as well
 	local cookSeconds = Ingredients.GetTotalCookTime(ids) / CookStates.RAW_END
 
+	-- A rich one is given less of everything the cook itself doesn't take, so the bigger payout is earned
+	local leewayBase = if rich then CustomOrderNpc.RICH_LEEWAY_BASE else CustomOrderNpc.LEEWAY_BASE
+	local leewayPerIngredient = if rich
+		then CustomOrderNpc.RICH_LEEWAY_PER_INGREDIENT
+		else CustomOrderNpc.LEEWAY_PER_INGREDIENT
+
 	-- The plain worth of a perfect exact fill, which both the quote and the badge beside it come off
 	local value = getReferenceValue(stick, ids)
 
@@ -305,7 +311,7 @@ function CustomOrderNpcManager:_buildOrder(data, rich: boolean?)
 		StickId = stick.Id,
 		Value = value,
 		Quote = math.round(value * multiplier),
-		Seconds = math.round(cookSeconds + CustomOrderNpc.LEEWAY_BASE + CustomOrderNpc.LEEWAY_PER_INGREDIENT * slots),
+		Seconds = math.round(cookSeconds + leewayBase + leewayPerIngredient * slots),
 		TierIndex = tierIndexTotal / slots,
 		Rich = rich or nil,
 	}
@@ -326,7 +332,8 @@ local function restoreOrder(saved)
 	}
 end
 
--- What the player's waiting orders still need between them, so the rolling stand knows what to steer toward.
+-- What the player's waiting orders still need between them, one entry per unit short, so the rolling stand
+-- knows what to steer toward and how many of it.
 function CustomOrderNpcManager:GetMissingOrderIngredients(player: Player, data): { string }
 	-- Summed, so two orders wanting the same ingredient keep steering until there's one for each
 	local wanted = {}
@@ -346,7 +353,7 @@ function CustomOrderNpcManager:GetMissingOrderIngredients(player: Player, data):
 
 	local missing = {}
 	for id, needed in wanted do
-		if (toHand[id] or 0) < needed then
+		for _ = 1, needed - (toHand[id] or 0) do
 			table.insert(missing, id)
 		end
 	end
@@ -994,11 +1001,14 @@ end
 -- The chance out of 100 that a visit is a rich customer: the base chance plus every placed table that draws them.
 function CustomOrderNpcManager:GetRichChance(data): number
 	local chance = CustomOrderNpc.RICH_CHANCE
+	local counted = {}
 
 	for _, placed in data.Structures do
 		local structure = Structures.GetStructureFromId(placed.Type)
 		if structure and structure.RichChanceBonus then
-			chance += structure.RichChanceBonus
+			-- The first copy is the draw and every one after it only tops up, so a second table can't double the rate
+			chance += if counted[placed.Type] then structure.RichChanceExtraBonus else structure.RichChanceBonus
+			counted[placed.Type] = true
 		end
 	end
 

@@ -524,6 +524,18 @@ function GrillerManager:PromptSkipCookProduct(player: Player, uid: string)
 		return
 	end
 
+	-- Past raw the skewer is cooked already, so a skip would buy nothing -- the prompt is down by then
+	local _, state = self:SettleCookRecord(data, uid, record, workspace:GetServerTimeNow())
+	if state ~= "Raw" then
+		NotificationManager:NotifyNormal(player, {
+			Text = "That BBQ is already cooked",
+			Duration = 3,
+			Sound = "Reject",
+		})
+		self._skipping[player] = nil
+		return
+	end
+
 	self._pendingSkipCookUid[player] = uid
 	ShopManager:AttemptProductPurchase(player, SKIP_COOK_PRODUCT)
 

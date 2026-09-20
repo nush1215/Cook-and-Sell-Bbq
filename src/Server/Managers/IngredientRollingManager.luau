@@ -221,11 +221,7 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 	local pity = table.clone(data.Pity)
 
 	-- What the live custom orders still want between them. A steer rather than a reweighting, so the labels stay the odds
-	local wanted = {}
 	local wantedIds = CustomOrderNpcManager:GetMissingOrderIngredients(player, data)
-	for _, id in wantedIds do
-		wanted[id] = true
-	end
 
 	-- Carried across pulls, so a wide base reaches the guarantee in rolls rather than in lever pulls
 	local orderRolls = self._orderRolls[player] or 0
@@ -267,8 +263,14 @@ function IngredientRollingManager:RollIngredientsForPlayer(player: Player): (num
 			teasedStandId = standId
 		end
 
+		-- Struck off as it lands, so the rest of the pull can't be steered at a want this stand just covered
+		local wantedIndex = table.find(wantedIds, ingredientId)
+		if wantedIndex then
+			table.remove(wantedIds, wantedIndex)
+		end
+
 		-- Counted off what landed, as the tier counters are, so the forced roll resets its own guarantee
-		orderRolls = if wanted[ingredientId] then 0 else orderRolls + 1
+		orderRolls = if wantedIndex then 0 else orderRolls + 1
 
 		-- Counted off what landed, so a pity payout resets its own counter. A teaser counts up but resets nothing
 		local landedIndex = Ingredients.GetIngredientFromId(ingredientId).Tier.Index

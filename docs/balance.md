@@ -633,7 +633,8 @@ deliberate: pricing off the delivered stick would let an order go unfulfillable.
 
 ### The clock
 
-`Ingredients.GetTotalCookTime(ids) / CookStates.RAW_END + LEEWAY_BASE + LEEWAY_PER_INGREDIENT * slots`.
+`Ingredients.GetTotalCookTime(ids) / CookStates.RAW_END + LEEWAY_BASE + LEEWAY_PER_INGREDIENT * slots`,
+where a rich order swaps the pair for `RICH_LEEWAY_BASE` and `RICH_LEEWAY_PER_INGREDIENT`.
 
 The division is not optional: `GetTotalCookTime` is *ingredient* seconds and the bar runs that over
 `RAW_END`, exactly as `GrillerManager:StartCookRecord` does it. A clock built on the undivided figure
@@ -643,6 +644,9 @@ The leeway is split because the two costs scale differently: `LEEWAY_BASE` cover
 the trip to a grill however big the order is, while `LEEWAY_PER_INGREDIENT` covers rolling for and
 claiming each slot, which is per-ingredient by nature. A 3-slot order with a Rare in it lands around
 `5m 20s`.
+
+A rich order gets two thirds of both (60 and 30), never less cooking time -- the Rare+ cook is untouched,
+only the slack around it. A 3-Rare order goes from `10m 21s` to `9m 6s`: its premium is paid for in pace.
 
 ### Biasing the rolls
 
@@ -674,7 +678,9 @@ the server seats customers with `Seat:Sit`.
 - **Golden Table.** `CustomerPayoutMultiplier` 1.2: the graded payout is multiplied by it for a customer
   that waited there, and the toast names the table. The offer card still shows the plain quote, since the
   seat is only claimed on accept.
-- **Fancy Table.** `RichChanceBonus` 15, added per placed copy to `RICH_CHANCE`.
+- **Fancy Table.** `RichChanceBonus` 25 for the first placed copy and `RichChanceExtraBonus` 5 for each one
+  after, added to `RICH_CHANCE`, which is 0: no Fancy Table, no rich customer. It is also the seat a rich
+  one heads for.
 
 **Free seats bring customers faster.** Each seat no customer has claimed adds `SEAT_SPAWN_CHANCE_STEP` to
 `SPAWN_CHANCE`, up to `SEAT_SPAWN_CHANCE_MAX_BONUS`, and takes `SEAT_COOLDOWN_STEP` seconds off `COOLDOWN`,
@@ -690,14 +696,19 @@ present one is waiting for its BBQ.
 
 ### The rich customer
 
-A visit is rich on a `RICH_CHANCE` roll (10), plus every placed table's `RichChanceBonus`, capped at
-`RICH_CHANCE_MAX` (40). Never the introduction order.
+`RICH_CHANCE` is 0, so a visit is only rich off a placed table's `RichChanceBonus` -- a base without a Fancy
+Table never draws one. The first adds 25 and each one after it 5, capped at `RICH_CHANCE_MAX` (50), so one
+table is 25% and every one after is another 5 up to six tables. The first copy is the step that matters and
+the rest are a slow climb, so owning one is the draw and stacking them is the long game. Never the
+introduction order.
 
 - **What it asks for.** Tiers off `RICH_TIER_WEIGHTS` only (Rare, Epic, Legendary), with the same reach rule
   as any order. A tier with nothing reachable steps down, then up, but never below Rare. If nothing Rare or
   better is in reach, the visit is an ordinary one instead.
 - **What it pays.** The ordinary quote, with `RICH_MULTIPLIER_BONUS` (0.1) added to the premium and its cap.
   Its Rare+ recipe already makes it the biggest order a player sees, so the premium only nudges it.
+- **How long it gets.** `RICH_LEEWAY_BASE` (60) and `RICH_LEEWAY_PER_INGREDIENT` (30) in place of the
+  ordinary 90 and 45. The counterweight to how often a table draws one: the same order, on a tighter clock.
 - **What it looks like.** A `ServerStorage.Assets.RichNPC` rig with `RichUI` and `RichParticles`, shared with
   the stand's rich customer. It speaks the ordinary `CustomNPC*` lines.
 - **Daily quests.** Delivering one counts toward `ServeRichCustomer`.
@@ -723,6 +734,7 @@ A visit is rich on a `RICH_CHANCE` roll (10), plus every placed table's `RichCha
 | `SEAT_SPAWN_CHANCE_*` / `SEAT_COOLDOWN_*` | tables flood the base with orders | seats stop mattering to pace |
 | `SEATED_EAT_DURATION` | seats stay taken longer, slowing the next | the seated beat is over before the tip lands |
 | `RICH_CHANCE` / `RICH_CHANCE_MAX` | rich orders are routine | the Fancy Table barely shows |
+| `RICH_LEEWAY_*` | a rich order is just a bigger ordinary one | the premium can't be collected |
 | `RICH_TIER_WEIGHTS` | rich orders lean Legendary | every rich order is Rare |
 | `RICH_MULTIPLIER_BONUS` | rich orders outpay everything | only the recipe makes them rich |
 
@@ -952,10 +964,17 @@ this config only says what each tier offers and what it costs.
   anything off another's shop.
 - **Bundles.** An offer's `Amount` is how many one purchase hands over: paths come x3 and fences x2, read as
   "x3 Medium Dirt Path". Stock counts purchases, not structures.
+- **Prices that climb.** Both Featured offers cost more every time one is bought. `PriceStep` adds a flat amount per
+  copy and `PriceMultiplier` multiplies by one, counted off how many that player owns (`Structures.CountOwned`,
+  placed or in the backpack) less any `FreeCopies` the shop never sold them. The Fancy Table is 600 and climbs 100 a
+  copy; the Worker Hut is 550 and doubles, with `FreeCopies` 1 so the repaired one isn't charged for. Both huts
+  together come to 1,650 and six Fancy Tables to 5,100. Nothing else moves. A structure taken down goes back to the
+  backpack rather than being sold, so the count can't be walked back for a cheap one.
 - **Worker Hut.** Refused until the broken hut is repaired, since the repaired one always counts as one of
-  `EmployeeHut.MAX_HUTS` (3). Refused again once they own 3, placed or in the backpack. Every hut's first slot is
-  free, and slots 2 and 3 are bought per hut in Bux from that hut's row of `EmployeeHut.SLOT_PRICES` — see `HutSlots`
-  in `docs/player-data.md`. Later huts cost far more to fill, since a player only reaches them well into the game:
+  `EmployeeHut.MAX_HUTS` (3). Refused again once they own 3, placed or in the backpack. The shop only ever sells the
+  two after the repaired one, at 550 Gems and then 1,100. Every hut's first slot is free, and slots 2 and 3 are
+  bought per hut in Bux from that hut's row of `EmployeeHut.SLOT_PRICES` — see `HutSlots` in `docs/player-data.md`.
+  Later huts cost far more to fill, since a player only reaches them well into the game:
 
   | Hut | Slot 1 | Slot 2 | Slot 3 | To fill |
   |---|---|---|---|---|
@@ -972,7 +991,7 @@ early, ~330 mid and ~490 late (see Selling — customer tips). They're placehold
   - **Tables** are priced by their seats. Each free seat speeds custom orders up, 6 and 12 seats open a third and fourth order at once, and a
   seated order tips surer and bigger (a Perfect one certain at 20–30 Gems, against 85% at 15–20 standing). That's
   about +10 Gems an order, so a first table pays for itself in Gems inside an hour or two.
-  - The **Golden Table** makes seated orders pay 1.2x, the **Fancy Table** adds rich visits (two reach the cap), and the
+  - The **Golden Table** makes seated orders pay 1.2x, the **Fancy Table** adds rich visits (six reach the cap), and the
   **Worker Hut** is another free worker slot with room to buy two more — the goal the shop is saved toward.
 - **What's only looks stays cheap.** Paths, fences, the light, the parasol and both canopies can be bought on a
   whim, so nobody has to choose between decorating and getting ahead. The canopies sit in the Great tier but are
@@ -984,8 +1003,8 @@ The plain tables cost **60 Gems a seat**, so twelve seats (the fourth concurrent
 
 | Kind | Offer | Seats | Per buy | Gems | Time at mid |
 |---|---|---|---|---|---|
-| Earns | Worker Hut (Featured) | — | x1 | 2,500 | ~7.5 h (~5 h late) |
-| Earns | Fancy Table (Featured) | 2 | x1 | 1,200 | ~3.5 h |
+| Earns | Worker Hut (Featured) | — | x1 | 550, then 1,100 | ~1.7 h, then ~3.3 h |
+| Earns | Fancy Table (Featured) | 2 | x1 | 600, +100 a copy (to 1,100 at the sixth) | ~1.8 h, to ~3.3 h |
 | Earns | Golden Table | 2 | x1 | 1,000 | ~3 h |
 | Earns | Large Wooden Table | 6 | x1 | 360 | ~1.1 h |
 | Earns | Medium Wooden Table | 4 | x1 | 240 | ~45 min |
