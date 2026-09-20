@@ -8,6 +8,7 @@ local Players = game:GetService("Players")
 -- Packages
 local Packages = ReplicatedStorage.Packages
 local Trove = require(Packages.Trove)
+local Signal = require(Packages.Signal)
 local Spr = require(Packages.Spr)
 
 -- Shared
@@ -138,9 +139,20 @@ local BuildController = {
 	PlaceStructureEvent = Network.Event("PlaceStructure"),
 	RemoveStructureEvent = Network.Event("RemoveStructure"),
 
+	-- (structureId) when a structure tool raises its ghost, and () when that ghost comes down
+	OnPlacementStarted = Signal.new(),
+	OnPlacementEnded = Signal.new(),
+	-- (refusal: string?) when the ghost's verdict changes; nil is a spot it can go down on
+	OnGhostRefusalChanged = Signal.new(),
+	-- (refusal: string?) per place press past the debounce; nil means the request was sent
+	OnPlaceAttempted = Signal.new(),
+	OnGhostRotated = Signal.new(),
+
 	_floors = {}, -- the floor of every plot the player owns, which is what the ghost's ray is aimed at
 	_ground = nil, -- GridUtil.Ground?, the cells those floors add up to; nil before a base is handed over
 	_lastPlaceTime = 0,
+
+	_reportedRefusal = false, -- the verdict OnGhostRefusalChanged last fired with; false is none yet this placement
 
 	_placeCategory = nil, -- while set, only this category may go down (see SetPlaceCategory)
 	_placeRefusal = nil, -- what a ghost held off by that lock says when clicked
@@ -483,6 +495,16 @@ function BuildController:_getFacingRotation(ground: GridUtil.Ground, spot: Vecto
 	return (math.round(math.atan2(-toPlayer.X, -toPlayer.Z) / (math.pi / 2)) - FACING_FRONT_OFFSET) % 4
 end
 
+-- Records the ghost's verdict, firing only when it changes so a listener sees transitions rather than frames.
+function BuildController:_setRefusal(refusal: string?)
+	self._refusal = refusal
+
+	if refusal ~= self._reportedRefusal then
+		self._reportedRefusal = refusal
+		self.OnGhostRefusalChanged:Fire(refusal)
+	end
+end
+
 -- Follows the aim and records the cell for _tryPlace. Only the look is eased; the cell reported is exact.
 function BuildController:_updateGhost(deltaTime: number)
 	local ghost = self._ghost
@@ -496,7 +518,7 @@ function BuildController:_updateGhost(deltaTime: number)
 
 	-- Off every owned plot, or on a base with no grid, so there's nothing to snap to.
 	if not (result and ground) then
-		self._refusal = REFUSAL_NO_SPOT
+		self:_setRefusal(REFUSAL_NO_SPOT)
 		self:_paintGhost(false)
 		return
 	end
@@ -541,7 +563,7 @@ function BuildController:_updateGhost(deltaTime: number)
 
 	self._targetCellX = cellX
 	self._targetCellZ = cellZ
-	self._refusal = refusal
+	self:_setRefusal(refusal)
 
 	local surface =
 		GridUtil.CellToSurfaceCFrame(ground.Origin, cellX, cellZ, footprintX, footprintZ, Structures.CELL_SIZE)
@@ -728,6 +750,8 @@ function BuildController:_tryPlace()
 	self._lastPlaceTime = now
 
 	local refusal = self._refusal
+	self.OnPlaceAttempted:Fire(refusal)
+
 	if refusal then
 		NotificationController:NotifyNormal({
 			Text = refusal,
@@ -968,6 +992,7 @@ function BuildController:_bindPlacementActions()
 		if inputState == Enum.UserInputState.Begin then
 			self._rotation = (self._rotation + 1) % 4
 			self:_pressGuideEntry(GUIDE_ROTATE_ENTRY, true)
+			self.OnGhostRotated:Fire()
 		elseif inputState == Enum.UserInputState.End then
 			self:_pressGuideEntry(GUIDE_ROTATE_ENTRY, false)
 		end
@@ -1005,6 +1030,8 @@ function BuildController:_enterPlacement(structure: Structures.Structure, mouse:
 	self:_warnIfUnplaceable(structure)
 
 	self._ghost = self._placementCleaner:Add(self:_createGhost(structure))
+
+	self.OnPlacementStarted:Fire(structure.Id)
 
 	self._placementCleaner:Connect(RunService.RenderStepped, function(deltaTime: number)
 		self:_updateGhost(deltaTime)
@@ -1098,6 +1125,11 @@ end
 function BuildController:_exitPlacement()
 	self._placementCleaner:Clean()
 
+	-- Called on every tool change, so only a ghost that was actually up reports coming down
+	if self._structure then
+		self.OnPlacementEnded:Fire()
+	end
+
 	self._structure = nil
 	self._activeTool = nil
 	self._mouse = nil
@@ -1113,6 +1145,7 @@ function BuildController:_exitPlacement()
 	self._targetCellZ = nil
 	-- Left as a refusal rather than nil'd with the rest, for the reason given in _enterPlacement.
 	self._refusal = REFUSAL_NO_SPOT
+	self._reportedRefusal = false
 	self._structureFolder = nil
 	self._hoverUid = nil
 	self._hoverHighlight = nil
