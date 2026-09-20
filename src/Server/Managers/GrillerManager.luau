@@ -14,6 +14,7 @@ local RandomUtil = require(Shared.RandomUtil)
 local Ingredients = require(Shared.Config.Ingredients)
 local CookStates = require(Shared.Config.CookStates)
 local Structures = require(Shared.Config.Structures)
+local EarlyBoost = require(Shared.Config.EarlyBoost)
 
 --
 local PlayerDataManager
@@ -604,11 +605,14 @@ function GrillerManager:GrantSkipCookFromProduct(player: Player)
 	)
 end
 
--- Wall seconds a skewer of `ingredients` cooks for on the griller at `uid`: the whole bar, at that grill's own speed.
+-- Wall seconds a skewer of `ingredients` cooks for on the griller at `uid`: the whole bar, at that grill's own speed and their head start.
 function GrillerManager:GetCookTime(data, uid: string, ingredients: { string }): number
 	local structure = self:GetGrillerStructure(data, uid)
 
-	return Ingredients.GetTotalCookTime(ingredients) / CookStates.RAW_END / (structure and structure.CookSpeed or 1)
+	return Ingredients.GetTotalCookTime(ingredients)
+		/ CookStates.RAW_END
+		/ (structure and structure.CookSpeed or 1)
+		* EarlyBoost.GetCookTimeScale(data.TotalEarned)
 end
 
 -- Builds the record that lights `record`'s skewer, its whole cook stamped up front. Paired with SettleCookRecord.

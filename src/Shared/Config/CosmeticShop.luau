@@ -54,8 +54,8 @@ CosmeticShop.Tiers = {
 			{ Id = "CircularTable", Price = 180, Weight = 3 },
 			{ Id = "LargeWoodenTable", Price = 360, Weight = 3 },
 			-- Only looks, so priced like the decorations in Good rather than the tables beside them
-			{ Id = "MediumCanopy", Price = 75, Weight = 3 },
-			{ Id = "LargeCanopy", Price = 120, Weight = 3 },
+			{ Id = "MediumCanopy", Price = 60, Weight = 3 },
+			{ Id = "LargeCanopy", Price = 90, Weight = 3 },
 			-- Only two seats, but orders seated there pay 1.2x, so the dearest table here and the rarest to turn up
 			{ Id = "GoldenTable", Price = 1_000, Weight = 2 },
 		},

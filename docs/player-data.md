@@ -17,6 +17,17 @@ this holds the reasoning behind the ones where the shape is a decision.
   off while the tutorial has customers guaranteed, so the wipe would only ever reset a 0 or an admin grant. It also
   means Gems bought for Robux later can't be lost to a tutorial wipe.
 
+**`TotalGemsEarned`** — the lifetime counterpart to `Gems`, exactly as `TotalEarned` is to `Currency`: every Gem
+ever taken in, where `Gems` is only what's left after the Cosmetic Shop. Written in `IncrementGems`, so every
+source — tips, codes, the admin grant, an offline tip claim — is covered by the one call, and never in
+`DeductGems`, so it only ever climbs.
+- **Added after Gems shipped**, so it reads as *Gems earned since this key landed*, not a true lifetime. Existing
+  profiles pick it up at 0 through `Reconcile`; there is no migration and nothing to backfill it from.
+- **Also written by `OfflineEarningManager:SettleOnLastSave`**, the direct-write path for a claim never pressed,
+  alongside its `TotalEarned` line.
+- **Not in `PROGRESS_RESET_KEYS`**, for the same reason `Gems` isn't -- despite every other lifetime counter being
+  in there. Nothing tips during the tutorial, so a wipe would only ever clear an admin grant.
+
 **`Plots`** — plots bought, keyed by name in the base's Plots folder. The starting plot isn't here: it's
 the `START` cell in `Config.Plots`' grid, owned from handover. A plot is priced off *how many* of these
 there are rather than *which*, so the choice is where to expand and never how much for.

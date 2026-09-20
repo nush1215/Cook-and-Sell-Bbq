@@ -163,6 +163,7 @@ return {
 		SticksBought = 0, -- sticks bought from the stick shop, however they were paid for
 		SkewersSauced = 0, -- skewers that came off a dispenser with a flavour on them
 		TotalEarned = 0, -- every dollar ever taken in, boosts included; Currency is only what's left of it
+		TotalGemsEarned = 0, -- the same lifetime total for Gems; 0 for anyone who played before it shipped
 		-- [cookStateId] = lifetime cooks settled there; grows on demand, so a new CookStates entry needs nothing
 		CookStateCounts = {},
 		-- The sell-side counterpart, kept apart because the two diverge -- see docs/player-data.md

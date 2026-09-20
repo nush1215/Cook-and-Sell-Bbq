@@ -22,6 +22,9 @@ local Colors = require(Shared.Colors)
 local LocalPlayer = Players.LocalPlayer
 local PlayerGui = LocalPlayer.PlayerGui
 
+-- Controllers
+local HudController = require(script.Parent.HudController)
+
 --
 local Class = script.Parent.Parent.Class
 local AnimatedNumber = require(Class.AnimatedNumber)
@@ -41,7 +44,7 @@ local CURRENCY_POP_UPS = {
 	},
 }
 
--- The HUD counters, Bux first: frame under BottomLeft, profile key, "+X" template under CurrencyUI, figure prefix, gain colour
+-- The HUD counters, Bux first: frame under BottomLeft, profile key, "+X" template under CurrencyUI, figure prefix, gain colour, and the lifetime key a counter stays hidden until
 local COUNTERS = {
 	{
 		DataKey = "Currency",
@@ -56,6 +59,7 @@ local COUNTERS = {
 		PopupTemplate = "GemAddTemplate",
 		Prefix = "",
 		GainColor = Colors.Gems,
+		HideUntilEarned = "TotalGemsEarned",
 	},
 }
 
@@ -173,8 +177,20 @@ function CurrencyController:_setupCounter(settings)
 	local current = PlayerDataController:GetKey(settings.DataKey)
 	self:_updateCounter(counter, current, current)
 
+	-- Held off the HUD until they've earned some: a currency they've never met is a number with nothing behind it
+	local isLocked = settings.HideUntilEarned ~= nil and PlayerDataController:GetKey(settings.HideUntilEarned) == 0
+	if isLocked then
+		HudController:SetBottomLeftFrameHiddenFor(self, settings.Frame, true)
+	end
+
 	PlayerDataController:ListenForChange(settings.DataKey, function(new, old)
 		self:_updateCounter(counter, old, new)
+
+		-- Unlocked on the gain itself, so the counter springs in with their first rather than appearing cold
+		if isLocked and new > 0 then
+			isLocked = false
+			HudController:SetBottomLeftFrameHiddenFor(self, settings.Frame, false)
+		end
 	end)
 end
 

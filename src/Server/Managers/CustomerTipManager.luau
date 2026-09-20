@@ -52,6 +52,17 @@ local function getSkewerTipBoost(skewer: StickModel.StickRecord): number
 	return cookMultiplier * mutationMultiplier * (1 + CustomerTips.TIER_STEP * (meanTier - 1))
 end
 
+-- The chance out of 100 that a stand customer tips for one skewer: its quality, and whether its stick was filled. Shared with the offline pass, so away sales tip on the same formula.
+function CustomerTipManager:GetStandTipChance(skewer: StickModel.StickRecord): number
+	-- A stick the config has since dropped has no capacity left to fill, so it reads as not full
+	local stick = Sticks.GetStickFromId(skewer.StickId)
+	local isFull = stick ~= nil and #skewer.Ingredients >= stick.Capacity
+
+	return CustomerTips.STAND_CHANCE
+		* getSkewerTipBoost(skewer)
+		* (if isFull then CustomerTips.FULL_STICK_MULTIPLIER else 1)
+end
+
 -- Rolls a stand customer's tip on what it bought, playing it out on a hit. A haul rolls once, on its skewers' mean chance.
 function CustomerTipManager:RollSaleTip(
 	player: Player,
@@ -62,13 +73,7 @@ function CustomerTipManager:RollSaleTip(
 	local chanceTotal = 0
 
 	for _, skewer in soldRecords do
-		-- A stick the config has since dropped has no capacity left to fill, so it reads as not full
-		local stick = Sticks.GetStickFromId(skewer.StickId)
-		local isFull = stick ~= nil and #skewer.Ingredients >= stick.Capacity
-
-		chanceTotal += CustomerTips.STAND_CHANCE
-			* getSkewerTipBoost(skewer)
-			* (if isFull then CustomerTips.FULL_STICK_MULTIPLIER else 1)
+		chanceTotal += self:GetStandTipChance(skewer)
 	end
 
 	self:_tryCustomerTip(

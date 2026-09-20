@@ -20,7 +20,7 @@ UpdateLogs.Data = {
 		Title = "Update 1.0",
 		Icon = "rbxassetid://114320586328216",
 		Changes = {
-			"- 30 New Ingredients",
+			"- 33 New Ingredients",
 			"- Gems",
 			"- Cosmetics/Decorations",
 			"- Tables",

@@ -14,5 +14,6 @@ return function(context, seconds: number, player: Player?)
 	end
 
 	return `{target.Name}'s workers made {report.Made}, cooked {report.Cooked} and sold {report.Sold} BBQ for ${report.Earned} `
-		.. `over {math.floor(report.WorkedSeconds)}s, stopped by {report.Stopped or "nothing"}.`
+		.. `plus {report.TipGems} Gems off {report.Tips} tips over {math.floor(report.WorkedSeconds)}s, `
+		.. `stopped by {report.Stopped or "nothing"}.`
 end

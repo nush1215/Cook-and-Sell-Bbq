@@ -26,12 +26,12 @@ which in practice means re-solving the whole column rather than picking a number
 
 | Tier | Price | CookTime | ValueMultiplier | PityThreshold |
 |---|---|---|---|---|
-| Common | 100 | 10 | 1.3 | — |
-| Uncommon | 3,000 | 24 | 1.1 | — |
-| Rare | 18,000 | 40 | 1.07 | 65 |
-| Epic | 65,000 | 60 | 1.05 | 350 |
-| Legendary | 100,000 | 85 | 1 | 650 |
-| Mythic | 400,000 | 110 | 1 | 1,500 (inert) |
+| Common | 100 | 13 | 1.5 | — |
+| Uncommon | 3,000 | 40 | 1.25 | — |
+| Rare | 18,000 | 82 | 1.2 | 65 |
+| Epic | 65,000 | 150 | 1.2 | 350 |
+| Legendary | 100,000 | 225 | 1.2 | 650 |
+| Mythic | 400,000 | 300 | 1.18 | 3,000 |
 
 **Price** is the anchor a tier's entries are priced *around* — move it to shift a whole tier, reprice the
 entries to change how far apart they sit. Price is both what an ingredient costs off a stand and what its
@@ -51,31 +51,33 @@ actually is (dense things that must cook through at the top of the band, small w
 
 **ValueMultiplier is the smaller half of what rarity pays, and it has to stay that way.** Price already
 separates the tiers by more than a thousand times end to end, so this only decides how much better the
-return is per dollar spent — 3.1x on a common against 5.3x on a legendary. It used to run to 4.2 at the
-top, set when the price ladder was flat enough to need the help; against today's prices that was
-multiplying an enormous gap by a large number, and the tail of the roster ran away with the economy.
+return is per dollar spent — and it now *descends*, 2.57x on a common against 2.06x on a legendary and
+2.02x on a mythic. It used to run to 4.2 at the top, set when the price ladder was flat enough to need the
+help; against today's prices that was multiplying an enormous gap by a large number, and the tail of the
+roster ran away with the economy. Rarity is paid in price, and the commonest tier gets the kindest rate
+back because it is the one a player is living off.
 
 Steepening this is almost never the fix: repricing a tier moves what it pays, this moves whether it's a
 good deal, and only the second is what the knob is for.
 
-Ballpark for a new entry — **Chance**: Common 9–51, Uncommon 55–137, Rare 170–450, Epic 700–1.2K,
-Legendary ~2K, Mythic ~10K. **Price**: Common 75–260, Uncommon 1K–7K, Rare 10.5K–30K, Epic 50K–85K,
-Legendary 100K; past that, omit Price and take the tier's. Mythic ships empty on purpose — headroom for
-the luxurious stuff (wagyu, lobster, truffle) that costs nothing to leave sitting there. These bands are
-what's left once the chance column is re-solved; they'll move again the next time the roster grows.
+Ballpark for a new entry — **Chance**: Common 10–64, Uncommon 122–285, Rare 365–1.2K, Epic 1.35K–2.4K,
+Legendary 3.5K–4.6K, Mythic 17K–24K. **Price**: Common 75–260, Uncommon 1K–7K, Rare 10.5K–30K, Epic
+55K–85K, Legendary 100K–150K, Mythic 300K–500K. Mythic opened on 2026-09-20 with Caviar and Mango Caviar —
+the luxurious stuff (wagyu, lobster, truffle) still has room above them. These bands are what's left once
+the chance column is re-solved; they'll move again the next time the roster grows.
 
 ### Pity
 
 A tier naming a `PityThreshold` gets a counter in player data; once that counter reaches it,
 `IngredientRollingManager` forces the next roll to that tier. It is counted in **rolls**, not lever pulls,
 so a six-stand base reaches it in a sixth of the pulls and the guarantee means the same to everybody.
-Common and Uncommon name none — at 1 in 1.2 and 1 in 7 there's no drought to protect anyone from.
+Common and Uncommon name none — at 1 in 1.2 and 1 in 8 there's no drought to protect anyone from.
 
 The thresholds are tight on purpose: short enough that the counter, not luck, is what mostly delivers the
-rare tiers. Lamb averages 2,200 rolls on its own odds, and a guarantee at 650 means about three in four of
-them arrive on the counter — a Legendary is something a player grinds *to* rather than gets lucky into,
-which is the feel this ladder is tuned for. Rare at 65 against its 46-roll average is the mildest rung;
-Epic and Legendary lean on pity progressively harder.
+rare tiers. Lamb averages 3,550 rolls on its own odds, and a guarantee at 650 means the overwhelming
+majority arrive on the counter — a Legendary is something a player grinds *to* rather than gets lucky into,
+which is the feel this ladder is tuned for. Rare at 65 against its 52-roll average is the mildest rung;
+Epic, Legendary and Mythic lean on pity progressively harder.
 
 A counter watches "this tier **or better**", so it's walked rarest first: a Lamb clears the Rare counter
 as well as its own, and pity can never force a Rare onto someone who just pulled a Legendary. What a
@@ -94,6 +96,10 @@ not a rounding difference — measured over three million rolls:
 | Rare | 1 in 52 | 1 in 40 | 1.30x |
 | Epic | 1 in 442 | 1 in 297 | 1.49x |
 | Legendary | 1 in 2,200 | 1 in 563 | 3.91x |
+
+**The `Really` column is stale as of 2026-09-20** and needs re-simulating. The 2026-09-20 batch widened
+Epic to 1 in 250 and Legendary to 1 in 989 on the label, and opened Mythic at 1 in 10,000 against a 3,000
+threshold. Only the `Label` column above has been re-derived; the measured rates behind it have not.
 
 The labels are the authored odds and stay that way: pity is meant to be something the player feels rather
 than reads. **So don't "fix" a rate that comes in ahead of its label** — the gap *is* the pity, and it
@@ -128,18 +134,18 @@ Three things are checked at load rather than left to be noticed in-game:
 
 ### Other knobs
 
-- `SALE_VALUE_MULTIPLIER` (1.45) — the global economy dial, on top of every tier's ValueMultiplier. Raise
+- `SALE_VALUE_MULTIPLIER` (1) — the global economy dial, on top of every tier's ValueMultiplier. Raise
   it to make selling more lucrative across the board; retune ValueMultiplier to change how steeply rarity
   pays.
-- `ADDITIONAL_SLOT_FACTOR` (0.75) — what each slot past the slowest adds, as a fraction of its own
+- `ADDITIONAL_SLOT_FACTOR` (0.95) — what each slot past the slowest adds, as a fraction of its own
   CookTime. The skewer cooks in one piece, so the slowest ingredient sets the length and the rest only add
   heat to shift, which is what makes capacity worth paying for: a full stick isn't a full stick's worth of
   waiting. Short of 1 so filling a stick pays, and clear of 0 so it still costs something — value has no
   falloff at all, so at 0 an extra slot would be free money.
 - `ProductPriceBands` — thresholds rather than a band named per entry, so a new ingredient places itself
   from its Price alone. The last repricing moved every entry above Common by ten times or more and this
-  list never needed touching, which is the point of it. The `T1: Corn - Jalapeno` style labels go stale on
-  any repricing and are worth re-deriving rather than trusting.
+  list never needed touching, which is the point of it. The `T1: Corn - Lettuce` style labels go stale on
+  any repricing and are worth re-deriving rather than trusting; they were last re-derived 2026-09-20.
 - `COOL_TIER_INDEX` — where the ladder starts being worth making a fuss over: a landing here or above gets
   the cool sting, and it's the floor a teaser draws from. A position rather than a list of ids, so a tier
   added above Rare is celebrated automatically.
@@ -205,6 +211,39 @@ Three things follow from capping `PERFECT_END` rather than `RAW_END`:
 `CookSpeed` still trades against the window in the same direction: it shrinks `cookTime`, and
 `min(0.25 × cookTime, MAX_PERFECT_SECONDS)` is monotone in `cookTime`, so a faster grill is still a
 tighter window.
+
+### The perfect window's floor
+
+The ceiling's mirror. Because the band is a *share* of the bar, capping the top left the bottom free to
+taper indefinitely: a lone Corn's 3.3s is tighter than a new player's reaction, and both `CookSpeed` and
+`EarlyBoost.EARLY_COOK_SCALE` make it worse rather than better, since they divide the whole bar.
+`MIN_PERFECT_SECONDS` puts a floor under it in the same place the ceiling is applied:
+
+```
+headroom   = 1 - RAW_END - MIN_COOKED_SHARE
+window     = min(PERFECT_END - RAW_END, MAX_PERFECT_SECONDS / cookTime)
+window     = max(window, min(MIN_PERFECT_SECONDS / cookTime, headroom))
+perfectEnd = RAW_END + window
+```
+
+`MIN_COOKED_SHARE` is what stops the floor writing a cheque the bar can't cash. Without it, a bar of 15s
+or less let Perfect swallow everything past Raw, `perfectEnd` landed on 1, and **the Perfect/Cooked
+divider had nowhere to sit** — the cooking bar drew a single mark instead of two and read as broken.
+Reserving Cooked 5% of the bar caps `perfectEnd` at 0.95, so both bands always have a mark and
+overshooting always has somewhere on-bar to land.
+
+| Bar | Window before | After | perfectEnd |
+|---|---|---|---|
+| 6.7s (Corn, Solar Grill, under 10k) | 1.7s | 2.3s | 0.95 |
+| 11.1s (Corn, Rusty Grill, under 10k) | 2.8s | 3.9s | 0.95 |
+| 16.5s (average common) | 4.1s | 5.8s | 0.95 |
+| 21.7s | 5.4s | 6.0s | 0.88 |
+| 24s and up | unchanged | unchanged | 0.85 |
+
+The floor bites **below a 24s bar**, so a 2-ingredient common skewer and everything above it is untouched
+— it reaches only the short cooks the ceiling was never looking at. Below a **17.1s** bar the headroom is
+the binding constraint rather than the 6s, so the window is 35% of the bar rather than a flat six
+seconds: short cooks get proportionally more room, not an absolute guarantee.
 
 ### Where an offline cook parks
 
@@ -806,7 +845,7 @@ tip. `MIN_GAP` caps a player at 240 tips an hour.
 - Gems are never boosted. x2 Bux, friends and the early boost are all promises about Bux, and Gems stay out of
   `TotalEarned`.
 - Sales answered by seller employees tip at the same odds. The tip is for the food.
-- No tips from the wizard (it pays in luck), in the tutorial, or offline.
+- No tips from the wizard (it pays in luck) or in the tutorial. Away customers do tip — see Offline earnings.
 - A player who leaves mid-eat forfeits the tip, since the rig is destroyed before the Gems land.
 - Analytics log tips as Gems economy sources `CustomerTip` and `CustomOrderTip`.
 - The Cosmetic Shop is what spends them, logged as the Gems sink `CosmeticPurchase` (see Cosmetic Shop).
@@ -1010,7 +1049,7 @@ The plain tables cost **60 Gems a seat**, so twelve seats (the fourth concurrent
 | Earns | Medium Wooden Table | 4 | x1 | 240 | ~45 min |
 | Earns | Circular Table | 3 | x1 | 180 | ~33 min |
 | Earns | Small Wooden Table | 2 | x1 | 120 | ~22 min |
-| Looks | Medium / Large Canopy | — | x1 | 75 / 120 | 14–22 min |
+| Looks | Medium / Large Canopy | — | x1 | 60 / 90 | 11–16 min |
 | Looks | Hanging Light / Picnic Parasol | — | x1 | 40 / 50 | 7–9 min |
 | Looks | Small / Medium / Long / Large / Big Stone Path | — | x3 | 15 / 20 / 25 / 30 / 40 | 3–7 min |
 | Looks | Small / Medium / Long / Large / Big Dirt Path | — | x3 | 10 / 15 / 20 / 25 / 30 | 2–5 min |
@@ -1060,6 +1099,24 @@ Measured against what they're **holding** rather than what they've earned, so it
 spent everything on a plot. That also means the pool climbs the ladder on its own as they get richer: $100
 in hand draws from the whole cool roster, $10,000 from Lamb alone, and past $20,000 there's nothing dear
 enough left to show them — the teaser bowing out on its own, before the fade gets to it.
+
+**`EARLY_COOK_SCALE`** (0.75) — what a cook's length is multiplied by early on, applied in
+`GrillerManager:GetCookTime` so every cook-time consumer inherits it. Two things set it apart from the
+four dials above:
+
+- **It is flat, not faded.** It does not ease out; it steps back to full length in one sale, a 33% jump.
+  That is a deliberate simplicity trade — if the step ever reads as the game slowing down,
+  `1 - 0.25 * (1 - getFade(totalEarned))` puts it on the shared curve with no other change.
+- **It runs off its own `EARLY_COOK_THRESHOLD`** (10,000) rather than `THRESHOLD`, because the cook wait
+  is a *first-minutes* problem rather than a whole-early-game one. That covers roughly 9–15 cooks — about
+  four minutes at the grill — after which cook times are the established ones. Since it is far short of
+  `THRESHOLD`, the "no head start" sentinel `CurrencyManager:GetEarlyBoostEarnings` returns still reads
+  as past it, so an admin switch-off and an unloaded profile both get full-length cooks.
+
+Because `CookSpeed` and this both divide the **whole bar**, a shorter cook is also a narrower perfect
+window — 2× Corn+Lettuce goes from a 7.2s window to 5.4s. `MIN_PERFECT_SECONDS` is what keeps that from
+reaching the short cooks; the two are tuned against each other, and this should not be lowered further
+without checking the floor still covers it.
 
 ### THRESHOLD, and why it is where it is
 
@@ -1319,12 +1376,28 @@ nothing can vanish into a half-finished trip, and the stand's six slots are hono
 because the stage behind it was missing — `NoCooker`, `NoGrill` or `NoSeller`. A run that simply reached the
 horizon carries nil: they were still working when the player came back.
 
+### Tips
+
+Away customers tip Gems on the same terms watched ones do. Once the sales are walked in the order they
+landed, each rolls `CustomerTipManager:GetStandTipChance` — the one formula the live stand uses, so the cook
+state, the mutation, the ingredients' mean tier and a filled stick all pay off offline exactly as they do
+live — and `CustomerTips.MIN_GAP` spaces the hits against the simulated clock. A hit leaves
+`STAND_GEMS_MIN..MAX`, as a stand customer's does. There is no separate rate: the sim's own customer cadence
+(~16.5s a customer) sits just above `MIN_GAP`, so a base selling flat out tips at close to the live rate, and
+everything that throttles the Bux — chest stock, grills, cookers, the stand's slots — throttles the Gems with
+it.
+
+**No offline tips until the player has met Gems live** (`SeenCustomerTip`). The guaranteed first tip is an
+introduction with an explainer toast attached, and it has to land on a customer they watch.
+
 ### The claim
 
 The plain offer total waits in server memory and is paid through `CurrencyManager:IncrementCurrency` when the
 panel's Claim (or its Exit) is pressed, so the gamepass, friend and early boosts land on it once, exactly as
-on a sale; the panel shows the boosted figure. Leaving with it unclaimed pays it on the last save. Offline
-sales feed the lifetime counters and never the rating's sale window — see `docs/player-data.md`.
+on a sale; the panel shows the boosted figure. The tips ride along on the same press through
+`IncrementGems` as the Gems source `OfflineTip`, unboosted and out of `TotalEarned` as all Gems are. Leaving
+with it unclaimed pays both on the last save. Offline sales feed the lifetime counters and never the rating's
+sale window — see `docs/player-data.md`.
 
 | Knob | Higher | Lower |
 |---|---|---|

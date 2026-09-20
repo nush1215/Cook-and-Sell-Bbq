@@ -10,6 +10,12 @@ CookStates.PERFECT_END = 0.85
 -- The perfect band's ceiling in wall seconds. Past it a longer cook buys no more room -- a minutes-wide window is a free pass
 CookStates.MAX_PERFECT_SECONDS = 45
 
+-- Its floor, so a short cook can't taper into a window tighter than a reaction. Bounded by what's left of the bar
+CookStates.MIN_PERFECT_SECONDS = 6
+
+-- The slice of the bar Cooked keeps whatever the floor asks for, so both bands always have a mark on the bar
+CookStates.MIN_COOKED_SHARE = 0.05
+
 -- How far short of the perfect window a cook run offline parks, so a returning player can reach the grill
 CookStates.OFFLINE_STOP_LEAD = 20
 
@@ -130,9 +136,14 @@ CookStates.Data = {
 
 table.freeze(CookStates.Data)
 
--- Where the perfect band ends on a bar this long. Capped in seconds, so a long cook can't hand out a minutes-wide window.
+-- Where the perfect band ends on a bar this long. Bounded in wall seconds at both ends -- see docs/balance.md.
 function CookStates.GetPerfectEnd(cookTime: number): number
 	local window = math.min(CookStates.PERFECT_END - CookStates.RAW_END, CookStates.MAX_PERFECT_SECONDS / cookTime)
+
+	-- The band is a share of the bar, so a short cook tapers to nothing; never into Cooked's own slice
+	local headroom = 1 - CookStates.RAW_END - CookStates.MIN_COOKED_SHARE
+	window = math.max(window, math.min(CookStates.MIN_PERFECT_SECONDS / cookTime, headroom))
+
 	return CookStates.RAW_END + window
 end
 

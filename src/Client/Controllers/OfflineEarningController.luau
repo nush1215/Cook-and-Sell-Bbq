@@ -27,6 +27,10 @@ local UI_TIMEOUT = 10
 -- How long a claim stays locked after it's asked for, in case the server's answer never lands
 local REQUEST_TIMEOUT = 3
 
+-- What the claim's confetti rains, one per currency the claim paid out
+local BUX_CONFETTI_IMAGE = "rbxassetid://105333895679693"
+local GEMS_CONFETTI_IMAGE = "rbxassetid://74924203378693"
+
 -- The welcome-back panel: what the workers sold while the player was away, paid out on Claim. The server holds the claim itself; this only shows it and asks for it.
 
 --
@@ -56,13 +60,16 @@ function OfflineEarningController:ShowOfflineEarnings(data)
 	end
 
 	local holder = self.UI.Holder
+	local container = holder.Container
 	local amount = data.Amount
 
 	-- Suffixed past the threshold, so a big number stays legible rather than running off the label
-	holder.BuxAmount.Text = if amount > OfflineEarnings.SUFFIX_THRESHOLD
+	container.BuxEarned.BuxAmount.Text = if amount > OfflineEarnings.SUFFIX_THRESHOLD
 		then `${GuiUtil.ConvertNumberWithSuffix(amount)}`
 		else `${GuiUtil.ConvertNumberWithCommas(amount)}`
-	holder.BbqSoldAmount.Text = GuiUtil.ConvertNumberWithCommas(data.BbqSold)
+	container.BbqSold.BbqSoldAmount.Text = GuiUtil.ConvertNumberWithCommas(data.BbqSold)
+	container.TipsEarned.TipsAmount.Text = GuiUtil.ConvertNumberWithCommas(data.Gems)
+	holder.Timer.Text = `You were gone for {GuiUtil.ConvertSecondsToHMS(data.SecondsAway)}`
 
 	-- Queued behind a panel already up, as the daily rewards' is, so neither join panel closes the other unclaimed
 	UIController:OpenFrameWhenFree(holder)
@@ -143,11 +150,15 @@ function OfflineEarningController:OnStart()
 			UIController:CloseFrame(self.UI.Holder)
 		end
 
-		-- The same celebration a Bux purchase gets, the balance ticking up being easy to miss
+		-- The same celebration a Bux purchase gets, the balance ticking up being easy to miss. Each piece picks
+		-- its image at random, so a claim with tips rains about half Bux and half Gems
+		local images = { BUX_CONFETTI_IMAGE }
+		if data.Gems > 0 then
+			table.insert(images, GEMS_CONFETTI_IMAGE)
+		end
+
 		ConfettiController:FireConfettiRain({
-			Images = {
-				"rbxassetid://105333895679693",
-			},
+			Images = images,
 
 			Colors = {
 				Color3.fromRGB(255, 255, 255),

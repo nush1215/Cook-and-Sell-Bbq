@@ -1278,9 +1278,11 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 				record.awaitingDelivery = true
 			end
 		else
-			-- It has stepped aside, so holding a lane would block the sell customers behind it
-			NpcRig.ReleaseSlot(player, record.slot)
-			record.slot = nil
+			-- It has stepped aside, so holding a lane would block the sell customers behind it. Already given up when its table was picked up
+			if record.slot then
+				NpcRig.ReleaseSlot(player, record.slot)
+				record.slot = nil
+			end
 
 			-- A free seat beats standing aside, and one it already holds is walked back to
 			local seated = false

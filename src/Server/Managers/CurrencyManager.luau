@@ -89,6 +89,8 @@ end
 
 -- Grants Gems. Never boosted and kept out of TotalEarned, since the boosts and that lifetime total are both about Bux.
 function CurrencyManager:IncrementGems(player: Player, amount: number, source: string?)
+	-- TotalGemsEarned is the Gems counterpart: income, not balance, so it never comes back down
+	PlayerDataManager:IncrementDataKey(player, "TotalGemsEarned", amount)
 	PlayerDataManager:IncrementDataKey(player, "Gems", amount)
 	self.OnGemsChanged:Fire(player, amount, source, true)
 end
