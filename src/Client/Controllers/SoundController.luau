@@ -26,7 +26,6 @@ local pitchLadder = PitchLadder.new({ Increment = 0.08, Max = 1.5, MaxHits = 1 }
 local SoundController = {
 	PlaySoundEvent = Network.Event("PlaySound"),
 	PlayRandomSoundEvent = Network.Event("PlayRandomSoundInFolder"),
-	ReplicateToOthersEvent = Network.Event("ReplicateSoundToOthers"),
 
 	_lastPlayedSounds = {},
 	_muted = false,
@@ -58,8 +57,7 @@ function SoundController:PlaySound(
 	soundName: string,
 	location: CFrame | Vector3 | Part?,
 	customProperties: { [any]: any }?,
-	limit: boolean?,
-	replicate: boolean?
+	limit: boolean?
 ): Sound?
 	local sound: Sound? = SoundService:FindFirstChild(soundName, true)
 	if not sound then
@@ -98,10 +96,6 @@ function SoundController:PlaySound(
 		soundClone.Parent = location
 	else
 		soundClone.Parent = SoundService.SFX
-	end
-
-	if replicate then
-		self.ReplicateToOthersEvent:FireServer({ soundName, location, customProperties, limit })
 	end
 
 	soundClone.Name = `{soundName}_Played`

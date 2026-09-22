@@ -57,7 +57,12 @@ local EmployeeManager = {
 
 -- Puts a line in an employee's chat bubble. The category and the rig go out; the client owns picking the line and drawing it, as the customers' own dialogue does.
 function EmployeeManager:SpeakEmployee(rig: Model, category: string, variant: string?)
-	self.EmployeeSayEvent:FireAllClients(rig, category, variant)
+	local audience = NpcRig.GetAudience(rig)
+	if #audience == 0 then
+		return
+	end
+
+	self.EmployeeSayEvent:FireClients(audience, rig, category, variant)
 end
 
 -- Takes a station for one employee, within its own role. False when another of that role already holds it, which is the caller's cue to look elsewhere.
