@@ -19,8 +19,17 @@ local EMPTY_HANDLE = {
 --
 local GuideBeam = {}
 
+-- Held down while something else owns the screen, such as the replay viewer. Every live beam reads it each
+-- frame rather than being torn down, so whatever raised them still owns them and puts them back
+local hidden = false
+
 -- The authored template. Cached as false on a miss too, or every call would sit through its own timeout
 local template: Beam | false | nil = nil
+
+-- Holds every beam down, or lets them draw again. For a viewer that needs the screen to itself.
+function GuideBeam.SetHidden(value: boolean)
+	hidden = value
+end
 
 -- Resolves the authored beam template, warning the first time it isn't there.
 local function getTemplate(): Beam?
@@ -122,6 +131,11 @@ function GuideBeam.Create(target: Instance | (() -> Instance?), hideDistance: nu
 	end
 
 	local heartbeat = RunService.Heartbeat:Connect(function()
+		if hidden then
+			beam.Enabled = false
+			return
+		end
+
 		local anchor = currentGoalAnchor()
 		local character = LocalPlayer.Character
 		local root = character and character:FindFirstChild("HumanoidRootPart")

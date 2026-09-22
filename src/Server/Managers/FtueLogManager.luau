@@ -37,8 +37,18 @@ local MAX_DETAIL_LENGTH = 40
 local SAMPLE_RATE = 1
 local MAX_POSTS_PER_MINUTE = 5
 
--- Seconds a closing server waits on posts still in flight
+-- Seconds a closing server waits on posts still in flight, and how long it first waits for one to appear --
+-- the last player out queues their report from inside the shutdown, after the wait below has already started
 local CLOSE_TIMEOUT = 5
+local CLOSE_GRACE = 1
+
+-- A config fetch that fails is a whole server that logs nothing for its lifetime, so it's retried rather than
+-- given up on. Backed off per attempt, since the usual cause is a service still waking up
+local CONFIG_FETCH_ATTEMPTS = 5
+local CONFIG_RETRY_DELAY = 3
+
+-- Stands in for a real recording's key, so a test report shows the footer line a real one carries
+local TEST_REPLAY_KEY = "0_0"
 
 local EMBED_COLOR = 0xDC4646
 -- What a testFtueWebhook report wears instead, so a check can never be read as a real drop
@@ -90,13 +100,38 @@ local FtueLogManager = {
 	_config = nil, -- the server's ConfigSnapshot, nil until fetched; nil reads as off
 	-- [player] = { UserId, Username, Variant, StartedAt, StepAt, EndedAt, LastStep, Platform, Distance, ValidSince, ValidSeconds, RefusedClicks, SentClicks, Dropped, Entries }
 	_trails = {},
+	-- ReplayManager, once it has registered itself, or nil. Never required from here: the reporting must not
+	-- fail to load because the replay did, so the optional half depends on this one and not the other way round
+	_replayProvider = nil,
+	-- Why reports didn't go out on this server. Every one of these was once a silent return, which is
+	-- indistinguishable from a broken webhook; testFtueWebhook reads them back
+	_skipped = { OtherStep = 0, Disabled = 0, RateCapped = 0 },
 	_postTimes = {}, -- os.clock() of each post in the last minute, oldest first
 	_inFlight = 0, -- reports queued or mid-request, which is what a closing server waits on
 }
 
+-- One config value off this server's snapshot, so nothing else has to fetch a second one. Nil where the
+-- fetch never landed, which reads as off everywhere it's used.
+function FtueLogManager:GetConfigValue(key: string)
+	if not self._config then
+		return nil
+	end
+
+	local read, value = pcall(function()
+		return self._config:GetValue(key)
+	end)
+
+	return if read then value else nil
+end
+
+-- Registers the manager that keeps motion tracks, so a drop report can carry the key to its recording.
+function FtueLogManager:SetReplayProvider(provider)
+	self._replayProvider = provider
+end
+
 -- Whether the LogFTUE config is on. Read live off the snapshot, so flipping it lands mid-session.
 function FtueLogManager:_isEnabled(): boolean
-	return self._config ~= nil and self._config:GetValue(CONFIG_KEY) == true
+	return self:GetConfigValue(CONFIG_KEY) == true
 end
 
 -- Drops a player's trail and tells their client to stop sending.
@@ -255,6 +290,7 @@ end
 -- Whether a report may go out now: the switch still on, and this server's minute not already spent. Spends it when it answers true.
 function FtueLogManager:_canPostReport(): boolean
 	if not self:_isEnabled() then
+		self._skipped.Disabled += 1
 		return false
 	end
 
@@ -265,6 +301,8 @@ function FtueLogManager:_canPostReport(): boolean
 	end
 
 	if #self._postTimes >= MAX_POSTS_PER_MINUTE then
+		self._skipped.RateCapped += 1
+		warn(`[FtueLogManager] a drop report was held back by this server's cap of {MAX_POSTS_PER_MINUTE}/min`)
 		return false
 	end
 	table.insert(self._postTimes, now)
@@ -273,7 +311,7 @@ function FtueLogManager:_canPostReport(): boolean
 end
 
 -- Renders a trail as a Discord embed and posts it, answering whether it landed and why not. Yields and can throw, so it's only ever called under a pcall.
-function FtueLogManager:_postDropReport(trail): (boolean, string)
+function FtueLogManager:_postDropReport(trail, replayKey: string?): (boolean, string)
 	local endedAt = trail.EndedAt - trail.StartedAt
 	if trail.ValidSince then
 		trail.ValidSeconds += math.max(0, endedAt - trail.ValidSince)
@@ -344,7 +382,10 @@ function FtueLogManager:_postDropReport(trail): (boolean, string)
 					color = if trail.Test then TEST_EMBED_COLOR else EMBED_COLOR,
 					footer = {
 						text = `{trail.Username} ({trail.UserId}) · {trail.Platform or "Unknown"} · Variant {trail.Variant} · `
-							.. `{trail.RefusedClicks} refused clicks · {trail.SentClicks} sent`,
+							.. `{trail.RefusedClicks} refused clicks · {trail.SentClicks} sent`
+							-- Bracketed: an unbracketed `if` swallows everything after it into its own else branch
+							.. (if trail.ClosedWithServer then " · server closed" else "")
+							.. (if replayKey then ` · replay {replayKey}` else ""),
 					},
 				},
 			},
@@ -360,21 +401,26 @@ end
 
 -- Whether recording is actually on and what it's holding. An errored snapshot answers GetValue by throwing, and a status line is no place to raise it. For the testFtueWebhook command.
 function FtueLogManager:GetStatusSummary(): string
-	local configState = "unreachable"
-	if self._config then
-		local read, enabled = pcall(function()
-			return self:_isEnabled()
-		end)
-
-		configState = if not read then "errored" elseif enabled then "on" else "off"
-	end
+	-- GetConfigValue swallows a bad read, so the only distinction left is whether a snapshot ever landed
+	local configState = if not self._config then "unreachable" elseif self:_isEnabled() then "on" else "off"
 
 	local open = 0
 	for _ in self._trails do
 		open += 1
 	end
 
-	return `LogFTUE {configState}, {open} trail(s) open`
+	-- Sorted, since a dictionary hands its keys back in whatever order it likes
+	local skipped = {}
+	for reason, count in self._skipped do
+		if count > 0 then
+			table.insert(skipped, `{count} {reason}`)
+		end
+	end
+	table.sort(skipped)
+
+	local tail = if #skipped > 0 then `, not reported: {table.concat(skipped, ", ")}` else ""
+
+	return `LogFTUE {configState}, {open} trail(s) open{tail}`
 end
 
 -- Posts a made-up trail down the same path a real one takes, so the secret, the proxy and the embed can be checked before LogFTUE goes on. Deliberately past both gates -- it's admin-run, and the point is to test with the switch still off. For the testFtueWebhook command.
@@ -403,7 +449,7 @@ function FtueLogManager:SendTestReport(player: Player): (boolean, string)
 			{ T = 110, LastT = 118, Kind = "rotate", Count = 4, Distance = 29 },
 			{ T = 140, LastT = 140, Kind = "unequip", Count = 1, Distance = 28 },
 		},
-	})
+	}, TEST_REPLAY_KEY)
 end
 
 function FtueLogManager:OnInit()
@@ -411,25 +457,53 @@ function FtueLogManager:OnInit()
 		local trail = self._trails[player]
 		self:_stopRecording(player)
 
-		-- A closing server took them off the step, which isn't them giving up on it
-		if not trail or trail.LastStep ~= REPORTED_STEP_ENTRY or reason == "Shutdown" then
+		if not trail then
+			return
+		end
+
+		-- Left somewhere other than the reported step: before taking the griller out, or after placing it
+		if trail.LastStep ~= REPORTED_STEP_ENTRY then
+			self._skipped.OtherStep += 1
 			return
 		end
 
 		trail.EndedAt = os.clock()
+
+		-- Reported either way. The last player out of a quiet server races their own leave against the
+		-- shutdown, so their session can end as one -- skipping those loses real drops on private servers.
+		-- The report says which it was instead, since a restart that took a player mid-step isn't a drop
+		trail.ClosedWithServer = reason ~= "Manual"
+
+		-- Taken synchronously: the track is dropped a frame after this leave, so the thread below would miss it
+		local provider = self._replayProvider
+		local track = provider and provider:TakeTrack(player)
 
 		-- Counted here rather than in the thread, so a server closing this same frame already sees it
 		self._inFlight += 1
 
 		-- Deferred, so none of the report's work sits inside the save this callback is part of
 		task.defer(function()
+			-- Its own pcall, so a recording that won't save still leaves the report to go out without a key
+			local replayKey = nil
+			if track then
+				local saved, result = pcall(function()
+					return provider:SaveDropReplay(track, trail)
+				end)
+
+				replayKey = if saved then result else nil
+
+				if not saved then
+					warn(`[FtueLogManager] replay save failed: {result}`)
+				end
+			end
+
 			-- A throw and a bad answer both land in `problem`, there being nothing to tell apart here
 			local ran, problem = pcall(function()
 				if not self:_canPostReport() then
 					return nil
 				end
 
-				local posted, message = self:_postDropReport(trail)
+				local posted, message = self:_postDropReport(trail, replayKey)
 				return if posted then nil else message
 			end)
 
@@ -452,27 +526,43 @@ function FtueLogManager:OnStart()
 	end)
 
 	task.spawn(function()
-		-- Yields, and hangs before erroring in an experience with no configs -- the ordinary case in Studio
-		local fetched, snapshot = pcall(function()
-			return ConfigService:GetConfigAsync()
-		end)
-		if not fetched then
-			return
+		for attempt = 1, CONFIG_FETCH_ATTEMPTS do
+			-- Yields, and hangs before erroring in an experience with no configs -- the ordinary case in Studio
+			local fetched, snapshot = pcall(function()
+				return ConfigService:GetConfigAsync()
+			end)
+
+			if fetched then
+				self._config = snapshot
+
+				-- A snapshot never moves on its own, so this is what lets the switch land without a restart
+				snapshot.UpdateAvailable:Connect(function()
+					pcall(function()
+						snapshot:Refresh()
+					end)
+				end)
+
+				return
+			end
+
+			task.wait(CONFIG_RETRY_DELAY * attempt)
 		end
 
-		self._config = snapshot
-
-		-- A snapshot never moves on its own, so this is what lets the switch land without a restart
-		snapshot.UpdateAvailable:Connect(function()
-			pcall(function()
-				snapshot:Refresh()
-			end)
-		end)
+		-- Said out loud: silently, this is a server that logs nothing at all for the whole of its life
+		warn(`[FtueLogManager] no experience config after {CONFIG_FETCH_ATTEMPTS} tries, so this server logs nothing`)
 	end)
 
 	-- The last player out closes the server, and without this their report could be cut off mid-request
 	game:BindToClose(function()
 		local deadline = os.clock() + CLOSE_TIMEOUT
+		local grace = os.clock() + CLOSE_GRACE
+
+		-- ProfileStore releases the last profile from inside its own close handler, so a report can still be
+		-- queued after this one starts. Returning on an empty count would close the server over it
+		while self._inFlight == 0 and os.clock() < grace do
+			task.wait(0.1)
+		end
+
 		while self._inFlight > 0 and os.clock() < deadline do
 			task.wait(0.1)
 		end

@@ -167,6 +167,25 @@ function BuildController:SetPlaceCategory(category: string?, refusal: string?)
 	self._placeRefusal = refusal
 end
 
+-- Where the base's cell lattice is measured from, or nil before its floors have streamed in. Read-only.
+function BuildController:GetGroundOrigin(): CFrame?
+	return self._ground and self._ground.Origin
+end
+
+-- The placement state one replay sample records: the cell the ghost sits on, its verdict, and whether the
+-- on-screen hints resolved. Read-only -- nothing here drives placement.
+function BuildController:GetPlacementSnapshot()
+	return {
+		Placing = self._structure ~= nil,
+		CellX = self._targetCellX,
+		CellZ = self._targetCellZ,
+		Rotation = self._rotation,
+		Refusal = self._refusal,
+		GuideShown = self:_getGuide() ~= nil,
+		InvalidShown = self:_getInvalid() ~= nil,
+	}
+end
+
 -- The base model the local player owns, once they've been given one.
 function BuildController:_getBase(): Model?
 	local baseId = LocalPlayer:GetAttribute("BaseId")
