@@ -78,7 +78,6 @@ local STATE_FROM_REFUSAL = {
 	["Your stall is still loading"] = ReplayFormat.State.NoGround,
 	["It won't fit on ground you own"] = ReplayFormat.State.OffGround,
 	["Something's already built there"] = ReplayFormat.State.Occupied,
-	["You're standing there"] = ReplayFormat.State.Self,
 	["Someone's standing there"] = ReplayFormat.State.Player,
 	["You can't place that right now"] = ReplayFormat.State.Locked,
 }
