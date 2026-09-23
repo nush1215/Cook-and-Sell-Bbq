@@ -110,7 +110,34 @@ local TutorialController = {
 	-- Every variant's steps: which one runs isn't known until the assignment replicates, and requiring only defines
 	_sequences = {},
 	_sequenceCounts = {},
+
+	-- Set while something else owns the screen, such as the replay viewer. The run carries on underneath;
+	-- only what it draws is held down, so nothing about the player's own tutorial is disturbed
+	_hidden = false,
+	_shownGuide = nil, -- the guide model currently out in the world, so hiding can reach it
 }
+
+-- Holds down everything the tutorial draws in the world, or lets it draw again. The banner and the spotlight are
+-- ScreenGuis and are hidden by the viewer along with every other one.
+function TutorialController:SetHidden(hidden: boolean)
+	self._hidden = hidden
+	GuideBeam.SetHidden(hidden)
+
+	local guide = self._shownGuide
+	if not guide then
+		return
+	end
+
+	guide.Hitbox.Transparency = if hidden then 1 else GUIDE_HITBOX_TRANSPARENCY
+	guide.Hitbox.SelectionBox.Visible = not hidden
+
+	-- The "place here" label is a billboard hung on the model, so it needs taking down separately
+	for _, descendant in guide:GetDescendants() do
+		if descendant:IsA("BillboardGui") then
+			descendant.Enabled = not hidden
+		end
+	end
+end
 
 -- Runs each sequence of `variant` in order, waiting on SequenceFinish, then plays the finish.
 function TutorialController:Start(variant: string)
@@ -475,7 +502,7 @@ function TutorialController:CreateHighlight(
 	local clock = 0
 	local heartbeat = RunService.Heartbeat:Connect(function(dt)
 		local target = resolveAdornee()
-		if not target or (shouldHide and shouldHide()) then
+		if self._hidden or not target or (shouldHide and shouldHide()) then
 			highlight.Enabled = false
 			return
 		end
@@ -516,7 +543,7 @@ function TutorialController:CreateBreathingHighlight(target: Instance | (() -> I
 	end
 
 	local heartbeat = RunService.Heartbeat:Connect(function()
-		local goal = resolveTarget()
+		local goal = if self._hidden then nil else resolveTarget()
 		if goal ~= tagged then
 			untag()
 
@@ -565,6 +592,7 @@ function TutorialController:ShowGuide(name: string): { Destroy: () -> (), Model:
 	guide.Parent = workspace
 	guide.Hitbox.Transparency = GUIDE_HITBOX_TRANSPARENCY
 	guide.Hitbox.SelectionBox.Visible = true
+	self._shownGuide = guide
 
 	-- Hung on the guide so it travels with it, bobbed by PartFloat with no spin -- a billboard already faces you
 	local labelTemplate = UI:FindFirstChild(PLACE_HERE_LABEL_NAME)
@@ -586,6 +614,8 @@ function TutorialController:ShowGuide(name: string): { Destroy: () -> (), Model:
 	return {
 		Model = guide,
 		Destroy = function()
+			self._shownGuide = nil
+
 			-- Before the guide is parked, or it rides back in and the next ShowGuide hangs a second label
 			if label then
 				label:Destroy()

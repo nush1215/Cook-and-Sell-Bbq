@@ -76,13 +76,15 @@ local TOUCH_AIM_HEIGHT = 12
 -- Room a character needs to count as standing in a block, measured out from the block's edges
 local PLAYER_CLEARANCE = 2
 
+-- Seconds between a structure built over the player re-checking whether they've stepped off it
+local PHASE_CHECK_INTERVAL = 0.2
+
 -- One per reason a ghost goes red. Worded as what to do, since the red already said what went wrong
 local REFUSAL_NO_SPOT = "Aim at ground you own"
 -- No grid at all rather than bad aim: the base's floors haven't streamed in yet
 local REFUSAL_NO_GROUND = "Your stall is still loading"
 local REFUSAL_OFF_GROUND = "It won't fit on ground you own"
 local REFUSAL_OCCUPIED = "Something's already built there"
-local REFUSAL_SELF = "You're standing there"
 local REFUSAL_PLAYER = "Someone's standing there"
 
 -- Stands in for a category lock set without a reason of its own (see SetPlaceCategory)
@@ -165,6 +167,25 @@ local BuildController = {
 function BuildController:SetPlaceCategory(category: string?, refusal: string?)
 	self._placeCategory = category
 	self._placeRefusal = refusal
+end
+
+-- Where the base's cell lattice is measured from, or nil before its floors have streamed in. Read-only.
+function BuildController:GetGroundOrigin(): CFrame?
+	return self._ground and self._ground.Origin
+end
+
+-- The placement state one replay sample records: the cell the ghost sits on, its verdict, and whether the
+-- on-screen hints resolved. Read-only -- nothing here drives placement.
+function BuildController:GetPlacementSnapshot()
+	return {
+		Placing = self._structure ~= nil,
+		CellX = self._targetCellX,
+		CellZ = self._targetCellZ,
+		Rotation = self._rotation,
+		Refusal = self._refusal,
+		GuideShown = self:_getGuide() ~= nil,
+		InvalidShown = self:_getInvalid() ~= nil,
+	}
 end
 
 -- The base model the local player owns, once they've been given one.
@@ -290,6 +311,15 @@ function BuildController:_watchBase()
 
 		self._baseCleaner:Connect(base.DescendantAdded, onDescendantChanged)
 		self._baseCleaner:Connect(base.DescendantRemoving, onDescendantChanged)
+
+		-- A structure turning up over the player: built on them, or streamed back in around them
+		self._baseCleaner:Connect(base.DescendantAdded, function(descendant: Instance)
+			local folder = descendant.Parent
+
+			if descendant:IsA("Model") and folder and folder.Name == Structures.FOLDER_NAME then
+				self:_phaseThroughIfStandingIn(descendant)
+			end
+		end)
 	end
 
 	self:_queueGroundRefresh()
@@ -324,39 +354,93 @@ function BuildController:_isBlockFreeLocally(candidate: Structures.PlacedStructu
 	return true
 end
 
--- Whoever is standing on a cell the candidate blocks, or nil. The one check the server doesn't repeat -- it would have moved.
-function BuildController:_getPlayerInBlock(ground: GridUtil.Ground, candidate: Structures.PlacedStructure): Player?
+-- Whether `player` is standing on a cell the candidate blocks, with the clearance a character needs around it.
+function BuildController:_isPlayerInBlock(
+	ground: GridUtil.Ground,
+	candidate: Structures.PlacedStructure,
+	player: Player
+): boolean
 	local structure = Structures.GetStructureFromId(candidate.Type)
 
 	-- Flat enough to lay underfoot; anything else is checked against the cells it blocks, so a tent's gap is free
 	if structure.Flat then
-		return nil
+		return false
 	end
 
-	for _, player in Players:GetPlayers() do
-		local character = player.Character
-		local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
+	local character = player.Character
+	local root = character and character:FindFirstChild("HumanoidRootPart") :: BasePart?
 
-		-- Between dying and respawning there's nobody standing anywhere.
-		if not root then
-			continue
+	-- Between dying and respawning there's nobody standing anywhere.
+	if not root then
+		return false
+	end
+
+	local point = ground.Origin:PointToObjectSpace(root.Position)
+
+	for _, rect in structure.Blocks[candidate.Rotation] do
+		local minX = (candidate.CellX + rect.MinX) * Structures.CELL_SIZE - PLAYER_CLEARANCE
+		local minZ = (candidate.CellZ + rect.MinZ) * Structures.CELL_SIZE - PLAYER_CLEARANCE
+		local maxX = (candidate.CellX + rect.MaxX) * Structures.CELL_SIZE + PLAYER_CLEARANCE
+		local maxZ = (candidate.CellZ + rect.MaxZ) * Structures.CELL_SIZE + PLAYER_CLEARANCE
+
+		if point.X > minX and point.X < maxX and point.Z > minZ and point.Z < maxZ then
+			return true
 		end
+	end
 
-		local point = ground.Origin:PointToObjectSpace(root.Position)
+	return false
+end
 
-		for _, rect in structure.Blocks[candidate.Rotation] do
-			local minX = (candidate.CellX + rect.MinX) * Structures.CELL_SIZE - PLAYER_CLEARANCE
-			local minZ = (candidate.CellZ + rect.MinZ) * Structures.CELL_SIZE - PLAYER_CLEARANCE
-			local maxX = (candidate.CellX + rect.MaxX) * Structures.CELL_SIZE + PLAYER_CLEARANCE
-			local maxZ = (candidate.CellZ + rect.MaxZ) * Structures.CELL_SIZE + PLAYER_CLEARANCE
-
-			if point.X > minX and point.X < maxX and point.Z > minZ and point.Z < maxZ then
-				return player
-			end
+-- Whoever else is standing on a cell the candidate blocks, or nil. The local player is left out -- they build where
+-- they stand and phase through it. The one check the server doesn't repeat -- it would have moved.
+function BuildController:_getOtherPlayerInBlock(ground: GridUtil.Ground, candidate: Structures.PlacedStructure): Player?
+	for _, player in Players:GetPlayers() do
+		if player ~= LocalPlayer and self:_isPlayerInBlock(ground, candidate, player) then
+			return player
 		end
 	end
 
 	return nil
+end
+
+-- Turns a structure built over the local player non-collidable until they step off it, so building where you
+-- stand doesn't shove you. Set on this client alone: a character's physics runs there, and nobody else's moves.
+function BuildController:_phaseThroughIfStandingIn(model: Model)
+	local placedType = model:GetAttribute(Structures.TYPE_ATTRIBUTE)
+	local placedX = model:GetAttribute(Structures.CELL_X_ATTRIBUTE)
+	local placedZ = model:GetAttribute(Structures.CELL_Z_ATTRIBUTE)
+	local placedRotation = model:GetAttribute(Structures.ROTATION_ATTRIBUTE)
+
+	-- Stamped before the model is parented, so anything reaching here without them isn't a placed structure
+	if not placedType or not placedX or not placedZ or not placedRotation then
+		return
+	end
+
+	local candidate = { Type = placedType, CellX = placedX, CellZ = placedZ, Rotation = placedRotation }
+	local character = LocalPlayer.Character
+	local phased = {}
+
+	-- Measured against the cells it blocks, not its parts: a placed one drops in from overhead and lands late
+	while self._ground and model.Parent and LocalPlayer.Character == character do
+		if not self:_isPlayerInBlock(self._ground, candidate, LocalPlayer) then
+			break
+		end
+
+		-- Re-walked each pass, so a part that arrives mid-drop is turned off with the rest
+		for _, descendant in model:GetDescendants() do
+			if descendant:IsA("BasePart") and descendant.CanCollide then
+				descendant.CanCollide = false
+				table.insert(phased, descendant)
+			end
+		end
+
+		task.wait(PHASE_CHECK_INTERVAL)
+	end
+
+	-- Only what this turned off, so a roof or hitbox that was already inert stays that way
+	for _, part in phased do
+		part.CanCollide = true
+	end
 end
 
 -- An inert copy of what the tool builds, stripped of collision, raycasts, scripts and tags.
@@ -555,30 +639,47 @@ function BuildController:_updateGhost(deltaTime: number)
 	local result = workspace:Raycast(ray.Origin, ray.Direction * RAY_LENGTH, self._raycastParams)
 	local ground = self._ground
 
-	-- Off every owned plot, or on a base with no grid, so there's nothing to snap to.
-	if not (result and ground) then
-		self:_setRefusal(if ground then REFUSAL_NO_SPOT else REFUSAL_NO_GROUND)
+	-- A base with no grid, so there's nothing to snap to.
+	if not ground then
+		self:_setRefusal(REFUSAL_NO_GROUND)
 		self:_paintGhost(false)
 		return
 	end
 
+	-- How far along the aim it crosses the floor's height, for when it lands on nothing they own. Infinite
+	-- when it's level, aimed up, or cast from under the floor, none of which cross it ahead of the camera
+	local height = ray.Origin.Y - ground.Origin.Position.Y
+	local descent = -ray.Direction.Y
+	local crossing = if height > 0 and descent > 0 then height / descent else math.huge
+
+	-- Nothing hit and no crossing to carry the aim on to, so there's no spot to measure a nearest cell from
+	if not result and crossing > RAY_LENGTH then
+		self:_setRefusal(REFUSAL_NO_SPOT)
+		self:_paintGhost(false)
+		return
+	end
+
+	local spot = if result then result.Position else ray.Origin + ray.Direction * crossing
+
 	-- Turned to face the player only on the first frame with a spot -- a later turn is theirs to keep
 	if not self._ghostCFrame then
-		self._rotation = self:_getFacingRotation(ground, result.Position)
+		self._rotation = self:_getFacingRotation(ground, spot)
 	end
 
 	local structure = self._structure
 	local footprintX, footprintZ = Structures.GetFootprint(structure, self._rotation)
 	local cellX, cellZ =
-		GridUtil.WorldToCenteredAnchor(ground.Origin, result.Position, footprintX, footprintZ, Structures.CELL_SIZE)
+		GridUtil.WorldToCenteredAnchor(ground.Origin, spot, footprintX, footprintZ, Structures.CELL_SIZE)
 
-	-- Clamped to the plots' bounding box, not the plots, so an L-shaped notch reads red instead of jumping
-	local maxAnchorX, maxAnchorZ = ground.MaxX - footprintX, ground.MaxZ - footprintZ
-	if maxAnchorX >= ground.MinX then
-		cellX = math.clamp(cellX, ground.MinX, maxAnchorX)
-	end
-	if maxAnchorZ >= ground.MinZ then
-		cellZ = math.clamp(cellZ, ground.MinZ, maxAnchorZ)
+	-- Nudged onto the nearest ground they own, so aiming at a plot they haven't bought builds on the edge
+	-- nearest it rather than refusing. An L-shaped notch now jumps the ghost out instead of reading red
+	if not GridUtil.IsBlockOnGround(ground, cellX, cellZ, footprintX, footprintZ) then
+		local nearestX, nearestZ = GridUtil.NearestBlockOnGround(ground, cellX, cellZ, footprintX, footprintZ)
+
+		-- Nil for a structure too big for any one plot, which is left where it's aimed and reads red
+		if nearestX and nearestZ then
+			cellX, cellZ = nearestX, nearestZ
+		end
 	end
 
 	-- A reason, not a boolean, so a refused click can name the check; re-deriving it would test a later frame
@@ -592,12 +693,8 @@ function BuildController:_updateGhost(deltaTime: number)
 		refusal = REFUSAL_OFF_GROUND
 	elseif not self:_isBlockFreeLocally(candidate) then
 		refusal = REFUSAL_OCCUPIED
-	else
-		local blockingPlayer = self:_getPlayerInBlock(ground, candidate)
-
-		if blockingPlayer then
-			refusal = if blockingPlayer == LocalPlayer then REFUSAL_SELF else REFUSAL_PLAYER
-		end
+	elseif self:_getOtherPlayerInBlock(ground, candidate) then
+		refusal = REFUSAL_PLAYER
 	end
 
 	self._targetCellX = cellX

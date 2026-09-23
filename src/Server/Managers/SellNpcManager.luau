@@ -265,6 +265,17 @@ function SellNpcManager:_serveStandSkewer(
 	return false
 end
 
+-- Puts a line in a customer's bubble. Sent to whoever is standing near it rather than the whole server: the
+-- category and the rig go out, and the client owns picking the line and drawing it.
+function SellNpcManager:SpeakNpc(npc: Model, category: string)
+	local audience = NpcRig.GetAudience(npc)
+	if #audience == 0 then
+		return
+	end
+
+	self.NpcSayEvent:FireClients(audience, npc, category)
+end
+
 -- Mirrors the live visit onto the rig, so a client that reaches the customer part-way through draws it
 -- rather than waiting on a beat it already missed. NpcRig.Release is what takes it back down.
 function SellNpcManager:_publishVisit(record, phase: string, fields)
@@ -486,7 +497,7 @@ function SellNpcManager:_negotiateSale(
 	local arrivalText
 	if refusals > 0 then
 		self._noticedRefusals[player] = refusals
-		self.NpcSayEvent:FireAllClients(npc, `{prefix}ArrivedRefused`)
+		self:SpeakNpc(npc, `{prefix}ArrivedRefused`)
 
 		arrivalText = RandomUtil.GetRandomFromArray(
 			if isRich then RICH_REFUSED_ARRIVAL_TEXTS else REFUSED_ARRIVAL_TEXTS
@@ -614,7 +625,7 @@ function SellNpcManager:_negotiateSale(
 		)
 		counterChance *= SellNpc.COUNTER_CHANCE_FALLOFF
 
-		self.NpcSayEvent:FireAllClients(npc, `{prefix}CounterOffer`)
+		self:SpeakNpc(npc, `{prefix}CounterOffer`)
 
 		-- Later counters pitch up off a shared sound, so a customer pushed a third time sounds like it
 		SoundManager:PlaySound("All", if counterRounds == 1 then "Haggle1" else "Haggle2", npc:GetPivot(), {
@@ -626,7 +637,7 @@ function SellNpcManager:_negotiateSale(
 
 	if not accepted then
 		-- No deal: the skewers go back on the stand and the customer leaves, so another comes for them.
-		self.NpcSayEvent:FireAllClients(npc, `{prefix}PlayerDeclined`)
+		self:SpeakNpc(npc, `{prefix}PlayerDeclined`)
 		StatsManager:RecordSaleDeclined(player)
 		self.OnSaleDeclined:Fire(
 			player,
@@ -705,7 +716,7 @@ function SellNpcManager:_negotiateSale(
 			Color = Colors.Currency,
 		},
 	})
-	self.NpcSayEvent:FireAllClients(npc, `{prefix}PlayerAccepted`)
+	self:SpeakNpc(npc, `{prefix}PlayerAccepted`)
 
 	self:_eatAndLeave(player, npc, record, humanoid, spawnPart, standPosition, prefix, soldRecords)
 	return true
@@ -731,12 +742,12 @@ function SellNpcManager:_eatAndLeave(
 	npc:PivotTo(CFrame.new(npc:GetPivot().Position) * CFrame.Angles(0, self._rng:NextNumber(0, math.pi * 2), 0))
 
 	NpcRig.PlayAnimation(record, "Eat", self._rng)
-	self.NpcSayEvent:FireAllClients(npc, `{prefix}Eating`)
+	self:SpeakNpc(npc, `{prefix}Eating`)
 
 	-- Never in the tutorial, whose beats a tip would talk over. The wizard paid in luck, so it passes nothing sold
 	if soldRecords and not self._guaranteed[player] then
 		CustomerTipManager:RollSaleTip(player, npc, soldRecords, function()
-			self.NpcSayEvent:FireAllClients(npc, `{prefix}Tipping`)
+			self:SpeakNpc(npc, `{prefix}Tipping`)
 		end)
 	end
 
@@ -759,7 +770,7 @@ function SellNpcManager:_eatAndLeave(
 		record.tool = nil
 	end
 
-	self.NpcSayEvent:FireAllClients(npc, `{prefix}Leaving`)
+	self:SpeakNpc(npc, `{prefix}Leaving`)
 	NpcRig.StopAnimation(record)
 	NpcRig.WalkTo(humanoid, spawnPart.Position)
 	self:_despawnNpc(player, record)
@@ -917,7 +928,7 @@ function SellNpcManager:_spawnRichCustomer(player: Player, firstVisit: boolean?)
 	-- No decide beat -- a walk-off would burn a long roll. The visit is still published, since that is what
 	-- builds the billboards its offer goes up on
 	self:_publishVisit(record, SellNpc.PHASES.Arrived)
-	self.NpcSayEvent:FireAllClients(npc, "RichNPCArrived")
+	self:SpeakNpc(npc, "RichNPCArrived")
 	task.wait(self._rng:NextNumber(RichNpc.APPRAISE_DURATION_MIN, RichNpc.APPRAISE_DURATION_MAX))
 
 	if npc.Parent == nil then
@@ -1126,7 +1137,7 @@ function SellNpcManager:_spawnWizardCustomer(player: Player, trigger: string, si
 
 	-- No decide beat -- a walk-off would burn a long roll. Published anyway, since that builds its billboards
 	self:_publishVisit(record, SellNpc.PHASES.Arrived)
-	self.NpcSayEvent:FireAllClients(npc, "WizardNPCArrived")
+	self:SpeakNpc(npc, "WizardNPCArrived")
 	task.wait(self._rng:NextNumber(WizardNpc.APPRAISE_DURATION_MIN, WizardNpc.APPRAISE_DURATION_MAX))
 
 	if npc.Parent == nil then
@@ -1212,7 +1223,7 @@ function SellNpcManager:_offerLuckTrade(
 			skewerValue,
 			record.funnelId
 		)
-		self.NpcSayEvent:FireAllClients(npc, "WizardNPCPlayerDeclined")
+		self:SpeakNpc(npc, "WizardNPCPlayerDeclined")
 
 		if timedOut then
 			NotificationManager:NotifyNormal(player, {
@@ -1256,7 +1267,7 @@ function SellNpcManager:_offerLuckTrade(
 	-- Still a sale for the stats and rating, just not one that paid cash
 	StatsManager:RecordSaleCompleted(player, soldRecords)
 
-	self.NpcSayEvent:FireAllClients(npc, "WizardNPCPlayerAccepted")
+	self:SpeakNpc(npc, "WizardNPCPlayerAccepted")
 	self:_eatAndLeave(player, npc, record, humanoid, spawnPart, standPosition, "WizardNPC")
 	return true
 end
@@ -1436,7 +1447,7 @@ function SellNpcManager:_spawnCheckingCustomer(player: Player)
 		Duration = 3,
 	})
 
-	self.NpcSayEvent:FireAllClients(npc, "NPCCheckingArrived")
+	self:SpeakNpc(npc, "NPCCheckingArrived")
 
 	-- Emitted off the rig rather than through the toast, so it lands with the bubble and carries a direction
 	SoundManager:PlaySound("All", "CustomerChecking", npc:GetPivot())
@@ -1470,7 +1481,7 @@ function SellNpcManager:_spawnCheckingCustomer(player: Player)
 		if os.clock() >= nextAsk then
 			nextAsk = os.clock()
 				+ self._rng:NextNumber(CheckingNpc.ASK_INTERVAL_MIN, CheckingNpc.ASK_INTERVAL_MAX)
-			self.NpcSayEvent:FireAllClients(npc, "NPCCheckingWaiting")
+			self:SpeakNpc(npc, "NPCCheckingWaiting")
 		end
 
 		task.wait(CheckingNpc.POLL_INTERVAL)
@@ -1483,7 +1494,7 @@ function SellNpcManager:_spawnCheckingCustomer(player: Player)
 	-- Nothing turned up, so it starts heading out -- but it keeps watching, and a placement now turns it round
 	local caughtLeaving = false
 	if not stocked then
-		self.NpcSayEvent:FireAllClients(npc, "NPCCheckingLeaving")
+		self:SpeakNpc(npc, "NPCCheckingLeaving")
 
 		-- Walked out by hand: NpcRig.WalkTo blocks on its own MoveTo loop, so it can't be turned round
 		local leaveDeadline = os.clock() + SellNpc.LEAVE_DELAY + SellNpc.WALK_TIMEOUT
@@ -1523,7 +1534,7 @@ function SellNpcManager:_spawnCheckingCustomer(player: Player)
 	self.OnCheckingVisitEnded:Fire(player, true, os.clock() - startedAt)
 
 	-- Caught on the way out is its own beat: repeating the waiting-spot line would read as if it never moved
-	self.NpcSayEvent:FireAllClients(npc, if caughtLeaving then "NPCCheckingReturned" else "NPCCheckingSpotted")
+	self:SpeakNpc(npc, if caughtLeaving then "NPCCheckingReturned" else "NPCCheckingSpotted")
 	NpcRig.WalkTo(humanoid, standPosition)
 	if npc.Parent == nil then
 		return
@@ -1620,6 +1631,12 @@ end
 
 -- Tears down a leaving player's customers. Destroyed, not pooled -- clearing the parent is what mid-visit guards bail on.
 function SellNpcManager:_cleanupPlayer(player: Player)
+	-- PlayerRemoving order isn't guaranteed, so this may run before the last save and has to hand the skewers back itself
+	local data = PlayerDataManager:GetLoadedPlayerData(player)
+	if data then
+		self:ReturnHeldSkewersOnLastSave(player, data)
+	end
+
 	local tracked = self._npcs[player]
 	if tracked then
 		for _, record in tracked do
@@ -1642,7 +1659,7 @@ function SellNpcManager:_cleanupPlayer(player: Player)
 	self._grantedFirstRich[player] = nil
 end
 
--- Returns held skewers before the last save, or leaving mid-decision deletes them. Must not yield.
+-- Returns held skewers to the stand before the last save, or leaving mid-decision deletes them. Must not yield.
 function SellNpcManager:ReturnHeldSkewersOnLastSave(player: Player, data)
 	local tracked = self._npcs[player]
 	if not tracked then
@@ -1654,12 +1671,8 @@ function SellNpcManager:ReturnHeldSkewersOnLastSave(player: Player, data)
 			continue
 		end
 
+		-- Uncapped like ReturnSkewers: a stand restocked meanwhile runs over, rather than deleting what's held
 		for _, skewer in record.skewerRecords do
-			-- The stand may have been restocked while the customer held these, so its cap decides what fits.
-			if #data.SkewerStand >= SkewerStandManager.MAX_SKEWERS then
-				break
-			end
-
 			table.insert(data.SkewerStand, skewer)
 		end
 

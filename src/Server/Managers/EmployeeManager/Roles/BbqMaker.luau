@@ -156,6 +156,25 @@ local function getNoStandVariant(sawStand: boolean, yielding: boolean): string
 	return if yielding then YIELDING_VARIANT else FULL_VARIANT
 end
 
+-- A bare stand with no stick on it, that the player isn't part-way through, claimed for this maker. The bool says the only bare ones it passed over were the player's own, so hovering can name a yield rather than a fill.
+local function findBareStand(employee, data): (string?, boolean)
+	local yielding = false
+
+	for uid, placed in data.Structures do
+		if not Structures.IsCategory(placed.Type, STAND_CATEGORY) or type(data.StickStands[uid]) == "table" then
+			continue
+		end
+
+		if isPlayerBuilding(employee, uid) then
+			yielding = true
+		elseif employee:ClaimStation(uid) then
+			return uid, yielding
+		end
+	end
+
+	return nil, yielding
+end
+
 -- A stand worth building on: one with room, that the player isn't part-way through themselves. Two passes rather than one, so looking at an empty stand can't leave a claim on it when a part-built one wins. The last two returns say whether the only ones it passed over were the player's own, and whether the base has a stand at all, so hovering can name what's holding it up.
 local function findWorkableStand(employee, data): (string?, boolean, boolean, boolean)
 	local yielding = false
@@ -180,23 +199,22 @@ local function findWorkableStand(employee, data): (string?, boolean, boolean, bo
 		end
 	end
 
-	for uid, placed in data.Structures do
-		if not Structures.IsCategory(placed.Type, STAND_CATEGORY) or type(data.StickStands[uid]) == "table" then
-			continue
-		end
-
-		if isPlayerBuilding(employee, uid) then
-			yielding = true
-		elseif employee:ClaimStation(uid) then
-			return uid, true, false, true
-		end
+	-- Then a bare one to start fresh, which a stick goes under
+	local bareUid, bareYielding = findBareStand(employee, data)
+	if bareUid then
+		return bareUid, true, false, true
 	end
 
-	return nil, false, yielding, sawStand
+	return nil, false, yielding or bareYielding, sawStand
 end
 
 -- Whether `uid` can take what this load holds: a stick wants a bare stand, ingredients want one with room.
 local function standFits(data, uid: string, load): boolean
+	-- Gone from the base entirely, so nothing fits -- without this a stick load reads a missing stand as bare and retries onto it forever
+	if not data.Structures[uid] then
+		return false
+	end
+
 	local record = data.StickStands[uid]
 
 	if load.StickId then
@@ -319,7 +337,25 @@ BbqMaker.Hover = function(employee, now: number): string?
 				return "ToBench"
 			end
 
-			employee:SetVariant(getNoStandVariant(sawStand, yielding))
+			-- Ingredients with nowhere that fits them: a bare stand wants a stick under it first, so it
+			-- goes back for one rather than standing over an empty row reading Full
+			local bareUid = if load.StickId then nil else findBareStand(employee, data)
+
+			if bareUid then
+				local hutUid = findStockedHut(employee, data, true)
+
+				if hutUid then
+					employee._buildUid = bareUid
+					employee._hutUid = hutUid
+					return "ToStore"
+				end
+
+				-- A bare stand to build on but no stick to start it, so the sign names that rather than Full
+				employee:ReleaseStations()
+				employee:SetVariant(NO_STICKS_VARIANT)
+			else
+				employee:SetVariant(getNoStandVariant(sawStand, yielding))
+			end
 		end
 
 		-- Nowhere to put it yet, so it waits with its hands full rather than fetching more on top
@@ -384,10 +420,13 @@ BbqMaker.Fetch = function(employee, _now: number): string?
 	end
 
 	local record = data.StickStands[employee._buildUid]
-	local load = { HutUid = employee._hutUid, Ingredients = {} }
+
+	-- Resumes an ingredient load it walked back to fetch a stick for, rather than starting a fresh one
+	local load = employee.Record.Load or { Ingredients = {} }
+	load.HutUid = employee._hutUid
 
 	-- An empty stand needs a stick under it before anything can go on
-	if type(record) ~= "table" then
+	if not load.StickId and type(record) ~= "table" then
 		local stickId = BbqMaker.PickRanked(employee.Record.Skill, BbqMaker.RankStoredSticks(store))
 
 		if not stickId or not EmployeeHutManager:TakeFromStore(employee.Player, employee._hutUid, "Sticks", stickId) then
@@ -398,11 +437,11 @@ BbqMaker.Fetch = function(employee, _now: number): string?
 		load.StickId = stickId
 	end
 
-	-- Room left on the stick, capped by what this one can carry in a trip -- the whole ladder, in one line
+	-- Room left on the stick, capped by what this one can carry in a trip, both net of what's already in hand
 	local room = if load.StickId then Sticks.GetStickFromId(load.StickId).Capacity else getRoom(record)
 	local carry = Employees.GetTierFromStars(Employees.MAKER_CARRY_MARKS, employee:GetStars())
 
-	for _ = 1, math.min(room, carry) do
+	for _ = 1, math.max(math.min(room, carry) - #load.Ingredients, 0) do
 		local ingredientId = BbqMaker.PickRanked(employee.Record.Skill, BbqMaker.RankStoredIngredients(store))
 		if not ingredientId then
 			break

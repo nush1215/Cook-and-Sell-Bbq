@@ -120,6 +120,41 @@ function GridUtil.IsBlockOnGround(
 	return true
 end
 
+-- The nearest anchor whose whole block sits on owned ground, or nil for a block too big for any one plot.
+-- Measured plot by plot: clamping into a rect is exact for a block that fits inside one, and one that only
+-- fits by straddling two is left where it was aimed.
+function GridUtil.NearestBlockOnGround(
+	ground: Ground,
+	cellX: number,
+	cellZ: number,
+	footprintX: number,
+	footprintZ: number
+): (number?, number?)
+	local bestX: number? = nil
+	local bestZ: number? = nil
+	local bestDistance = math.huge
+
+	for _, rect in ground.Rects do
+		local maxAnchorX, maxAnchorZ = rect.MaxX - footprintX, rect.MaxZ - footprintZ
+
+		-- Too small to take the block at all, so it's no plot to nudge onto
+		if maxAnchorX < rect.MinX or maxAnchorZ < rect.MinZ then
+			continue
+		end
+
+		local anchorX = math.clamp(cellX, rect.MinX, maxAnchorX)
+		local anchorZ = math.clamp(cellZ, rect.MinZ, maxAnchorZ)
+		local distance = (anchorX - cellX) ^ 2 + (anchorZ - cellZ) ^ 2
+
+		if distance < bestDistance then
+			bestDistance = distance
+			bestX, bestZ = anchorX, anchorZ
+		end
+	end
+
+	return bestX, bestZ
+end
+
 -- The anchor cell of a block centred on `position`, so it sits under the cursor. May be off their ground.
 function GridUtil.WorldToCenteredAnchor(
 	origin: CFrame,

@@ -205,11 +205,12 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 			return
 		end
 
-		-- Dropped, not carried: adding a raw ingredient means the cook starts over
+		-- Banked progress rides along until an ingredient is added, which is what starts the cook over
 		PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid }, {
 			StickId = placement.StickId,
 			Ingredients = table.clone(placement.Ingredients),
 			Cooked = placement.Cooked,
+			CookProgress = placement.CookProgress,
 		})
 
 		if placement.IsFilled then
@@ -244,6 +245,11 @@ function StickStandManager:ToggleStickOnStand(player: Player, uid: string)
 		local ingredients = table.clone(record.Ingredients)
 		table.insert(ingredients, ingredientId)
 		PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid, "Ingredients" }, ingredients)
+
+		-- A raw ingredient means the cook starts over
+		if record.CookProgress then
+			PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid, "CookProgress" }, nil)
+		end
 
 		self._toggling[player] = nil
 		return
@@ -294,6 +300,7 @@ function StickStandManager:TakeStickFromStand(player: Player, uid: string)
 		Ingredients = table.clone(record.Ingredients),
 		Cooked = record.Cooked,
 		CookState = record.CookState,
+		CookProgress = record.CookProgress,
 	}
 end
 
@@ -365,6 +372,11 @@ function StickStandManager:AddIngredientToStand(player: Player, uid: string, ing
 	table.insert(ingredients, ingredientId)
 	PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid, "Ingredients" }, ingredients)
 
+	-- A raw ingredient means the cook starts over
+	if record.CookProgress then
+		PlayerDataManager:SetPlayerDataKey(player, { "StickStands", uid, "CookProgress" }, nil)
+	end
+
 	self._toggling[player] = nil
 
 	return true
@@ -380,6 +392,7 @@ function StickStandManager:ReturnContentsToPlayer(player: Player, _data, _uid: s
 			Ingredients = table.clone(record.Ingredients),
 			Cooked = record.Cooked,
 			CookState = record.CookState,
+			CookProgress = record.CookProgress,
 		}, fromPickup)
 	else
 		StickManager:GrantStick(player, record.StickId, nil, fromPickup)

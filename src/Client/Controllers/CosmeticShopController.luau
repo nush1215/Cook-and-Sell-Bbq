@@ -44,6 +44,8 @@ local TIER_SLOTS = {
 -- The Cosmetic Shop panel: six fixed slots repainted with whatever this hour's rotation drew, each bought for Gems.
 local CosmeticShopController = {
 	PurchaseCosmeticEvent = Network.Event("PurchaseCosmetic"), -- client -> server (structureId)
+	CosmeticShopOpenedEvent = Network.Event("CosmeticShopOpened"), -- client -> server (no args)
+	CosmeticDetailsViewedEvent = Network.Event("CosmeticDetailsViewed"), -- client -> server (structureId)
 
 	_replica = nil,
 	_buyDebounce = false,
@@ -158,6 +160,8 @@ function CosmeticShopController:OnStart()
 				local structureId = self._slotOffers[frameName]
 				if structureId then
 					NotificationController:NotifyNormal({ Text = Structures.GetStructureFromId(structureId).Description })
+					-- Every tap is sent; the server is what counts only the first on each offer
+					self.CosmeticDetailsViewedEvent:FireServer(structureId)
 				end
 			end, true)
 		end
@@ -176,6 +180,7 @@ function CosmeticShopController:OnStart()
 		local zone = Zone.new(zonePart)
 		zone.localPlayerEntered:Connect(function()
 			UIController:OpenFrame(holder)
+			self.CosmeticShopOpenedEvent:FireServer()
 		end)
 		zone.localPlayerExited:Connect(function()
 			UIController:CloseFrame(holder)

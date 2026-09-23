@@ -34,6 +34,10 @@ local FADE_BASE_TRANSPARENCY_ATTR = "FadeBaseTransparency"
 -- Well under the map, and only for the two frames it takes a portrait's accessory welds to solve
 local PORTRAIT_BAKE_CFRAME = CFrame.new(0, -1000, 0)
 
+-- How far a dialogue line carries: about as far as a bubble stays readable. Past it the client has usually
+-- streamed out of the rig it would hang on anyway
+local SPEAK_DISTANCE = 100
+
 -- The rig plumbing every customer shares: the pool, the walk, the fade, the stand slots and the held skewer. Its numbers are SellNpc's, since that's the customer everything else is written against.
 local NpcRig = {
 	PoolFolder = PoolFolder, -- exposed so an unpooled rig can park alongside, and die on a leave the same way
@@ -577,6 +581,28 @@ function NpcRig.PlayAnimation(record, animationName: string, rng: Random): Anima
 	record.animationTrack = NpcRig.PlayAnimationId(record.npc, animationId, animationName)
 
 	return record.animationTrack
+end
+
+-- Every player near enough to a rig for its bubble to be worth sending. A line is a billboard over one rig on
+-- one base: broadcast, it costs every client in the server for the one or two standing there to read it.
+function NpcRig.GetAudience(rig: Model): { Player }
+	local origin = rig:GetPivot().Position
+
+	local audience = {}
+	for _, player in Players:GetPlayers() do
+		-- Nil between a death and the respawn, and a bubble has nowhere to be heard from until they're back
+		local character = player.Character
+		local rootPart = character and character:FindFirstChild("HumanoidRootPart")
+		if not rootPart then
+			continue
+		end
+
+		if (rootPart.Position - origin).Magnitude <= SPEAK_DISTANCE then
+			table.insert(audience, player)
+		end
+	end
+
+	return audience
 end
 
 -- Drops a leaving player's slots and their share of the appearance cache.

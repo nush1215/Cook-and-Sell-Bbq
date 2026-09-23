@@ -39,10 +39,23 @@ local CosmeticShopManager = {
 		RateLimit = { MaxPerSecond = 4 },
 	}), -- client -> server (structureId)
 
+	-- Opening carries nothing and a details tap only which offer: what they hold and what's on sale is read back here, not taken from the client
+	CosmeticShopOpenedEvent = Network.Event("CosmeticShopOpened", {
+		Direction = "ClientToServer",
+		RateLimit = { MaxPerSecond = 2 },
+	}),
+	CosmeticDetailsViewedEvent = Network.Event("CosmeticDetailsViewed", {
+		Direction = "ClientToServer",
+		RateLimit = { MaxPerSecond = 6 },
+	}), -- client -> server (structureId)
+
 	-- (player, structureId, price, tierId) on a grant
 	OnCosmeticPurchased = Signal.new(),
+	OnCosmeticShopOpened = Signal.new(), -- (player, gems)
+	OnCosmeticDetailsViewed = Signal.new(), -- (player, structureId, tierId)
 
 	_purchasing = {}, -- [player] = true, held across the CanAfford -> DeductGems yield window
+	_detailsViewed = {}, -- [player] = { Seed, Viewed = { [structureId] = true } }, so a re-tap on the same offer only counts once a rotation
 }
 
 -- Draws a rotation's offers from its seed, each tier's Slots without repeats. One shared Random across tiers in config order, so every server draws the same.
@@ -181,6 +194,41 @@ function CosmeticShopManager:PurchaseCosmetic(player: Player, structureId: strin
 	return true
 end
 
+-- Announces that the player walked into the shop, with the Gems they had on them to read the rotation's prices against.
+function CosmeticShopManager:RecordCosmeticShopOpened(player: Player)
+	-- Read without waiting, since the remote can land before their data has loaded
+	local data = PlayerDataManager:GetLoadedPlayerData(player)
+	if not data then
+		return
+	end
+
+	self.OnCosmeticShopOpened:Fire(player, data.Gems)
+end
+
+-- Announces that the player read what one of this rotation's offers does. Only the first tap on each offer counts, so a re-tap can't inflate it.
+function CosmeticShopManager:RecordCosmeticDetailsViewed(player: Player, structureId: string)
+	-- Anything not on sale is stale or forged, and would put an id the shop never showed into the event's field
+	local _, tier = CosmeticShop.GetOffer(structureId)
+	if not tier or not table.find(self._replica.Data.Offers[tier.Id], structureId) then
+		return
+	end
+
+	-- A ledger from an older rotation reads as nothing viewed yet, so an offer drawn again counts again
+	local seed = self._replica.Data.Seed
+	local ledger = self._detailsViewed[player]
+	if not ledger or ledger.Seed ~= seed then
+		ledger = { Seed = seed, Viewed = {} }
+		self._detailsViewed[player] = ledger
+	end
+
+	if ledger.Viewed[structureId] then
+		return
+	end
+	ledger.Viewed[structureId] = true
+
+	self.OnCosmeticDetailsViewed:Fire(player, structureId, tier.Id)
+end
+
 function CosmeticShopManager:OnStart()
 	local clock = Clock.new(ROTATION_INTERVAL)
 
@@ -216,8 +264,17 @@ function CosmeticShopManager:OnStart()
 		self:PurchaseCosmetic(player, structureId)
 	end)
 
+	self.CosmeticShopOpenedEvent:OnServerEvent(function(player: Player)
+		self:RecordCosmeticShopOpened(player)
+	end)
+
+	self.CosmeticDetailsViewedEvent:OnServerEvent(function(player: Player, structureId: string)
+		self:RecordCosmeticDetailsViewed(player, structureId)
+	end)
+
 	Players.PlayerRemoving:Connect(function(player: Player)
 		self._purchasing[player] = nil
+		self._detailsViewed[player] = nil
 	end)
 end
 

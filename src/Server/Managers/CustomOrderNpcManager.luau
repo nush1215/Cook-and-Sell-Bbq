@@ -420,6 +420,17 @@ function CustomOrderNpcManager:MigrateLegacyActiveOrderOnLoad(data)
 	data.ActiveCustomOrder = nil
 end
 
+-- Puts a line in a custom customer's bubble. Sent to whoever is standing near it rather than the whole
+-- server: the category and the rig go out, and the client owns picking the line and drawing it.
+function CustomOrderNpcManager:SpeakCustomOrderNpc(npc: Model, category: string, variant: string?)
+	local audience = NpcRig.GetAudience(npc)
+	if #audience == 0 then
+		return
+	end
+
+	self.CustomOrderSayEvent:FireClients(audience, npc, category, variant)
+end
+
 -- Mirrors the live order onto the rig, so every client draws the card rather than just its owner. A nil phase takes it down.
 function CustomOrderNpcManager:_publishOrder(record, phase: string?, payout: number?, bonus: number?)
 	local order = record.order
@@ -438,12 +449,22 @@ function CustomOrderNpcManager:_publishOrder(record, phase: string?, payout: num
 	)
 end
 
--- Restamps every owed order's banked clock on the outgoing profile. Runs inside the final save, so it writes `data` directly rather than yielding.
+-- Restamps every owed order's banked clock on the outgoing profile, handing back any BBQ given over but not yet paid for. Runs inside the final save, so it writes `data` directly rather than yielding.
 function CustomOrderNpcManager:SaveActiveOrdersOnLastSave(player: Player, data)
 	for _, record in self._npcs[player] or {} do
+		-- Out of their inventory but not yet paid for, so it goes back under its own uid and the order stays owed
+		local delivered = record.delivered
+		if delivered then
+			record.delivered = nil
+
+			local filled = table.clone(delivered)
+			filled.Uid = nil
+			data.FilledSticks[delivered.Uid] = filled
+		end
+
 		-- Only a visit still owed something comes back. One that's eating or walking off is finished,
 		-- and one whose offer was already answered either way has had its outcome recorded
-		local phase = if record.awaitingDelivery or record.standSkewerUid
+		local phase = if record.awaitingDelivery or record.standSkewerUid or delivered
 			then CustomOrderNpc.PHASES.Accepted
 			elseif record.offerPending then CustomOrderNpc.PHASES.Pending
 			else nil
@@ -554,7 +575,7 @@ function CustomOrderNpcManager:_scoldEmptyHanded(player: Player, npc: Model, rec
 	end
 	record.lastScoldAt = now
 
-	self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCEmptyHanded")
+	self:SpeakCustomOrderNpc(npc, "CustomNPCEmptyHanded")
 
 	-- No toast: unlike the hurry beat, this answers a prompt they're stood in front of, so the bubble
 	-- is already in their eyeline. Limited, or a Reject toast landing at the same moment doubles up
@@ -729,12 +750,12 @@ function CustomOrderNpcManager:_sayDeliveryReaction(npc: Model, order, delivered
 			then "CustomNPCDeliveredWrong"
 			elseif matched == #order.Ingredients then "CustomNPCDeliveredExtras"
 			else "CustomNPCDeliveredPartial"
-		self.CustomOrderSayEvent:FireAllClients(npc, category)
+		self:SpeakCustomOrderNpc(npc, category)
 		task.wait(1)
 	end
 
 	-- The variant is only knowable now: it arrived holding nothing, so the client has none stored
-	self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCDelivered", StickModel.GetDialogueVariant(delivered))
+	self:SpeakCustomOrderNpc(npc, "CustomNPCDelivered", StickModel.GetDialogueVariant(delivered))
 end
 
 -- Waits out the deadline, flagging the customer as it runs down. Returns the delivered skewer, or nil on an expiry, a BBQ held for it on the stand, or its table being picked up (still awaiting).
@@ -757,7 +778,7 @@ function CustomOrderNpcManager:_awaitDelivery(player: Player, npc: Model, record
 			-- Re-derived rather than advanced, so a server hitch can't queue two nudges back to back
 			nextHurry = now + CustomOrderNpc.HURRY_INTERVAL
 
-			self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCHurry")
+			self:SpeakCustomOrderNpc(npc, "CustomNPCHurry")
 			NotificationManager:NotifyNormal(player, {
 				Text = "Your custom order is about to walk out!",
 				Duration = 3,
@@ -806,7 +827,7 @@ end
 -- Puts the order to the player and waits for an answer. True if they took it on.
 function CustomOrderNpcManager:_offerOrder(player: Player, npc: Model, record)
 	NpcRig.PlayAnimation(record, "Inspect", self._rng)
-	self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCRequest")
+	self:SpeakCustomOrderNpc(npc, "CustomNPCRequest")
 
 	local order = record.order
 
@@ -1155,7 +1176,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 		elseif inspecting then "CustomNPCInspecting"
 		else "CustomNPCArrived"
 
-	self.CustomOrderSayEvent:FireAllClients(npc, greeting)
+	self:SpeakCustomOrderNpc(npc, greeting)
 
 	-- An accepted restore has already been to the stand, so it walks straight to where it waits rather
 	-- than queueing up to be served again. _runAcceptedOrder below is what takes it there
@@ -1171,7 +1192,13 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 	-- competing for those skewers, and the flip reads the same whether it holds one or not
 	if inspecting then
 		local duration = self._rng:NextNumber(SellNpc.DECIDE_DURATION_MIN, SellNpc.DECIDE_DURATION_MAX)
-		self.CustomOrderInspectEvent:FireAllClients(npc, workspace:GetServerTimeNow() + duration)
+
+		-- Scoped like the dialogue: the flip plays over the rig, so a client that can't see it has nothing to draw
+		self.CustomOrderInspectEvent:FireClients(
+			NpcRig.GetAudience(npc),
+			npc,
+			workspace:GetServerTimeNow() + duration
+		)
 
 		-- Split on the verdict landing, which is the beat the toast is held for
 		task.wait(duration)
@@ -1205,7 +1232,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 		-- Ignored and turned down are different things, so they leave on different lines
 		local ignored = record.offerResponse == nil
 		local category = if ignored then "CustomNPCOfferIgnored" else "CustomNPCPlayerDeclined"
-		self.CustomOrderSayEvent:FireAllClients(npc, category)
+		self:SpeakCustomOrderNpc(npc, category)
 		self:_recordOutcome(player, record, if ignored then "Ignored" else "Declined", nil, 0)
 
 		self:_leave(player, npc, record, humanoid, spawnPart)
@@ -1214,7 +1241,7 @@ function CustomOrderNpcManager:_spawnCustomOrderCustomer(
 
 	StatsManager:RecordCustomOrderAccepted(player)
 	self.OnCustomOrderAccepted:Fire(player, order, record.funnelId)
-	self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCPlayerAccepted")
+	self:SpeakCustomOrderNpc(npc, "CustomNPCPlayerAccepted")
 
 	record.deadline = workspace:GetServerTimeNow() + order.Seconds
 	return self:_runAcceptedOrder(player, npc, record, humanoid, spawnPart, standPart)
@@ -1262,7 +1289,7 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 			-- Up from its table, which stays claimed so it comes back to eat there
 			unseatCustomer(humanoid)
 
-			self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCCollecting")
+			self:SpeakCustomOrderNpc(npc, "CustomNPCCollecting")
 			NpcRig.WalkTo(humanoid, record.standPosition)
 
 			if npc.Parent == nil then
@@ -1312,7 +1339,7 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 				npc:PivotTo(CFrame.lookAt(npc:GetPivot().Position, standPart.Position))
 			end
 
-			self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCWaiting")
+			self:SpeakCustomOrderNpc(npc, "CustomNPCWaiting")
 
 			delivered = self:_awaitDelivery(player, npc, record)
 
@@ -1330,7 +1357,7 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 	self:_publishOrder(record, nil)
 
 	if not delivered then
-		self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCExpired")
+		self:SpeakCustomOrderNpc(npc, "CustomNPCExpired")
 		self:_recordOutcome(player, record, "Expired", nil, 0)
 
 		-- No error effect: they lost the order but did nothing wrong
@@ -1352,6 +1379,9 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 	end
 
 	local banked = CurrencyManager:GetBoostedAmount(player, paid)
+
+	-- The commit point -- cleared with the payout so a later leave or throw can't also hand the BBQ back
+	record.delivered = nil
 
 	-- The plain figure -- applying boosts is IncrementCurrency's job, and a boosted one would double it
 	CurrencyManager:IncrementCurrency(player, paid, "CustomOrder")
@@ -1393,7 +1423,7 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 	local seated = record.seat ~= nil and record.seat:IsDescendantOf(workspace)
 
 	NpcRig.PlayAnimation(record, "Eat", self._rng)
-	self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCEating")
+	self:SpeakCustomOrderNpc(npc, "CustomNPCEating")
 
 	-- Never in the tutorial, whose beats a tip would talk over
 	if not SellNpcManager:AreCustomersGuaranteed(player) then
@@ -1405,7 +1435,7 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 			seated,
 			record.isRich,
 			function()
-				self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCTipping")
+				self:SpeakCustomOrderNpc(npc, "CustomNPCTipping")
 			end
 		)
 	end
@@ -1419,7 +1449,7 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 		return
 	end
 
-	self.CustomOrderSayEvent:FireAllClients(npc, "CustomNPCLeaving")
+	self:SpeakCustomOrderNpc(npc, "CustomNPCLeaving")
 	NpcRig.StopAnimation(record)
 	unseatCustomer(humanoid)
 	record.seat, record.seatTable = nil, nil
@@ -1460,6 +1490,16 @@ function CustomOrderNpcManager:_runGuardedVisit(
 	local orphaned = {}
 	for _, record in self._npcs[player] or {} do
 		if record.thread == thread then
+			-- A BBQ handed over but never paid for goes back to their inventory under the same uid
+			local delivered = record.delivered
+			if delivered then
+				record.delivered = nil
+
+				local filled = table.clone(delivered)
+				filled.Uid = nil
+				StickManager:AddFilledStick(player, filled, true, delivered.Uid)
+			end
+
 			-- Owed nothing from here, so steering, a stand claim and a last save all pass it over during the fade
 			record.offerPending, record.awaitingDelivery, record.standSkewerUid = false, false, nil
 			PlayerDataManager:SetPlayerDataKey(player, { "ActiveCustomOrders", record.funnelId }, nil)
@@ -1737,6 +1777,12 @@ end
 
 -- Tears down a leaving player's customers. Destroyed, not pooled -- clearing the parent is what mid-visit guards bail on.
 function CustomOrderNpcManager:_cleanupPlayer(player: Player)
+	-- PlayerRemoving order isn't guaranteed, so this may run before the last save and has to bank the orders itself
+	local data = PlayerDataManager:GetLoadedPlayerData(player)
+	if data then
+		self:SaveActiveOrdersOnLastSave(player, data)
+	end
+
 	local tracked = self._npcs[player]
 	if tracked then
 		for _, record in tracked do
@@ -1860,8 +1906,7 @@ function CustomOrderNpcManager:OnStart()
 		self:DeliverOrder(player, npc)
 	end)
 
-	-- The last save runs inside PlayerDataManager's PlayerRemoving, which is connected on Init against
-	-- this one's on Start -- so the record below is read before the teardown further down clears it
+	-- Also run by _cleanupPlayer, since the last save can land either side of the teardown clearing the records
 	PlayerDataManager:RegisterPreCleanupCallback(function(player: Player, data)
 		self:SaveActiveOrdersOnLastSave(player, data)
 	end)

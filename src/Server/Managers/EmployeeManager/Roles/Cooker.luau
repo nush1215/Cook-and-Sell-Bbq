@@ -462,8 +462,15 @@ end
 Cooker.Collect = function(employee, _now: number): string?
 	local record = StickStandManager:TakeStickFromStand(employee.Player, employee._standUid)
 
-	-- The player got there first, or took it while this one was walking
 	if not record then
+		-- Refused for a moment rather than for good: the owner is mid-toggle somewhere, so with the stick
+		-- still finished on the stand it holds and retries next tick rather than dropping the whole run
+		local data = PlayerDataManager:GetLoadedPlayerData(employee.Player)
+		if data and isStandReady(data.StickStands[employee._standUid]) then
+			return nil
+		end
+
+		-- The player got there first, or took it while this one was walking
 		return abandonRun(employee)
 	end
 

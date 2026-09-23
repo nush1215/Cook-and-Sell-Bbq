@@ -334,6 +334,11 @@ function Employee:Spawn(data): boolean
 		self:GiveSkewer(self.Record.Carrying)
 	end
 
+	-- A maker's fetched load likewise, or a rig rejoining mid-trip walks around with an invisible pile
+	if self.Record.Load then
+		self:SetLoad(self.Record.Load)
+	end
+
 	return true
 end
 
@@ -584,6 +589,11 @@ end
 
 -- Puts a line in its bubble now, whatever the chatter clock says. `variant` picks a `{Category}{Variant}` sibling where one exists, and falls back to the state's own lines where it doesn't.
 function Employee:Say(state: string, variant: string?)
+	-- A role handler yields, so a fire or a leave can take the rig out from under it before it speaks
+	if not self._rig then
+		return
+	end
+
 	self._nextSpeakAt = workspace:GetServerTimeNow()
 		+ rng:NextNumber(Employees.SPEAK_INTERVAL_MIN, Employees.SPEAK_INTERVAL_MAX)
 
