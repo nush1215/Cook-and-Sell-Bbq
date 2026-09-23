@@ -449,12 +449,22 @@ function CustomOrderNpcManager:_publishOrder(record, phase: string?, payout: num
 	)
 end
 
--- Restamps every owed order's banked clock on the outgoing profile. Runs inside the final save, so it writes `data` directly rather than yielding.
+-- Restamps every owed order's banked clock on the outgoing profile, handing back any BBQ given over but not yet paid for. Runs inside the final save, so it writes `data` directly rather than yielding.
 function CustomOrderNpcManager:SaveActiveOrdersOnLastSave(player: Player, data)
 	for _, record in self._npcs[player] or {} do
+		-- Out of their inventory but not yet paid for, so it goes back under its own uid and the order stays owed
+		local delivered = record.delivered
+		if delivered then
+			record.delivered = nil
+
+			local filled = table.clone(delivered)
+			filled.Uid = nil
+			data.FilledSticks[delivered.Uid] = filled
+		end
+
 		-- Only a visit still owed something comes back. One that's eating or walking off is finished,
 		-- and one whose offer was already answered either way has had its outcome recorded
-		local phase = if record.awaitingDelivery or record.standSkewerUid
+		local phase = if record.awaitingDelivery or record.standSkewerUid or delivered
 			then CustomOrderNpc.PHASES.Accepted
 			elseif record.offerPending then CustomOrderNpc.PHASES.Pending
 			else nil
@@ -1370,6 +1380,9 @@ function CustomOrderNpcManager:_runAcceptedOrder(
 
 	local banked = CurrencyManager:GetBoostedAmount(player, paid)
 
+	-- The commit point -- cleared with the payout so a later leave or throw can't also hand the BBQ back
+	record.delivered = nil
+
 	-- The plain figure -- applying boosts is IncrementCurrency's job, and a boosted one would double it
 	CurrencyManager:IncrementCurrency(player, paid, "CustomOrder")
 
@@ -1477,6 +1490,16 @@ function CustomOrderNpcManager:_runGuardedVisit(
 	local orphaned = {}
 	for _, record in self._npcs[player] or {} do
 		if record.thread == thread then
+			-- A BBQ handed over but never paid for goes back to their inventory under the same uid
+			local delivered = record.delivered
+			if delivered then
+				record.delivered = nil
+
+				local filled = table.clone(delivered)
+				filled.Uid = nil
+				StickManager:AddFilledStick(player, filled, true, delivered.Uid)
+			end
+
 			-- Owed nothing from here, so steering, a stand claim and a last save all pass it over during the fade
 			record.offerPending, record.awaitingDelivery, record.standSkewerUid = false, false, nil
 			PlayerDataManager:SetPlayerDataKey(player, { "ActiveCustomOrders", record.funnelId }, nil)
@@ -1754,6 +1777,12 @@ end
 
 -- Tears down a leaving player's customers. Destroyed, not pooled -- clearing the parent is what mid-visit guards bail on.
 function CustomOrderNpcManager:_cleanupPlayer(player: Player)
+	-- PlayerRemoving order isn't guaranteed, so this may run before the last save and has to bank the orders itself
+	local data = PlayerDataManager:GetLoadedPlayerData(player)
+	if data then
+		self:SaveActiveOrdersOnLastSave(player, data)
+	end
+
 	local tracked = self._npcs[player]
 	if tracked then
 		for _, record in tracked do
@@ -1877,8 +1906,7 @@ function CustomOrderNpcManager:OnStart()
 		self:DeliverOrder(player, npc)
 	end)
 
-	-- The last save runs inside PlayerDataManager's PlayerRemoving, which is connected on Init against
-	-- this one's on Start -- so the record below is read before the teardown further down clears it
+	-- Also run by _cleanupPlayer, since the last save can land either side of the teardown clearing the records
 	PlayerDataManager:RegisterPreCleanupCallback(function(player: Player, data)
 		self:SaveActiveOrdersOnLastSave(player, data)
 	end)

@@ -1631,6 +1631,12 @@ end
 
 -- Tears down a leaving player's customers. Destroyed, not pooled -- clearing the parent is what mid-visit guards bail on.
 function SellNpcManager:_cleanupPlayer(player: Player)
+	-- PlayerRemoving order isn't guaranteed, so this may run before the last save and has to hand the skewers back itself
+	local data = PlayerDataManager:GetLoadedPlayerData(player)
+	if data then
+		self:ReturnHeldSkewersOnLastSave(player, data)
+	end
+
 	local tracked = self._npcs[player]
 	if tracked then
 		for _, record in tracked do
@@ -1653,7 +1659,7 @@ function SellNpcManager:_cleanupPlayer(player: Player)
 	self._grantedFirstRich[player] = nil
 end
 
--- Returns held skewers before the last save, or leaving mid-decision deletes them. Must not yield.
+-- Returns held skewers to the stand before the last save, or leaving mid-decision deletes them. Must not yield.
 function SellNpcManager:ReturnHeldSkewersOnLastSave(player: Player, data)
 	local tracked = self._npcs[player]
 	if not tracked then
@@ -1665,12 +1671,8 @@ function SellNpcManager:ReturnHeldSkewersOnLastSave(player: Player, data)
 			continue
 		end
 
+		-- Uncapped like ReturnSkewers: a stand restocked meanwhile runs over, rather than deleting what's held
 		for _, skewer in record.skewerRecords do
-			-- The stand may have been restocked while the customer held these, so its cap decides what fits.
-			if #data.SkewerStand >= SkewerStandManager.MAX_SKEWERS then
-				break
-			end
-
 			table.insert(data.SkewerStand, skewer)
 		end
 

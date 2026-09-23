@@ -22,7 +22,7 @@ local CustomOrderNpcManager
 
 --
 local SkewerStandManager = {
-	-- Max skewers on the sell stand. Public, since SellNpcManager caps against it when handing them back
+	-- Max skewers a placement can bring the stand to. Returned skewers can run over it, so they're never lost
 	MAX_SKEWERS = 6,
 
 	PlaceSkewerEvent = Network.Event("PlaceSkewerOnStand"),
