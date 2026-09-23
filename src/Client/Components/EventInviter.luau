@@ -39,6 +39,7 @@ function EventInviter:Start()
 	local prompt = self._cleaner:Add(Instance.new("ProximityPrompt"))
 	prompt.ActionText = "View Event"
 	prompt.HoldDuration = 0.5
+	prompt.MaxActivationDistance = 20
 	prompt.RequiresLineOfSight = false
 	prompt.Style = Enum.ProximityPromptStyle.Custom
 	prompt.Parent = adornee
