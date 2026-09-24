@@ -1,5 +1,6 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local ContextActionService = game:GetService("ContextActionService")
 local UserInputService = game:GetService("UserInputService")
 local GuiService = game:GetService("GuiService")
 local RunService = game:GetService("RunService")
@@ -22,10 +23,8 @@ local GridUtil = require(Shared.GridUtil)
 local PlayerDataController = require(script.Parent.PlayerDataController)
 local NotificationController = require(script.Parent.NotificationController)
 local InputController = require(script.Parent.InputController)
-
--- Modules
-local Modules = script.Parent.Parent.Modules
-local ContextActionUtility = require(Modules.ContextActionUtlity)
+local InventoryController = require(script.Parent.InventoryController)
+local UIController = require(script.Parent.UIController)
 
 --
 local LocalPlayer = Players.LocalPlayer
@@ -73,6 +72,10 @@ local TOUCH_AIM_CLEARANCE = 5
 local TOUCH_AIM_REACH = 40
 local TOUCH_AIM_HEIGHT = 12
 
+-- How near a cursorless aim must come to the snap part's edge to lock on, and how far it must stray to let go (studs)
+local SNAP_CAPTURE_DISTANCE = 3
+local SNAP_RELEASE_DISTANCE = 6
+
 -- Room a character needs to count as standing in a block, measured out from the block's edges
 local PLAYER_CLEARANCE = 2
 
@@ -94,8 +97,7 @@ local REFUSAL_LOCKED = "You can't place that right now"
 local REFUSAL_DURATION = 3
 local REFUSAL_SOUND = "Reject"
 
--- Bound through ContextActionUtility, which is the only way a phone gets a rotate
-local PLACE_ACTION = "BuildPlace"
+-- Rotate's keys, bound for the placement's length. Place has none: a click or R2 places off the tool
 local ROTATE_ACTION = "BuildRotate"
 
 -- The desktop hints, authored in the place file under StarterGui -- these are the names it's found by
@@ -119,6 +121,13 @@ local GUIDE_GAMEPAD_ICONS = {
 
 -- Stands in for the guide when there's nowhere to build. Its own frame, so it can show on a phone too
 local INVALID_FRAME_NAME = "Invalid"
+
+-- The phone's place and rotate buttons, authored beside the guide and parked above the hotbar while placing
+local MOBILE_FRAME_NAME = "MobileBuild"
+local MOBILE_PLACE_BUTTON = "Place"
+local MOBILE_ROTATE_BUTTON = "Rotate"
+-- Pixels between the buttons and the top of the hotbar, or of the inventory while it's open
+local MOBILE_HOTBAR_GAP = 8
 
 -- Lifted from UIController's button springs, so a held key presses its hint like any other button
 local GUIDE_PRESS_SCALE = 0.93
@@ -161,12 +170,32 @@ local BuildController = {
 
 	_placeCategory = nil, -- while set, only this category may go down (see SetPlaceCategory)
 	_placeRefusal = nil, -- what a ghost held off by that lock says when clicked
+
+	_snapPart = nil, -- while set, a cursorless ghost aimed near it locks onto it (see SetSnapTarget)
+	_ghostSnapped = false,
 }
 
 -- Holds placement to one category, for the tutorial beats asking for a particular structure down. Nil releases it.
 function BuildController:SetPlaceCategory(category: string?, refusal: string?)
 	self._placeCategory = category
 	self._placeRefusal = refusal
+end
+
+-- Pulls a cursorless ghost onto `part` while it's aimed nearby, for tutorial beats with a spot in mind. Nil releases it.
+function BuildController:SetSnapTarget(part: BasePart?)
+	self._snapPart = part
+end
+
+-- Whether the ghost is locked onto the snap target on a spot it can go down on, so a press now builds there.
+function BuildController:CanPlaceOnSnap(): boolean
+	return self._ghostSnapped and self._refusal == nil
+end
+
+-- The phone's Place button while it's up, which is only on touch mid-placement. Nil otherwise.
+function BuildController:GetMobilePlaceButton(): GuiButton?
+	local mobileBuild = self:_getMobileBuild()
+
+	return if mobileBuild and mobileBuild.Visible then mobileBuild[MOBILE_PLACE_BUTTON] else nil
 end
 
 -- Where the base's cell lattice is measured from, or nil before its floors have streamed in. Read-only.
@@ -682,6 +711,38 @@ function BuildController:_updateGhost(deltaTime: number)
 		end
 	end
 
+	-- Cursorless only, a thumb or stick being too loose to line a ghost up by hand; a locked-out structure isn't pulled
+	local snapPart = self._snapPart
+	local snapped = false
+
+	if
+		snapPart
+		and InputController:IsCursorless()
+		and (not self._placeCategory or structure.Category == self._placeCategory)
+	then
+		local centre, half = Structures.GetExtentsIn(ground.Origin, snapPart)
+		local aim = ground.Origin:PointToObjectSpace(spot)
+		local gapX = math.max(math.abs(aim.X - centre.X) - half.X, 0)
+		local gapZ = math.max(math.abs(aim.Z - centre.Z) - half.Z, 0)
+
+		-- Lets go further out than it grabs, so an aim resting on the edge doesn't flicker on and off
+		local reach = if self._ghostSnapped then SNAP_RELEASE_DISTANCE else SNAP_CAPTURE_DISTANCE
+		snapped = math.sqrt(gapX * gapX + gapZ * gapZ) <= reach
+
+		-- Recentred every frame, so a rotate while locked stays on the part
+		if snapped then
+			cellX, cellZ = GridUtil.WorldToCenteredAnchor(
+				ground.Origin,
+				snapPart.Position,
+				footprintX,
+				footprintZ,
+				Structures.CELL_SIZE
+			)
+		end
+	end
+
+	self._ghostSnapped = snapped
+
 	-- A reason, not a boolean, so a refused click can name the check; re-deriving it would test a later frame
 	local refusal = nil
 	local candidate = { Type = structure.Id, CellX = cellX, CellZ = cellZ, Rotation = self._rotation }
@@ -771,12 +832,17 @@ function BuildController:_refreshPickupHighlights()
 	end
 end
 
--- Switches a structure's own outlines off and back, since two Highlights on one adornee is undefined.
-function BuildController:_refreshSuppressedHighlights()
+-- Hands suppressed outlines back, leaving off any that faded out meanwhile (a prompt outline) so none holds an invisible slot.
+function BuildController:_restoreSuppressedHighlights()
 	for _, highlight in self._suppressedHighlights do
-		highlight.Enabled = true
+		highlight.Enabled = highlight.FillTransparency < 1 or highlight.OutlineTransparency < 1
 	end
 	table.clear(self._suppressedHighlights)
+end
+
+-- Switches a structure's own outlines off and back, since two Highlights on one adornee is undefined.
+function BuildController:_refreshSuppressedHighlights()
+	self:_restoreSuppressedHighlights()
 
 	local painted = {}
 	if self._armedHighlight.Adornee then
@@ -977,6 +1043,17 @@ function BuildController:_getInvalid(): GuiObject?
 	return self._invalid
 end
 
+-- The phone's place and rotate buttons, or nil if the place file hasn't got them. Re-resolved for the same reason as the guide.
+function BuildController:_getMobileBuild(): GuiObject?
+	if self._mobileBuild and self._mobileBuild.Parent then
+		return self._mobileBuild
+	end
+
+	self._mobileBuild = self.UI and self.UI:FindFirstChild(MOBILE_FRAME_NAME)
+
+	return self._mobileBuild
+end
+
 -- One entry of the guide, by name.
 function BuildController:_getGuideScale(entryName: string): UIScale?
 	local guide = self:_getGuide()
@@ -1011,11 +1088,13 @@ function BuildController:_refreshGuideIcons()
 	end
 end
 
--- Puts up the guide or the invalid badge, never both. Not on touch, which has the touch buttons; a pad wants it.
+-- Puts up the guide or the invalid badge, never both, and neither on touch -- that gets the phone's buttons instead.
 function BuildController:_refreshGuide()
-	local placing = self._guidePlacing and not InputController:IsTouch()
+	local touch = InputController:IsTouch()
+	local placing = self._guidePlacing and not touch
 	local guide = self:_getGuide()
 	local invalid = self:_getInvalid()
+	local mobileBuild = self:_getMobileBuild()
 
 	if guide then
 		guide.Visible = placing and self._guideAimed
@@ -1023,6 +1102,11 @@ function BuildController:_refreshGuide()
 
 	if invalid then
 		invalid.Visible = placing and not self._guideAimed
+	end
+
+	-- Up whether or not the ghost has a spot: a red Place still says why when tapped
+	if mobileBuild then
+		mobileBuild.Visible = self._guidePlacing and touch
 	end
 
 	-- Dropped once neither is up, but kept across the swap, since they take turns at the same spot
@@ -1114,37 +1198,56 @@ function BuildController:_updateGuide(deltaTime: number)
 	frame.Position = UDim2.fromOffset(self._guidePosition.X, self._guidePosition.Y)
 end
 
--- Binds place and rotate for the placement's length, each with a touch button. Only rotate takes keys; a pad places off the tool.
-function BuildController:_bindPlacementActions()
-	-- Touch buttons report press, drag and release alike, so without the Begin check a tap counts twice.
-	local function onPlace(_actionName: string, inputState: Enum.UserInputState)
-		if inputState == Enum.UserInputState.Begin then
-			self:_tryPlace()
-		end
+-- Parks the phone's buttons just above the hotbar, rising over the inventory while it's open. Per frame, so resizes follow too.
+function BuildController:_updateMobileBuild()
+	local frame = self:_getMobileBuild()
+	if not (frame and frame.Visible) then
+		return
 	end
 
-	-- Rotation carries across placements, so a row facing one way is one press. End only releases the hint
+	-- Up from the bottom edge, which the backpack's gui shares with this one whichever insets either ignores
+	local lift = InventoryController:GetBackpackHeight() + MOBILE_HOTBAR_GAP + frame.AbsoluteSize.Y / 2
+
+	frame.Position = UDim2.new(0.5, 0, 1, -lift)
+end
+
+-- Turns the ghost a quarter. Rotation carries across placements, so a row facing one way is one press.
+function BuildController:_rotateGhost()
+	self._rotation = (self._rotation + 1) % 4
+	self.OnGhostRotated:Fire()
+end
+
+-- Binds rotate's keys and the phone's two buttons for the placement's length. A click or R2 places off the tool instead.
+function BuildController:_bindPlacementActions()
+	-- End only releases the hint
 	local function onRotate(_actionName: string, inputState: Enum.UserInputState)
 		if inputState == Enum.UserInputState.Begin then
-			self._rotation = (self._rotation + 1) % 4
+			self:_rotateGhost()
 			self:_pressGuideEntry(GUIDE_ROTATE_ENTRY, true)
-			self.OnGhostRotated:Fire()
 		elseif inputState == Enum.UserInputState.End then
 			self:_pressGuideEntry(GUIDE_ROTATE_ENTRY, false)
 		end
 	end
 
-	-- Rotate first, so it takes the touch slot nearest the jump button.
-	ContextActionUtility:BindAction(ROTATE_ACTION, onRotate, true, ROTATE_KEY, ROTATE_GAMEPAD_KEY)
-	ContextActionUtility:SetTitle(ROTATE_ACTION, "Rotate")
-
-	ContextActionUtility:BindAction(PLACE_ACTION, onPlace, true)
-	ContextActionUtility:SetTitle(PLACE_ACTION, "Place")
+	ContextActionService:BindAction(ROTATE_ACTION, onRotate, false, ROTATE_KEY, ROTATE_GAMEPAD_KEY)
 
 	self._placementCleaner:Add(function()
-		ContextActionUtility:UnbindAction(PLACE_ACTION)
-		ContextActionUtility:UnbindAction(ROTATE_ACTION)
+		ContextActionService:UnbindAction(ROTATE_ACTION)
 	end)
+
+	local mobileBuild = self:_getMobileBuild()
+	if not mobileBuild then
+		return
+	end
+
+	-- On the press, as the touch buttons these replaced were, so a thumb sliding off mid-tap still builds
+	self._placementCleaner:Add(UIController:BindButtonClick(mobileBuild[MOBILE_PLACE_BUTTON], function()
+		self:_tryPlace()
+	end, true, nil, nil, true).Disconnect)
+
+	self._placementCleaner:Add(UIController:BindButtonClick(mobileBuild[MOBILE_ROTATE_BUTTON], function()
+		self:_rotateGhost()
+	end, true, nil, nil, true).Disconnect)
 end
 
 -- Raises the ghost and starts it following. Doesn't re-read plots -- yielding here could strand it.
@@ -1172,6 +1275,7 @@ function BuildController:_enterPlacement(structure: Structures.Structure, mouse:
 	self._placementCleaner:Connect(RunService.RenderStepped, function(deltaTime: number)
 		self:_updateGhost(deltaTime)
 		self:_updateGuide(deltaTime)
+		self:_updateMobileBuild()
 	end)
 
 	self:_bindPlacementActions()
@@ -1179,7 +1283,7 @@ function BuildController:_enterPlacement(structure: Structures.Structure, mouse:
 	-- Building only: the pickup tool has nothing to rotate, so _enterPickup leaves the guide down.
 	self:_showGuide(true)
 
-	-- A device switch mid-placement swaps the guide's icons for pad glyphs and back, and takes it down for touch
+	-- A device switch mid-placement swaps the guide's icons for pad glyphs and back, and the guide for the buttons on touch
 	self._placementCleaner:Connect(InputController.OnPreferredInputChanged, function()
 		self:_refreshGuideIcons()
 		self:_refreshGuide()
@@ -1235,9 +1339,7 @@ function BuildController:_enterPickup(mouse: Mouse)
 
 	-- On the cleaner rather than in _exitPlacement, so it also runs when the tool is destroyed.
 	self._placementCleaner:Add(function()
-		for _, highlight in self._suppressedHighlights do
-			highlight.Enabled = true
-		end
+		self:_restoreSuppressedHighlights()
 	end)
 
 	self:_refreshPickupHighlights()
@@ -1277,6 +1379,7 @@ function BuildController:_exitPlacement()
 	self._rotation = 0
 	self._raycastParams = nil
 	self._ghostCFrame = nil
+	self._ghostSnapped = false
 	self._targetCellX = nil
 	self._targetCellZ = nil
 	-- Left as a refusal rather than nil'd with the rest, for the reason given in _enterPlacement.

@@ -34,6 +34,11 @@ function InventoryController:GetSlotFrame(tool: Tool): GuiObject?
 	return self._satchel:GetSlotFrame(tool)
 end
 
+-- Pixels of the screen's bottom the hotbar covers, the open inventory included -- for anything sitting just above it.
+function InventoryController:GetBackpackHeight(): number
+	return self._satchel:GetBackpackHeight()
+end
+
 -- Rings the equip sound on every tool pulled out; equipping parents it to the character, so one signal covers all kinds.
 function InventoryController:_watchCharacter(character: Model)
 	self._characterCleaner:Clean()

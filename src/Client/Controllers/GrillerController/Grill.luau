@@ -1050,10 +1050,10 @@ function Grill:RefreshInteraction()
 			else GRILL_PROMPT_HOLD
 	end
 
-	-- Tagged after the prompt is built, since the component resolves it once on start
+	-- Only once the prompt is built, since the component resolves it once on start; a partless skewer waits for the retry
 	if self._skewerModel then
 		self._skewerModel:SetAttribute("HighlightColor", Highlights.CLAIM)
-		if takeEligible and not takeLocked then
+		if takeEligible and not takeLocked and self._takeSkewerPrompt then
 			self._skewerModel:AddTag(PROMPT_HIGHLIGHT_TAG)
 		else
 			self._skewerModel:RemoveTag(PROMPT_HIGHLIGHT_TAG)

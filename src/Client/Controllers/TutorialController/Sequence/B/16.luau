@@ -36,6 +36,9 @@ return function(self)
 	spotlight.Destroy()
 	HudController:SetHudFrameHiddenFor(self, TOP_BAR_FRAME, true)
 
+	-- Home again, and everything left is done on the base
+	self:SetBaseFenced(true)
+
 	self:LogStep("ReturnToBase")
 
 	self.SequenceFinish:Fire()

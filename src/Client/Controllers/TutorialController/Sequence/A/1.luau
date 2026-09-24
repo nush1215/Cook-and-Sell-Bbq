@@ -9,6 +9,7 @@ local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.E
 
 -- Controllers
 local BuildController = require(script.Parent.Parent.Parent.Parent.BuildController)
+local InventoryController = require(script.Parent.Parent.Parent.Parent.InventoryController)
 
 -- The category, not the id, so a later model of griller still counts (see Config.Structures)
 local CATEGORY = "Grillers"
@@ -24,9 +25,15 @@ return function(self)
 		return Structures.IsCategory(EquippedItem.GetStructureId() or "", CATEGORY)
 	end
 
-	-- Lit only while the tool is in the bag -- once it's out they're aiming a ghost, and a dim screen is in the way
-	local spotlight = self:SpotlightHotbarSlot(function()
-		return if isEquipped() then nil else self:GetStructureTool(CATEGORY)
+	-- One cue for the slot and the Place button, so the two never fight over the shared spotlight
+	local spotlight = self:SpotlightFrame(function()
+		if not isEquipped() then
+			local tool = self:GetStructureTool(CATEGORY)
+			return tool and InventoryController:GetSlotFrame(tool)
+		end
+
+		-- Dark while they aim, back once it's locked on the guide: a phone builds off the button alone
+		return if BuildController:CanPlaceOnSnap() then BuildController:GetMobilePlaceButton() else nil
 	end)
 
 	-- Nothing in the world yet: they have nothing to put down, so this half is only the hotbar
@@ -45,6 +52,9 @@ return function(self)
 
 	-- Now they're holding one, say where it could go -- the goal is anywhere legal, not this spot
 	local guide = self:ShowGuide(GUIDE_NAME)
+
+	-- A thumb- or stick-aimed ghost locks on once it's near, still free to go down anywhere else
+	BuildController:SetSnapTarget(guide.Model and guide.Model.Hitbox)
 
 	-- Resolved through the guide, so an unauthored one draws nothing rather than erroring the step
 	local function guideModel(): Instance?
@@ -75,6 +85,7 @@ return function(self)
 	beam.Destroy()
 	highlight.Destroy()
 	guide.Destroy()
+	BuildController:SetSnapTarget(nil)
 
 	self:LogStep("PlaceGrill")
 

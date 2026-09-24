@@ -9,6 +9,7 @@ local EquippedItem = require(script.Parent.Parent.Parent.Parent.Parent.Modules.E
 
 -- Controllers
 local BuildController = require(script.Parent.Parent.Parent.Parent.BuildController)
+local InventoryController = require(script.Parent.Parent.Parent.Parent.InventoryController)
 
 local CATEGORY = "StickStands"
 local GUIDE_NAME = "StickStand"
@@ -23,8 +24,14 @@ return function(self)
 		return Structures.IsCategory(EquippedItem.GetStructureId() or "", CATEGORY)
 	end
 
-	local spotlight = self:SpotlightHotbarSlot(function()
-		return if isEquipped() then nil else self:GetStructureTool(CATEGORY)
+	-- Slot, then the Place button once it's locked on the guide -- see step 1
+	local spotlight = self:SpotlightFrame(function()
+		if not isEquipped() then
+			local tool = self:GetStructureTool(CATEGORY)
+			return tool and InventoryController:GetSlotFrame(tool)
+		end
+
+		return if BuildController:CanPlaceOnSnap() then BuildController:GetMobilePlaceButton() else nil
 	end)
 
 	-- Hotbar only until the tool is out, and the world left alone until then -- see step 1
@@ -42,6 +49,7 @@ return function(self)
 	self:LogStep("EquipStand")
 
 	local guide = self:ShowGuide(GUIDE_NAME)
+	BuildController:SetSnapTarget(guide.Model and guide.Model.Hitbox)
 
 	local function guideModel(): Instance?
 		return guide.Model
@@ -69,6 +77,7 @@ return function(self)
 	beam.Destroy()
 	highlight.Destroy()
 	guide.Destroy()
+	BuildController:SetSnapTarget(nil)
 
 	self:LogStep("PlaceStand")
 

@@ -598,7 +598,7 @@ function Structures.GetHitboxes(instance: Instance): { BasePart }
 end
 
 -- A part's centre and half-size along `frame`'s axes, so a part turned inside the model still measures right.
-local function getExtentsIn(frame: CFrame, part: BasePart): (Vector3, Vector3)
+function Structures.GetExtentsIn(frame: CFrame, part: BasePart): (Vector3, Vector3)
 	local relative = frame:ToObjectSpace(part.CFrame)
 	local size = part.Size
 
@@ -624,7 +624,7 @@ local function getStructureBounds(instance: Instance): (CFrame, Vector3)
 		local maxCorner = -Vector3.one * math.huge
 
 		for _, hitbox in hitboxes do
-			local centre, half = getExtentsIn(frame, hitbox)
+			local centre, half = Structures.GetExtentsIn(frame, hitbox)
 			minCorner = minCorner:Min(centre - half)
 			maxCorner = maxCorner:Max(centre + half)
 		end
@@ -643,7 +643,7 @@ end
 
 -- The cells a leg touches, from the unturned footprint's min corner. Nil for one wholly outside it.
 local function getLegRect(boundsCFrame: CFrame, leg: BasePart, footprintX: number, footprintZ: number): GridUtil.Rect?
-	local centre, half = getExtentsIn(boundsCFrame, leg)
+	local centre, half = Structures.GetExtentsIn(boundsCFrame, leg)
 
 	local centreX = centre.X / Structures.CELL_SIZE + footprintX / 2
 	local centreZ = centre.Z / Structures.CELL_SIZE + footprintZ / 2

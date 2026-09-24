@@ -2332,6 +2332,12 @@ function BackpackScript:GetSlotFrame(tool: Tool): GuiObject?
 	return slot and slot.Frame
 end
 
+-- Returns how many pixels of the screen's bottom the backpack covers: the hotbar, plus the inventory while it's open.
+function BackpackScript:GetBackpackHeight(): number
+	local topFrame: Frame = if InventoryFrame.Visible then InventoryFrame else HotbarFrame
+	return MainFrame.AbsolutePosition.Y + MainFrame.AbsoluteSize.Y - topFrame.AbsolutePosition.Y
+end
+
 -- Update every heartbeat the icon state
 RunService.Heartbeat:Connect(function(): ()
 	OnIconChanged(BackpackEnabled)

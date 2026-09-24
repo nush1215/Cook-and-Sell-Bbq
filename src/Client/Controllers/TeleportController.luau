@@ -28,6 +28,16 @@ function TeleportController:_teleportToPart(targetPart: PVInstance)
 	CameraController:AlignCameraYawTo(destination.LookVector)
 end
 
+-- Sends the character to their base's PlayerSpawn. Nothing until they've been given a base.
+function TeleportController:TeleportToBase()
+	local baseId = LocalPlayer:GetAttribute("BaseId")
+	if not baseId then
+		return
+	end
+
+	self:_teleportToPart(workspace.Base[baseId].Core.PlayerSpawn)
+end
+
 function TeleportController:OnInit()
 	HudController = require(script.Parent.HudController)
 end
@@ -38,12 +48,7 @@ function TeleportController:OnStart()
 	end)
 
 	HudController:BindHudButton("Base", function()
-		local baseId = LocalPlayer:GetAttribute("BaseId")
-		if not baseId then
-			return
-		end
-
-		self:_teleportToPart(workspace.Base[baseId].Core.PlayerSpawn)
+		self:TeleportToBase()
 	end)
 end
 

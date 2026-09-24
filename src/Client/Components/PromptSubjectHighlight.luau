@@ -90,6 +90,11 @@ function PromptSubjectHighlight:Start()
 	self._cleaner:Add(prompt.PromptHidden:Connect(function()
 		fade(1, true)
 	end))
+
+	-- Tagged mid-show (e.g. a roll settling under the player), PromptShown has already fired and won't again until it re-shows
+	if prompt:GetAttribute("Shown") then
+		fade(0, false)
+	end
 end
 
 function PromptSubjectHighlight:Stop()

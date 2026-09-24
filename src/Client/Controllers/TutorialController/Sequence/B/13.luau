@@ -10,6 +10,9 @@ local ARRIVED_DISTANCE = 60
 return function(self)
 	local teleports = workspace:WaitForChild("Core"):WaitForChild("Teleports")
 
+	-- The first beat that sends them off the base, walking there included; the trip home raises it again
+	self:SetBaseFenced(false)
+
 	-- This is the beat that wants it, so it comes back for exactly as long as the beat lasts
 	HudController:SetHudFrameHiddenFor(self, TOP_BAR_FRAME, false)
 

@@ -8,6 +8,7 @@ local RunService = game:GetService("RunService")
 local Packages = ReplicatedStorage.Packages
 local Signal = require(Packages.Signal)
 local Spr = require(Packages.Spr)
+local Zone = require(Packages.ZonePlus)
 
 -- Shared
 local Shared = ReplicatedStorage.Shared
@@ -29,6 +30,8 @@ local UI = Assets.UI
 -- Controllers
 local InputController = require(script.Parent.InputController)
 local CameraController = require(script.Parent.CameraController)
+local TeleportController = require(script.Parent.TeleportController)
+local NotificationController = require(script.Parent.NotificationController)
 local PlayerDataController
 local UIController
 local HudController
@@ -62,18 +65,18 @@ local HIGHLIGHT_PULSE_SPEED = 3
 -- Never shares an adornee with BreathingHighlight, two Highlights on one instance being undefined
 local PROMPT_HIGHLIGHT_TAG = "PromptSubjectHighlight"
 
--- Padding around a spotlit HUD button, in pixels. Shared with the hotbar slot cue.
+-- Padding around a spotlit HUD button, in pixels. Shared with the frame cue.
 local HUD_SPOTLIGHT_PADDING = 12
 
--- The down arrow bobbing over a spotlit hotbar slot. Scale is of the slot's width; gap and amplitude are pixels
-local SLOT_ARROW_IMAGE = "rbxassetid://121406419675661"
-local SLOT_ARROW_COLOR = Color3.fromRGB(255, 40, 40)
-local SLOT_ARROW_SCALE = 1.4
-local SLOT_ARROW_GAP = 4
-local SLOT_ARROW_BOB_AMPLITUDE = 10
-local SLOT_ARROW_BOB_SPEED = 6
+-- The down arrow bobbing over a spotlit frame. Scale is of the frame's shorter side; gap and amplitude are pixels
+local FRAME_ARROW_IMAGE = "rbxassetid://121406419675661"
+local FRAME_ARROW_COLOR = Color3.fromRGB(255, 40, 40)
+local FRAME_ARROW_SCALE = 1.4
+local FRAME_ARROW_GAP = 4
+local FRAME_ARROW_BOB_AMPLITUDE = 10
+local FRAME_ARROW_BOB_SPEED = 6
 -- Above the spotlight's dim (5), hint (11) and off-screen arrow (12)
-local SLOT_ARROW_ZINDEX = 13
+local FRAME_ARROW_ZINDEX = 13
 
 -- Where the server parks each base's tutorial guides, keyed by base name (see Base.new).
 local GUIDES_FOLDER_NAME = "TutorialGuides"
@@ -95,6 +98,10 @@ local ASSET_TIMEOUT = 10
 -- The attribute the assigned variant is published on, once the server has resolved its config
 local VARIANT_ATTRIBUTE = "TutorialVariant"
 
+-- The part under each base's Core marking its bounds; leaving it while fenced sends the player home
+local BASE_BOUNDS_NAME = "Hitbox"
+local FENCE_NOTIFICATION = "You can't leave your base yet"
+
 -- Handed back when an effect's asset is missing, so a step can call Destroy without checking.
 local EMPTY_HANDLE = {
 	Destroy = function() end,
@@ -115,6 +122,7 @@ local TutorialController = {
 	-- only what it draws is held down, so nothing about the player's own tutorial is disturbed
 	_hidden = false,
 	_shownGuide = nil, -- the guide model currently out in the world, so hiding can reach it
+	_baseFence = nil, -- the zone holding them inside their base, while fenced (see SetBaseFenced)
 }
 
 -- Holds down everything the tutorial draws in the world, or lets it draw again. The banner and the spotlight are
@@ -174,6 +182,9 @@ function TutorialController:Start(variant: string)
 	self:GetBase()
 	self:FaceSpawnBackward()
 
+	-- Kept home until the store beat sends them out, since everything before it is done on the base
+	self:SetBaseFenced(true)
+
 	-- Back as soon as there's a stall: step 1 asks them to equip a griller off it.
 	InventoryController:ShowInventory()
 
@@ -202,6 +213,9 @@ function TutorialController:Start(variant: string)
 
 	self.FinishTutorialEvent:FireServer()
 	self:SetText(nil, "Tutorial Complete!")
+
+	-- Re-raised by the trip home's last beat, so it comes off here with the rest of the run's locks
+	self:SetBaseFenced(false)
 
 	-- Released here rather than by the roll beat, so the run holds one lock instead of each beat taking its own
 	if self.LeverLock then
@@ -292,6 +306,48 @@ function TutorialController:FaceSpawnBackward()
 	RunService.RenderStepped:Wait()
 
 	CameraController:AlignCameraYawTo(facing.LookVector)
+end
+
+-- Sends them home whenever they step outside their base's Core.Hitbox, until a beat sends them off it. False lifts it.
+function TutorialController:SetBaseFenced(fenced: boolean)
+	if self._baseFence then
+		self._baseFence:destroy()
+		self._baseFence = nil
+	end
+
+	if not fenced then
+		return
+	end
+
+	-- Only raised at home and kept there, so the base never streams out from under the zone while it's up
+	local base = self:GetBase()
+	local bounds = base:WaitForChild("Core"):WaitForChild(BASE_BOUNDS_NAME, ASSET_TIMEOUT)
+	if not bounds then
+		warn(`TutorialController: base {base.Name} has no Core.{BASE_BOUNDS_NAME}, so nothing keeps them on it`)
+		return
+	end
+
+	local zone = Zone.new(bounds)
+
+	zone.localPlayerExited:Connect(function()
+		local character = LocalPlayer.Character
+		local humanoid = character and character:FindFirstChildOfClass("Humanoid")
+
+		-- A body lost to the void reads as leaving too, and the respawn already lands them home
+		if not humanoid or humanoid.Health <= 0 then
+			return
+		end
+
+		TeleportController:TeleportToBase()
+		NotificationController:NotifyNormal({
+			Text = FENCE_NOTIFICATION,
+			Duration = 3,
+			Sound = "Reject",
+			Effect = "Error",
+		})
+	end)
+
+	self._baseFence = zone
 end
 
 -- One of the player's structures of `category`. BEWARE: blocks until they have one -- steps 1 and 2 are what make that safe.
@@ -652,36 +708,44 @@ end
 
 -- Dims to a tool's hotbar slot, via a resolver since neither the tool nor its slot holds still. Nil hides it.
 function TutorialController:SpotlightHotbarSlot(resolveTool: () -> Tool?): { Destroy: () -> () }
+	return self:SpotlightFrame(function()
+		local tool = resolveTool()
+		return tool and InventoryController:GetSlotFrame(tool)
+	end)
+end
+
+-- Dims to a frame with an arrow bobbing over it, via a resolver so one cue can hop between targets. Nil hides it.
+function TutorialController:SpotlightFrame(resolveFrame: () -> GuiObject?): { Destroy: () -> () }
 	local spotlight = self:GetSpotlight()
 	local currentFrame
 
 	-- In the spotlight's own container, so it draws over the dim in the same screen space the hole is placed in
 	local arrow = Instance.new("ImageLabel")
-	arrow.Name = "HotbarSlotArrow"
-	arrow.Image = SLOT_ARROW_IMAGE
-	arrow.ImageColor3 = SLOT_ARROW_COLOR
+	arrow.Name = "SpotlightArrow"
+	arrow.Image = FRAME_ARROW_IMAGE
+	arrow.ImageColor3 = FRAME_ARROW_COLOR
 	arrow.BackgroundTransparency = 1
 	arrow.ScaleType = Enum.ScaleType.Fit
 	arrow.AnchorPoint = Vector2.new(0.5, 1)
-	arrow.ZIndex = SLOT_ARROW_ZINDEX
+	arrow.ZIndex = FRAME_ARROW_ZINDEX
 	arrow.Visible = false
 	arrow.Parent = spotlight.container
 
 	local clock = 0
 	local heartbeat = RunService.Heartbeat:Connect(function(dt)
-		local tool = resolveTool()
-		local frame = tool and InventoryController:GetSlotFrame(tool)
+		local frame = resolveFrame()
 		arrow.Visible = frame ~= nil
 
-		-- Every frame, since the slot shifts as the bar lays out and the bob never stops
+		-- Every frame, since the target shifts as its gui lays out and the bob never stops
 		if frame then
-			clock += dt * SLOT_ARROW_BOB_SPEED
-			local size = frame.AbsoluteSize.X * SLOT_ARROW_SCALE
-			local bob = (math.sin(clock) + 1) / 2 * SLOT_ARROW_BOB_AMPLITUDE
+			clock += dt * FRAME_ARROW_BOB_SPEED
+			-- The shorter side, so a wide button doesn't get an arrow sized to its width
+			local size = math.min(frame.AbsoluteSize.X, frame.AbsoluteSize.Y) * FRAME_ARROW_SCALE
+			local bob = (math.sin(clock) + 1) / 2 * FRAME_ARROW_BOB_AMPLITUDE
 			arrow.Size = UDim2.fromOffset(size, size)
 			arrow.Position = UDim2.fromOffset(
 				frame.AbsolutePosition.X + frame.AbsoluteSize.X / 2,
-				frame.AbsolutePosition.Y - HUD_SPOTLIGHT_PADDING - SLOT_ARROW_GAP - bob
+				frame.AbsolutePosition.Y - HUD_SPOTLIGHT_PADDING - FRAME_ARROW_GAP - bob
 			)
 		end
 
