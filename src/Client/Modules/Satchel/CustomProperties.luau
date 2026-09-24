@@ -1,4 +1,6 @@
 return {
+	BackgroundColor3 = Color3.fromRGB(30, 30, 30),
+	BackgroundTransparency = 0.45,
 	EquipBorderSizePixel = 2,
 	EquipBorderColor3 = Color3.fromRGB(255, 255, 255),
 	CornerRadius = UDim.new(0.1, 0),

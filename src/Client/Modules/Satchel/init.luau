@@ -13,6 +13,7 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local RunService = game:GetService("RunService")
 local StarterGui = game:GetService("StarterGui")
 local TextChatService = game:GetService("TextChatService")
+local TweenService = game:GetService("TweenService")
 local UserInputService = game:GetService("UserInputService")
 local VRService = game:GetService("VRService")
 local PlayerGui: Instance = Players.LocalPlayer:WaitForChild("PlayerGui")
@@ -67,9 +68,11 @@ local SLOT_CORNER_RADIUS: UDim = CustomProperties["CornerRadius"] or UDim.new(0.
 local SLOT_BORDER_COLOR: Color3 = Color3.new(1, 1, 1) -- Appears when dragging
 
 -- Tooltips
-local TOOLTIP_CORNER_RADIUS: UDim = SLOT_CORNER_RADIUS - UDim.new(0, 5) or UDim.new(0, 3)
+local TOOLTIP_CORNER_RADIUS: UDim = UDim.new(0, 6)
 local TOOLTIP_BACKGROUND_COLOR: Color3 = CustomProperties["BackgroundColor3"]
 	or Color3.new(25 / 255, 27 / 255, 29 / 255)
+local TOOLTIP_BACKGROUND_TRANSPARENCY: number = 0.2 -- More solid than the panel so the coloured text reads over the world
+local TOOLTIP_FADE_TWEEN_INFO: TweenInfo = TweenInfo.new(0.15, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
 local TOOLTIP_PADDING: number = 10
 local TOOLTIP_HEIGHT: number = 16
 local TOOLTIP_OFFSET: number = -5 -- From to
@@ -98,7 +101,7 @@ local PINNED_TOOL_SLOT: number = 1
 local INVENTORY_ROWS_FULL: number = 4
 local INVENTORY_ROWS_VR: number = 3
 local INVENTORY_ROWS_MINI: number = 2
-local INVENTORY_HEADER_SIZE: number = 40
+local INVENTORY_HEADER_SIZE: number = 50
 local INVENTORY_ARROWS_BUFFER_VR: number = 40
 
 -- Text
@@ -106,20 +109,48 @@ local TEXT_COLOR: Color3 = CustomProperties["TextColor3"] or Color3.new(1, 1, 1)
 local TEXT_STROKE_TRANSPARENCY: number = CustomProperties["TextStrokeTransparency"] or 0.5
 local TEXT_STROKE_COLOR: Color3 = CustomProperties["TextStrokeColor3"] or Color3.new(0, 0, 0)
 
+-- Theme
+local STROKE_IDLE_COLOR: Color3 = Color3.fromRGB(255, 255, 255)
+local STROKE_IDLE_TRANSPARENCY: number = 0.75
+local TEXT_OUTLINE_THICKNESS: number = 1
+local TEXT_OUTLINE_TRANSPARENCY: number = 0.3
+local HEADER_SUBTITLE_COLOR: Color3 = Color3.fromRGB(180, 180, 180)
+local HEADER_STROKE_COLOR: Color3 = Color3.fromRGB(20, 20, 20)
+
 -- Search
 local SEARCH_BACKGROUND_COLOR: Color3 = Color3.fromRGB(20, 20, 20)
-local SEARCH_BACKGROUND_TRANSPARENCY_DEFAULT: number = 0.5
+local SEARCH_BACKGROUND_TRANSPARENCY_DEFAULT: number = 0.4
 local SEARCH_BACKGROUND_TRANSPARENCY: number = SEARCH_BACKGROUND_TRANSPARENCY_DEFAULT * PREFERRED_TRANSPARENCY
-local SEARCH_BORDER_COLOR: Color3 = Color3.fromRGB(0, 0, 0)
-local SEARCH_BORDER_TRANSPARENCY: number = 0.4
+local SEARCH_BORDER_COLOR: Color3 = STROKE_IDLE_COLOR
+local SEARCH_BORDER_TRANSPARENCY: number = STROKE_IDLE_TRANSPARENCY
 local SEARCH_BORDER_THICKNESS: number = 0.06
 local SEARCH_TEXT_PLACEHOLDER: string = "Search"
+local SEARCH_PLACEHOLDER_COLOR: Color3 = Color3.fromRGB(150, 150, 150)
 local SEARCH_TEXT_OFFSET: number = 8
-local SEARCH_TEXT: string = ""
-local SEARCH_CORNER_RADIUS: UDim = UDim.new(0, 0)
+local SEARCH_CORNER_RADIUS: UDim = UDim.new(0, 6)
 local SEARCH_IMAGE_X: string = "rbxasset://textures/ui/InspectMenu/x.png"
 local SEARCH_BUFFER_PIXELS: number = 5
 local SEARCH_WIDTH_PIXELS: number = 200
+local SEARCH_HEIGHT_PIXELS: number = 32
+
+-- Categories
+local CATEGORY_TAB_SIZE_PIXELS: number = 60 -- Max; shrinks so every tab fits beside a short (phone) inventory
+local CATEGORY_TAB_BUFFER_PIXELS: number = 5
+local CATEGORY_TAB_GLOW_COLOR: Color3 = Color3.fromRGB(110, 110, 110)
+local CATEGORY_TAB_GLOW_TWEEN_INFO: TweenInfo = TweenInfo.new(0.3, Enum.EasingStyle.Sine, Enum.EasingDirection.Out)
+
+-- Inventory tabs in rail order; Tags are the server's tool tags, and a blank Icon gives the tab's whole face to its name
+local CATEGORIES = {
+	{ Name = "All", Title = "All Items", Icon = "" },
+	{ Name = "Ingredients", Title = "Ingredients", Icon = "rbxassetid://129905030097565", Tags = { "IngredientTool" } },
+	{
+		Name = "Sticks",
+		Title = "Sticks",
+		Icon = "rbxassetid://110348505504837",
+		Tags = { "StickTool", "FilledStickTool" },
+	},
+	{ Name = "Structures", Title = "Structures", Icon = "rbxassetid://125242284221594", Tags = { "StructureTool" } },
+}
 
 -- Misc
 local FONT_FAMILY: Font = CustomProperties["FontFace"] or Font.new("rbxasset://fonts/families/BuilderSans.json")
@@ -181,6 +212,8 @@ local IsTenFootInterface: boolean = GuiService:IsTenFootInterface()
 if IsTenFootInterface then
 	ICON_SIZE_PIXELS = 100
 	FONT_SIZE = 24
+	INVENTORY_HEADER_SIZE = 64
+	SEARCH_HEIGHT_PIXELS = 48
 end
 
 local GamepadActionsBound: boolean = false
@@ -203,6 +236,8 @@ local UIGridFrame: Frame = nil
 local UIGridLayout: UIGridLayout = nil
 local ScrollUpInventoryButton: any = nil
 local ScrollDownInventoryButton: any = nil
+local HeaderTitle: TextLabel = nil
+local HeaderSubtitle: TextLabel = nil
 local changeToolFunc: any = nil
 
 local Character: Model = Player.Character or Player.CharacterAdded:Wait()
@@ -220,7 +255,9 @@ local StarterToolFound: boolean = false -- Special handling is required for the 
 local PopulatingInventory: boolean = false -- True only while slotting tools that already exist on the character at spawn
 local WholeThingEnabled: boolean = false
 local TextBoxFocused: boolean = false -- ANY TextBox, not just the search box
-local ViewingSearchResults: boolean = false -- If the results of a search are currently being viewed
+local ViewingSearchResults: boolean = false -- If a search or a category tab is currently filtering the inventory
+local SelectedCategory: any = CATEGORIES[1]
+local SearchTerms: { [string]: boolean } = {}
 -- local HotkeyStrings = {} -- Used for eating/releasing hotkeys
 local CharConns: { RBXScriptConnection } = {} -- Holds character Connections to be cleared later
 local GamepadEnabled: boolean = false -- determines if our gui needs to be gamepad friendly
@@ -299,6 +336,55 @@ local function AdjustInventoryFrames(): ()
 		slot.Frame.Visible = (slot.Tool ~= nil)
 	end
 	UpdateScrollingFrameCanvasSize()
+end
+
+-- Whether a tool belongs under an inventory tab; a tab with no tags (All) takes everything
+local function ToolInCategory(tool: Instance, category: any): boolean
+	if not category.Tags then
+		return true
+	end
+	for _, tag: string in category.Tags do
+		if tool:HasTag(tag) then
+			return true
+		end
+	end
+	return false
+end
+
+-- Shows only the inventory slots in the selected tab that match the search, best matches first
+local function FilterInventorySlots(): ()
+	local searching: boolean = next(SearchTerms) ~= nil
+	for i: number = NumberOfHotbarSlots + 1, #Slots do
+		local slot: any = Slots[i]
+		if Dragging[slot.Frame] then
+			continue
+		end
+
+		local hits: number = if searching then slot:CheckTerms(SearchTerms) else 0
+		local shown: boolean = slot.Tool ~= nil
+			and ToolInCategory(slot.Tool, SelectedCategory)
+			and (not searching or hits > 0)
+
+		-- Hidden slots leave the grid so the canvas size only counts what's shown
+		slot.Frame.Visible = shown
+		slot.Frame.Parent = if shown then UIGridFrame else InventoryFrame
+		-- Each extra hit outweighs any slot index, so best matches lead and ties keep slot order
+		slot.Frame.LayoutOrder = slot.Index - hits * #Slots
+	end
+
+	ViewingSearchResults = searching or SelectedCategory.Tags ~= nil
+	UpdateScrollingFrameCanvasSize()
+end
+
+-- Writes how many items the selected tab holds, stacks summed and the hotbar included
+local function UpdateCategoryCount(): ()
+	local count: number = 0
+	for _, slot: any in Slots do
+		if slot.Tool and ToolInCategory(slot.Tool, SelectedCategory) then
+			count += slot.Tool:GetAttribute("Count") or 1
+		end
+	end
+	HeaderSubtitle.Text = `{if SelectedCategory.Tags then SelectedCategory.Name else "Items"}: {count}`
 end
 
 local function UpdateBackpackLayout(): ()
@@ -493,6 +579,7 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 			else
 				AmountLabel.Visible = false
 			end
+			UpdateCategoryCount()
 		end
 		updateAmount()
 
@@ -543,6 +630,11 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 
 		SlotsByTool[tool] = self
 		LowestEmptySlot = FindLowestEmpty()
+
+		-- Covers every way a tool lands in the inventory (pickup, drag, swap) while a tab or search is filtering
+		if not hotbarSlot and ViewingSearchResults then
+			FilterInventorySlots()
+		end
 	end
 
 	-- Empty the slot of any tool data
@@ -611,9 +703,9 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 			lastEquippedSlot = slot
 			HighlightFrame.Color = SLOT_EQUIP_COLOR
 			HighlightFrame.Transparency = 0
-		else -- In the Backpack: hide the border entirely
-			HighlightFrame.Color = Color3.new(0, 0, 0)
-			HighlightFrame.Transparency = 1
+		else -- In the Backpack: a faint idle border
+			HighlightFrame.Color = STROKE_IDLE_COLOR
+			HighlightFrame.Transparency = STROKE_IDLE_TRANSPARENCY
 		end
 		UpdateSlotFading()
 	end
@@ -850,7 +942,9 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		ToolTip.TextWrapped = false
 		ToolTip.TextYAlignment = Enum.TextYAlignment.Center
 		ToolTip.BackgroundColor3 = TOOLTIP_BACKGROUND_COLOR
-		ToolTip.BackgroundTransparency = 0.2 --SLOT_LOCKED_TRANSPARENCY
+		-- Starts fully transparent; the hover fade brings it in
+		ToolTip.BackgroundTransparency = 1
+		ToolTip.TextTransparency = 1
 		ToolTip.AnchorPoint = Vector2.new(0.5, 1)
 		ToolTip.BorderSizePixel = 0
 		ToolTip.Visible = false
@@ -859,8 +953,23 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 
 		local ToolTipCorner: UICorner = Instance.new("UICorner")
 		ToolTipCorner.Name = "Corner"
-		ToolTipCorner.CornerRadius = UDim.new(0.3, 0)
+		ToolTipCorner.CornerRadius = TOOLTIP_CORNER_RADIUS
 		ToolTipCorner.Parent = ToolTip
+
+		local ToolTipBorder: UIStroke = Instance.new("UIStroke")
+		ToolTipBorder.Name = "Border"
+		ToolTipBorder.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+		ToolTipBorder.Thickness = SLOT_EQUIP_THICKNESS
+		ToolTipBorder.Color = STROKE_IDLE_COLOR
+		ToolTipBorder.Transparency = 1
+		ToolTipBorder.Parent = ToolTip
+
+		local ToolTipTextStroke: UIStroke = Instance.new("UIStroke")
+		ToolTipTextStroke.Name = "TextStroke"
+		ToolTipTextStroke.Thickness = TEXT_OUTLINE_THICKNESS
+		ToolTipTextStroke.Color = HEADER_STROKE_COLOR
+		ToolTipTextStroke.Transparency = 1
+		ToolTipTextStroke.Parent = ToolTip
 
 		local ToolTipPadding: UIPadding = Instance.new("UIPadding")
 		ToolTipPadding.PaddingLeft = UDim.new(0, TOOLTIP_PADDING)
@@ -868,13 +977,24 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 		ToolTipPadding.PaddingTop = UDim.new(0, TOOLTIP_PADDING)
 		ToolTipPadding.PaddingBottom = UDim.new(0, TOOLTIP_PADDING)
 		ToolTipPadding.Parent = ToolTip
-		SlotFrame.MouseEnter:Connect(function(): ()
-			if ToolTip.Text ~= "" then
+
+		-- Fades in on mouse hover only; touch goes straight to Press, so phones never get one stuck on screen
+		SlotFrame:GetPropertyChangedSignal("GuiState"):Connect(function(): ()
+			local shown: boolean = SlotFrame.GuiState == Enum.GuiState.Hover and ToolTip.Text ~= ""
+			if shown then
 				ToolTip.Visible = true
 			end
-		end)
-		SlotFrame.MouseLeave:Connect(function(): ()
-			ToolTip.Visible = false
+
+			TweenService:Create(ToolTip, TOOLTIP_FADE_TWEEN_INFO, {
+				BackgroundTransparency = if shown then TOOLTIP_BACKGROUND_TRANSPARENCY else 1,
+				TextTransparency = if shown then 0 else 1,
+			}):Play()
+			TweenService:Create(ToolTipBorder, TOOLTIP_FADE_TWEEN_INFO, {
+				Transparency = if shown then STROKE_IDLE_TRANSPARENCY else 1,
+			}):Play()
+			TweenService:Create(ToolTipTextStroke, TOOLTIP_FADE_TWEEN_INFO, {
+				Transparency = if shown then TEXT_OUTLINE_TRANSPARENCY else 1,
+			}):Play()
 		end)
 
 		function slot:MoveToInventory(): ...any
@@ -885,11 +1005,6 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 				newSlot:Fill(tool)
 				if IsEquipped(tool) then -- Also unequip it --NOTE: HopperBin
 					UnequipAllTools()
-				end
-				-- Also hide the inventory slot if we're showing results right now
-				if ViewingSearchResults then
-					newSlot.Frame.Visible = false
-					newSlot.Parent = InventoryFrame
 				end
 			end
 		end
@@ -1038,11 +1153,6 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 							if IsEquipped(tool) then --NOTE: HopperBin
 								UnequipAllTools()
 							end
-							-- Also hide the inventory slot if we're showing results right now
-							if ViewingSearchResults then
-								slot.Frame.Visible = false
-								slot.Frame.Parent = InventoryFrame
-							end
 						end
 					end
 				end
@@ -1060,6 +1170,9 @@ local function MakeSlot(parent: Instance, initIndex: number?): GuiObject
 			lastUpTime = now
 		end)
 	end
+
+	-- Builds the idle border up front so empty hotbar slots wear it too
+	slot:UpdateEquipView(true)
 
 	-- All ready!
 	SlotFrame.Parent = parent
@@ -1187,6 +1300,7 @@ local function OnChildRemoved(child: Instance): () -- From Character or Backpack
 		elseif not InventoryFrame.Visible then
 			AdjustHotbarFrames()
 		end
+		UpdateCategoryCount()
 	end
 
 	if tool :: any == ActiveHopper then --NOTE: HopperBin
@@ -1746,7 +1860,7 @@ RightBumperButton.Position = UDim2.new(1, 0, 0.5, -RightBumperButton.Size.Y.Offs
 InventoryFrame = Instance.new("Frame")
 InventoryFrame.Name = "Inventory"
 InventoryFrame.Size = UDim2.fromScale(1, 1)
-InventoryFrame.BackgroundTransparency = 0.3
+InventoryFrame.BackgroundTransparency = BACKGROUND_TRANSPARENCY
 InventoryFrame.BackgroundColor3 = BACKGROUND_COLOR
 InventoryFrame.Active = true
 InventoryFrame.Visible = false
@@ -1756,6 +1870,46 @@ local inventoryFrameCorner = Instance.new("UICorner")
 inventoryFrameCorner.Name = "Corner"
 inventoryFrameCorner.CornerRadius = UDim.new(0.02, 0)
 inventoryFrameCorner.Parent = InventoryFrame
+
+-- Make the header's title and item count, which sit left of the search box
+local headerFrame: Frame = Instance.new("Frame")
+headerFrame.Name = "Header"
+headerFrame.BackgroundTransparency = 1
+headerFrame.Size = UDim2.new(1, -SEARCH_WIDTH_PIXELS - ICON_BUFFER_PIXELS, 0, INVENTORY_HEADER_SIZE)
+headerFrame.Position = UDim2.fromOffset(ICON_BUFFER_PIXELS, 0)
+headerFrame.Parent = InventoryFrame
+
+HeaderTitle = Instance.new("TextLabel")
+HeaderTitle.Name = "Title"
+HeaderTitle.BackgroundTransparency = 1
+HeaderTitle.Text = SelectedCategory.Title
+HeaderTitle.TextColor3 = TEXT_COLOR
+HeaderTitle.FontFace = Font.new(FONT_FAMILY.Family, Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+HeaderTitle.TextSize = FONT_SIZE + 4
+HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
+HeaderTitle.TextYAlignment = Enum.TextYAlignment.Bottom
+HeaderTitle.Size = UDim2.fromScale(1, 0.55)
+HeaderTitle.Parent = headerFrame
+
+HeaderSubtitle = Instance.new("TextLabel")
+HeaderSubtitle.Name = "Subtitle"
+HeaderSubtitle.BackgroundTransparency = 1
+HeaderSubtitle.TextColor3 = HEADER_SUBTITLE_COLOR
+HeaderSubtitle.FontFace = Font.new(FONT_FAMILY.Family, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
+HeaderSubtitle.TextSize = FONT_SIZE - 2
+HeaderSubtitle.TextXAlignment = Enum.TextXAlignment.Left
+HeaderSubtitle.TextYAlignment = Enum.TextYAlignment.Top
+HeaderSubtitle.Size = UDim2.fromScale(1, 0.45)
+HeaderSubtitle.Position = UDim2.fromScale(0, 0.55)
+HeaderSubtitle.Parent = headerFrame
+
+for _, label: TextLabel in { HeaderTitle, HeaderSubtitle } do
+	local labelStroke: UIStroke = Instance.new("UIStroke")
+	labelStroke.Thickness = TEXT_OUTLINE_THICKNESS
+	labelStroke.Transparency = TEXT_OUTLINE_TRANSPARENCY
+	labelStroke.Color = HEADER_STROKE_COLOR
+	labelStroke.Parent = label
+end
 
 -- Add corners to the InventoryFrame
 VRInventorySelector = Instance.new("TextButton")
@@ -1854,6 +2008,116 @@ end)
 
 -- Position the frames and sizes for the Backpack GUI elements
 UpdateBackpackLayout()
+
+-- Make the category rail, which hangs off the Inventory's left edge so it shows and hides with it
+local categoryTabSize: number = math.min(
+	CATEGORY_TAB_SIZE_PIXELS,
+	(InventoryFrame.Size.Y.Offset - (#CATEGORIES - 1) * CATEGORY_TAB_BUFFER_PIXELS) / #CATEGORIES
+)
+
+local categoryFrame: Frame = Instance.new("Frame")
+categoryFrame.Name = "Categories"
+categoryFrame.BackgroundTransparency = 1
+categoryFrame.Size = UDim2.new(0, categoryTabSize, 1, 0)
+categoryFrame.Position = UDim2.fromOffset(-categoryTabSize - CATEGORY_TAB_BUFFER_PIXELS, 0)
+categoryFrame.Parent = InventoryFrame
+
+local categoryLayout: UIListLayout = Instance.new("UIListLayout")
+categoryLayout.Padding = UDim.new(0, CATEGORY_TAB_BUFFER_PIXELS)
+categoryLayout.SortOrder = Enum.SortOrder.LayoutOrder
+categoryLayout.Parent = categoryFrame
+
+local categoryStrokes: { [any]: UIStroke } = {}
+
+-- Rings the selected tab in the equip colour and leaves the rest borderless
+local function PaintCategoryTabs(): ()
+	for category: any, stroke: UIStroke in categoryStrokes do
+		stroke.Transparency = if category == SelectedCategory then 0 else 1
+	end
+end
+
+for order: number, category: any in CATEGORIES do
+	local tab: TextButton = Instance.new("TextButton")
+	tab.Name = category.Name
+	tab.Text = ""
+	tab.LayoutOrder = order
+	tab.Size = UDim2.fromOffset(categoryTabSize, categoryTabSize)
+	tab.BackgroundColor3 = BACKGROUND_COLOR
+	tab.BackgroundTransparency = BACKGROUND_TRANSPARENCY
+	tab.BorderSizePixel = 0
+	tab.AutoButtonColor = false
+	tab.Parent = categoryFrame
+
+	-- Eases toward a lighter fill while hovered or pressed; GuiState since touch doesn't reliably fire MouseLeave
+	tab:GetPropertyChangedSignal("GuiState"):Connect(function(): ()
+		local glowing: boolean = tab.GuiState == Enum.GuiState.Hover or tab.GuiState == Enum.GuiState.Press
+		TweenService:Create(tab, CATEGORY_TAB_GLOW_TWEEN_INFO, {
+			BackgroundColor3 = if glowing then CATEGORY_TAB_GLOW_COLOR else BACKGROUND_COLOR,
+		}):Play()
+	end)
+
+	local tabCorner: UICorner = Instance.new("UICorner")
+	tabCorner.Name = "Corner"
+	tabCorner.CornerRadius = SLOT_CORNER_RADIUS
+	tabCorner.Parent = tab
+
+	local tabStroke: UIStroke = Instance.new("UIStroke")
+	tabStroke.Name = "Border"
+	tabStroke.Thickness = SLOT_EQUIP_THICKNESS
+	tabStroke.ApplyStrokeMode = Enum.ApplyStrokeMode.Border
+	tabStroke.Color = SLOT_EQUIP_COLOR
+	tabStroke.Parent = tab
+	categoryStrokes[category] = tabStroke
+
+	local tabIcon: ImageLabel = Instance.new("ImageLabel")
+	tabIcon.Name = "Icon"
+	tabIcon.BackgroundTransparency = 1
+	tabIcon.Image = category.Icon
+	tabIcon.ScaleType = Enum.ScaleType.Fit
+	tabIcon.AnchorPoint = Vector2.new(0.5, 1)
+	tabIcon.Size = UDim2.fromScale(0.62, 0.62)
+	tabIcon.Position = UDim2.fromScale(0.5, 0.94)
+	tabIcon.Parent = tab
+
+	local tabLabel: TextLabel = Instance.new("TextLabel")
+	tabLabel.Name = "Label"
+	tabLabel.BackgroundTransparency = 1
+	tabLabel.Text = category.Name
+	tabLabel.TextColor3 = TEXT_COLOR
+	tabLabel.FontFace = Font.new(FONT_FAMILY.Family, Enum.FontWeight.Heavy, Enum.FontStyle.Normal)
+	tabLabel.TextScaled = true
+	tabLabel.AnchorPoint = Vector2.new(0.5, 0)
+	-- The name heads the tab above its icon, or takes the whole face for a tab without one
+	if category.Icon ~= "" then
+		tabLabel.Size = UDim2.new(1, -SLOT_EQUIP_THICKNESS * 2, 0.26, 0)
+		tabLabel.Position = UDim2.fromScale(0.5, 0.04)
+	else
+		tabLabel.Size = UDim2.new(1, -SLOT_EQUIP_THICKNESS * 2, 1, -SLOT_EQUIP_THICKNESS * 2)
+		tabLabel.Position = UDim2.new(0.5, 0, 0, SLOT_EQUIP_THICKNESS)
+	end
+	tabLabel.Parent = tab
+
+	local tabLabelSizeConstraint: UITextSizeConstraint = Instance.new("UITextSizeConstraint")
+	tabLabelSizeConstraint.MaxTextSize = FONT_SIZE - 2
+	tabLabelSizeConstraint.Parent = tabLabel
+
+	local tabLabelStroke: UIStroke = Instance.new("UIStroke")
+	tabLabelStroke.Thickness = TEXT_OUTLINE_THICKNESS
+	tabLabelStroke.Color = HEADER_STROKE_COLOR
+	tabLabelStroke.Parent = tabLabel
+
+	tab.Activated:Connect(function(): ()
+		SelectedCategory = category
+		PaintCategoryTabs()
+		HeaderTitle.Text = category.Title
+		FilterInventorySlots()
+		ScrollingFrame.CanvasPosition = Vector2.zero
+		UpdateCategoryCount()
+	end)
+end
+
+PaintCategoryTabs()
+UpdateCategoryCount()
 
 --Make the gamepad hint frame
 local gamepadHintsFrame: Frame = Instance.new("Frame")
@@ -1983,13 +2247,13 @@ do -- Search stuff
 	searchFrame.Name = "Search"
 	searchFrame.BackgroundColor3 = SEARCH_BACKGROUND_COLOR
 	searchFrame.BackgroundTransparency = SEARCH_BACKGROUND_TRANSPARENCY
-	searchFrame.Size = UDim2.new(
+	searchFrame.Size = UDim2.fromOffset(SEARCH_WIDTH_PIXELS - (SEARCH_BUFFER_PIXELS * 2), SEARCH_HEIGHT_PIXELS)
+	searchFrame.Position = UDim2.new(
+		1,
+		-searchFrame.Size.X.Offset - SEARCH_BUFFER_PIXELS,
 		0,
-		SEARCH_WIDTH_PIXELS - (SEARCH_BUFFER_PIXELS * 2),
-		0,
-		INVENTORY_HEADER_SIZE - (SEARCH_BUFFER_PIXELS * 2)
+		(INVENTORY_HEADER_SIZE - SEARCH_HEIGHT_PIXELS) / 2
 	)
-	searchFrame.Position = UDim2.new(1, -searchFrame.Size.X.Offset - SEARCH_BUFFER_PIXELS, 0, SEARCH_BUFFER_PIXELS)
 	searchFrame.Parent = InventoryFrame
 
 	local searchFrameCorner: UICorner = Instance.new("UICorner")
@@ -2014,9 +2278,7 @@ do -- Search stuff
 	searchBox.TextStrokeColor3 = TEXT_STROKE_COLOR
 	searchBox.FontFace = Font.new(FONT_FAMILY.Family, Enum.FontWeight.Bold, Enum.FontStyle.Normal)
 	searchBox.PlaceholderText = SEARCH_TEXT_PLACEHOLDER
-	searchBox.TextColor3 = TEXT_COLOR
-	searchBox.TextTransparency = TEXT_STROKE_TRANSPARENCY
-	searchBox.TextStrokeColor3 = TEXT_STROKE_COLOR
+	searchBox.PlaceholderColor3 = SEARCH_PLACEHOLDER_COLOR
 	searchBox.ClearTextOnFocus = false
 	searchBox.TextTruncate = Enum.TextTruncate.AtEnd
 	searchBox.TextSize = FONT_SIZE
@@ -2026,7 +2288,7 @@ do -- Search stuff
 		0,
 		(SEARCH_WIDTH_PIXELS - (SEARCH_BUFFER_PIXELS * 2)) - (SEARCH_TEXT_OFFSET * 2) - 20,
 		0,
-		INVENTORY_HEADER_SIZE - (SEARCH_BUFFER_PIXELS * 2) - (SEARCH_TEXT_OFFSET * 2)
+		SEARCH_HEIGHT_PIXELS - (SEARCH_TEXT_OFFSET * 2)
 	)
 	searchBox.AnchorPoint = Vector2.new(0, 0.5)
 	searchBox.Position = UDim2.new(0, SEARCH_TEXT_OFFSET, 0.5, 0)
@@ -2059,73 +2321,26 @@ do -- Search stuff
 	xImage.BorderSizePixel = 0
 	xImage.Parent = xButton
 
+	-- Rebuilds the search terms from the box and refilters the inventory against them and the selected tab
 	local function search(): ()
-		local terms: { [string]: boolean } = {}
+		table.clear(SearchTerms)
 		for word: string in searchBox.Text:gmatch("%S+") do
-			terms[word:lower()] = true
+			SearchTerms[word:lower()] = true
 		end
 
-		local hitTable = {}
-		for i: number = NumberOfHotbarSlots + 1, #Slots do -- Only search inventory slots
-			local slot = Slots[i]
-			local hits: any = slot:CheckTerms(terms)
-			table.insert(hitTable, { slot, hits })
-			slot.Frame.Visible = false
-			slot.Frame.Parent = InventoryFrame
-		end
-
-		table.sort(hitTable, function(left: any, right: any): boolean
-			return left[2] > right[2]
-		end)
-		ViewingSearchResults = true
-
-		local hitCount: number = 0
-		for _, data in ipairs(hitTable) do
-			local slot, hits: any = data[1], data[2]
-			if hits > 0 then
-				slot.Frame.Visible = true
-				slot.Frame.Parent = UIGridFrame
-				slot.Frame.LayoutOrder = NumberOfHotbarSlots + hitCount
-				hitCount = hitCount + 1
-			end
-		end
-
-		ScrollingFrame.CanvasPosition = Vector2.new(0, 0)
-		UpdateScrollingFrameCanvasSize()
-
-		xButton.ZIndex = 3
+		FilterInventorySlots()
+		ScrollingFrame.CanvasPosition = Vector2.zero
 	end
 
-	local function clearResults(): ()
-		if xButton.ZIndex > 0 then
-			ViewingSearchResults = false
-			for i: number = NumberOfHotbarSlots + 1, #Slots do
-				local slot = Slots[i]
-				slot.Frame.LayoutOrder = slot.Index
-				slot.Frame.Parent = UIGridFrame
-				slot.Frame.Visible = true
-			end
-			xButton.ZIndex = 0
-		end
-		UpdateScrollingFrameCanvasSize()
-	end
-
+	-- Clearing the text refilters through onChanged, so the selected tab keeps holding
 	local function reset(): ()
-		clearResults()
 		searchBox.Text = ""
 	end
 
 	local function onChanged(property: string): ()
 		if property == "Text" then
-			local text: string = searchBox.Text
-			if text == "" then
-				searchBox.TextTransparency = TEXT_STROKE_TRANSPARENCY
-				clearResults()
-			elseif text ~= SEARCH_TEXT then
-				searchBox.TextTransparency = 0
-				search()
-			end
-			xButton.Visible = text ~= "" and text ~= SEARCH_TEXT
+			search()
+			xButton.Visible = searchBox.Text ~= ""
 		end
 	end
 
@@ -2353,6 +2568,11 @@ local function OnPreferredTransparencyChanged(): ()
 	SLOT_LOCKED_TRANSPARENCY = SLOT_LOCKED_TRANSPARENCY_DEFAULT * preferredTransparency
 	for _, slot in ipairs(Slots) do
 		slot.Frame.BackgroundTransparency = SLOT_LOCKED_TRANSPARENCY
+	end
+
+	for _, stroke: UIStroke in categoryStrokes do
+		local tab: TextButton = stroke.Parent :: TextButton
+		tab.BackgroundTransparency = BACKGROUND_TRANSPARENCY
 	end
 
 	SEARCH_BACKGROUND_TRANSPARENCY = SEARCH_BACKGROUND_TRANSPARENCY_DEFAULT * preferredTransparency
