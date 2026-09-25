@@ -113,6 +113,8 @@ local TutorialController = {
 	LogStepEvent = Network.Event("LogTutorialStep"),
 
 	SequenceFinish = Signal.new(),
+	-- (key) whenever a step is logged, the same key the funnel hears
+	OnStepLogged = Signal.new(),
 
 	-- Every variant's steps: which one runs isn't known until the assignment replicates, and requiring only defines
 	_sequences = {},
@@ -414,6 +416,39 @@ end
 -- Logs a funnel step by Key; the server owns the ordering and the names.
 function TutorialController:LogStep(key: string)
 	self.LogStepEvent:FireServer(key)
+	self.OnStepLogged:Fire(key)
+end
+
+-- The banner's title and description as the player sees them, or nil before the run has opened it. Read-only.
+function TutorialController:GetBannerText(): (string?, string?)
+	if not self.TutorialUI then
+		return nil, nil
+	end
+
+	local holder = self.TutorialUI.Holder
+	return holder.Title.Text, holder.Description.Text
+end
+
+-- The spotlight's hole while it's up, and whether a frame arrow bobs over it. Never creates a spotlight. Read-only.
+function TutorialController:GetSpotlightFocus(): (GuiObject?, boolean)
+	local spotlight = self.Spotlight
+	if not (spotlight and spotlight.active) then
+		return nil, false
+	end
+
+	local arrow = spotlight.container:FindFirstChild("SpotlightArrow")
+	return spotlight.circleMask, arrow ~= nil and arrow.Visible
+end
+
+-- A base's tutorial guide wherever it is -- parked, or out in the world during its step. Nil if unauthored. Read-only.
+function TutorialController:GetGuideModel(baseName: string, name: string): Model?
+	if self._shownGuide and self._shownGuide.Name == name then
+		return self._shownGuide
+	end
+
+	local holder = ReplicatedStorage:FindFirstChild(GUIDES_FOLDER_NAME)
+	local baseGuides = holder and holder:FindFirstChild(baseName)
+	return baseGuides and baseGuides:FindFirstChild(name)
 end
 
 -- Returns the single shared spotlight used across every tutorial sequence.

@@ -9,6 +9,7 @@ local Packages = ReplicatedStorage.Packages
 local Network = require(ReplicatedStorage.Shared.Network)
 local GuiUtil = require(ReplicatedStorage.Shared.GuiUtil)
 local Keywords = require(ReplicatedStorage.Shared.Config.Keywords)
+local Signal = require(Packages.Signal)
 local Spr = require(Packages.Spr)
 
 -- Local Player
@@ -173,6 +174,9 @@ local NotificationController = {
 	NotifyNormalEvent = Network.Event("NotifyNormal"),
 	NotifyChatEvent = Network.Event("NotifyChat"),
 
+	-- (text, duration) for every toast raised, repeats included, with the text as rendered
+	OnNotified = Signal.new(),
+
 	_activeNotifications = {},
 	_notificationOrder = {},
 	_itemUnlockFrames = {},
@@ -189,6 +193,8 @@ function NotificationController:NotifyNormal(data: NotificationData)
 	-- Keyed on the text shown, so different amounts stay separate while identical ones stack with "[N]"
 	local countValue = if data.Count then data.Count.Value else 0
 	local notification = renderNotificationText(data, countValue, 1)
+
+	self.OnNotified:Fire(notification, notificationDuration)
 
 	-- If already active
 	if self._activeNotifications[notification] then
@@ -335,6 +341,8 @@ function NotificationController:NotifyItem(data: ItemNotificationData)
 	local ui = self.UI
 	local templates = ui.Templates
 	local itemUnlockDuration = data.Duration or DEFAULT_DURATION
+
+	self.OnNotified:Fire(data.Title, itemUnlockDuration)
 
 	if #self._itemUnlockFrames >= MAX_PER_ITEM_UNLOCK_CONTAINER then
 		self:_despawnItemUnlockFrame(self._itemUnlockFrames[1])

@@ -31,7 +31,7 @@ local PlotController = {
 	PurchasePlotEvent = Network.Event("PurchasePlot"),
 	RequestPlotProductEvent = Network.Event("RequestPlotProduct"),
 
-	_plots = {}, -- [model: Model] = Plot
+	_bases = {}, -- [baseModel: Model] = { Cleaner, Plots: { [plotModel: Model] = Plot } }
 	_cleaner = Trove.new(),
 }
 
@@ -58,59 +58,93 @@ end
 
 -- Burns a bought plot's overgrowth back, as an effect since only the server knows a purchase happened.
 function PlotController:PlayClearBurn(plotModel: Model)
-	local plot = self._plots[plotModel]
-	if not plot then
-		return
+	for _, base in self._bases do
+		local plot = base.Plots[plotModel]
+		if plot then
+			plot:PlayClearBurn()
+			return
+		end
 	end
-
-	plot:PlayClearBurn()
 end
 
 -- Repaints every plot's sign. Cheap, and it depends on the local base and how many plots are owned.
 function PlotController:RefreshSigns()
-	for _, plot in self._plots do
-		plot:RefreshSign()
+	for _, base in self._bases do
+		for _, plot in base.Plots do
+			plot:RefreshSign()
+		end
 	end
 end
 
--- Tracks a base's plots once its folder has replicated; the wait lives here, and each Plot follows its own sign.
+-- Builds and paints one plot's sign driver, skipping anything that isn't a plot or is already tracked.
+function PlotController:_addPlot(base, plotModel: Instance, baseId: string)
+	if not Plots.IsPlot(plotModel.Name) or base.Plots[plotModel] then
+		return
+	end
+
+	local plot = base.Cleaner:Construct(Plot, plotModel, baseId)
+	base.Plots[plotModel] = plot
+
+	-- Painted on arrival: an atomic base lands whole, so no later child event would mount the sign
+	plot:RefreshSign()
+end
+
+-- Drops one plot's sign driver, for a plot that's streamed out on its own.
+function PlotController:_removePlot(base, plotModel: Instance)
+	local plot = base.Plots[plotModel]
+	if not plot then
+		return
+	end
+
+	base.Cleaner:Remove(plot)
+	base.Plots[plotModel] = nil
+end
+
+-- Tracks a base's plots once its folder and the player's data are in; the waits live here, so painting never yields.
 function PlotController:_setupBase(baseModel: Model)
+	if self._bases[baseModel] then
+		return
+	end
+
 	local folder = baseModel:WaitForChild(Plots.FOLDER_NAME, CHILD_TIMEOUT)
 	if not folder then
 		warn(`[Plot] {baseModel.Name}'s plot folder never replicated, its signs won't render`)
 		return
 	end
 
-	-- Waiting above yields, so the base can have streamed back out in the meantime
-	if not baseModel.Parent then
+	-- A sign's price reads player data, so it's awaited up front where a streamed-out base is still caught below
+	PlayerDataController:GetReplica():await()
+
+	-- Waiting above yields, so the base can have streamed out or been built by a racing thread
+	if not baseModel.Parent or self._bases[baseModel] then
 		return
 	end
 
+	local base = { Cleaner = self._cleaner:Construct(Trove), Plots = {} }
+	self._bases[baseModel] = base
+
+	-- Followed as well as swept, so a plot streaming in or out on its own is kept up with
+	base.Cleaner:Connect(folder.ChildAdded, function(plotModel)
+		self:_addPlot(base, plotModel, baseModel.Name)
+	end)
+	base.Cleaner:Connect(folder.ChildRemoved, function(plotModel)
+		self:_removePlot(base, plotModel)
+	end)
+
 	for _, plotModel in folder:GetChildren() do
-		-- Anything in the folder the grid doesn't know about isn't ours to drive
-		if not Plots.IsPlot(plotModel.Name) then
-			continue
-		end
-
-		-- A racing thread can have built this plot while the folder wait yielded
-		if self._plots[plotModel] then
-			continue
-		end
-
-		local plot = Plot.new(plotModel, baseModel.Name)
-		self._plots[plotModel] = plot
-		self._cleaner:Add(plot)
+		self:_addPlot(base, plotModel, baseModel.Name)
 	end
 end
 
--- Drops the Plots for a base that's streamed out or been removed.
+-- Drops the Plots for a base that's streamed out or been removed. Keyed by model, since its plots may already be torn off it.
 function PlotController:_removeBase(baseModel: Model)
-	for plotModel, plot in self._plots do
-		if plotModel:IsDescendantOf(baseModel) then
-			self._cleaner:Remove(plot)
-			self._plots[plotModel] = nil
-		end
+	local base = self._bases[baseModel]
+	if not base then
+		return
 	end
+
+	self._cleaner:Remove(base.Cleaner)
+	self._bases[baseModel] = nil
 end
 
 function PlotController:OnStart()

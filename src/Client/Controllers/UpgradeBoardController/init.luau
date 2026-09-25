@@ -197,6 +197,11 @@ function UpgradeBoardController:OnStart()
 		local baseFolder = workspace:WaitForChild("Base")
 
 		self._cleaner:Connect(baseFolder.ChildAdded, function(baseModel)
+			-- Ours streaming back in is a new model, and its nameplate marker arrives hidden again
+			if baseModel.Name == LocalPlayer:GetAttribute("BaseId") then
+				self:_refreshOwnerIcon()
+			end
+
 			self:_setupBase(baseModel)
 		end)
 		self._cleaner:Connect(baseFolder.ChildRemoved, function(baseModel)

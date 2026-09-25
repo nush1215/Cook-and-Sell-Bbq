@@ -1,6 +1,7 @@
 -- Services
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local DataStoreService = game:GetService("DataStoreService")
+local HttpService = game:GetService("HttpService")
 local RunService = game:GetService("RunService")
 local Players = game:GetService("Players")
 
@@ -29,8 +30,13 @@ local MAX_TRACK_SAMPLES = 1800
 -- Dropped in one block rather than one at a time: removing an array's first element copies the whole array,
 -- and at five samples a second on a full track that is a shift of 1800 five times over, every second
 local TRIM_BLOCK = 300
--- Samples taken from one batch, which is also the most ReplayRecorderController sends
+-- Samples and moments taken from one batch, which is also the most ReplayRecorderController sends
 local MAX_BATCH = 16
+local MAX_MOMENT_BATCH = 48
+
+-- Moments one track holds, and how many of the oldest are folded down at once when it's past that
+local MAX_TRACK_MOMENTS = 1500
+local MOMENT_TRIM_BLOCK = 250
 
 -- Where finished tracks land. Its own store, so nothing here can touch player data
 local REPLAY_STORE_NAME = "FtueReplay"
@@ -50,8 +56,8 @@ local ReplayManager = {
 	LogReplaySamplesEvent = Network.Event("LogReplaySamples", {
 		Direction = "ClientToServer",
 		RateLimit = { MaxPerSecond = 5 },
-		Validate = function(_player, samples)
-			return type(samples) == "table"
+		Validate = function(_player, samples, moments)
+			return type(samples) == "table" and type(moments) == "table"
 		end,
 	}),
 
@@ -59,7 +65,9 @@ local ReplayManager = {
 	PlayReplayEvent = Network.Event("PlayReplay", { Direction = "ServerToClient" }),
 	StopReplayEvent = Network.Event("StopReplay", { Direction = "ServerToClient" }),
 
-	_tracks = {}, -- [player] = { Samples }, the run kept for a player still short of the reported step
+	-- [player] = { Samples, Moments, Offset }, the run kept for a player still short of the reported step. Offset is
+	-- how many samples have been trimmed off its front, which the client's moment stamps don't know about
+	_tracks = {},
 	_store = nil, -- the DataStore tracks are saved to, nil where DataStores aren't reachable
 }
 
@@ -78,7 +86,7 @@ end
 -- Opens a track at the tutorial's first step and closes it unsaved once the player is past the reported one.
 function ReplayManager:_onFunnelStep(player: Player, _variant: string, stepIndex: number, stepName: string)
 	if stepIndex == 1 and self:_isEnabled() and math.random() < SAMPLE_RATE then
-		self._tracks[player] = { Samples = {} }
+		self._tracks[player] = { Samples = {}, Moments = {}, Offset = 0 }
 		player:SetAttribute(CONFIG_KEY, true)
 		return
 	end
@@ -88,9 +96,32 @@ function ReplayManager:_onFunnelStep(player: Player, _variant: string, stepIndex
 	end
 end
 
--- Takes one batch of a player's motion track. Every sample is untrusted and is bound for a DataStore and then
--- a viewer's renderer, so anything misshapen is dropped rather than stored.
-function ReplayManager:RecordReplaySamples(player: Player, samples: { any })
+-- Folds every moment before `cut` into the latest of each piece of state it set and drops the one-off events, so a
+-- trimmed track still opens on the screen the player actually had.
+function ReplayManager:_compactMoments(track, cut: number)
+	local latest = {} -- [state key] = index of the last moment before the cut that set it
+
+	for index, moment in track.Moments do
+		local key = moment[1] < cut and ReplayFormat.GetMomentStateKey(moment)
+		if key then
+			latest[key] = index
+		end
+	end
+
+	local compacted = {}
+	for index, moment in track.Moments do
+		local key = moment[1] < cut and ReplayFormat.GetMomentStateKey(moment)
+		if moment[1] >= cut or (key and latest[key] == index) then
+			table.insert(compacted, moment)
+		end
+	end
+
+	track.Moments = compacted
+end
+
+-- Takes one batch of a player's recording. Every sample and moment is untrusted and is bound for a DataStore and
+-- then a viewer's screen, so anything misshapen is dropped rather than stored.
+function ReplayManager:RecordReplaySamples(player: Player, samples: { any }, moments: { any })
 	local track = self._tracks[player]
 	if not track then
 		return
@@ -113,6 +144,35 @@ function ReplayManager:RecordReplaySamples(player: Player, samples: { any })
 		-- One copy per block of samples rather than one per sample, which is what keeps this flat
 		if #track.Samples > MAX_TRACK_SAMPLES + TRIM_BLOCK then
 			track.Samples = table.move(track.Samples, TRIM_BLOCK + 1, #track.Samples, 1, {})
+			track.Offset += TRIM_BLOCK
+
+			for _, moment in track.Moments do
+				moment[1] -= TRIM_BLOCK
+			end
+
+			self:_compactMoments(track, 0)
+		end
+	end
+
+	for index = 1, math.min(#moments, MAX_MOMENT_BATCH) do
+		local moment = ReplayFormat.CleanMoment(moments[index])
+		if not moment then
+			continue
+		end
+
+		-- Stamped against the client's own count, which runs from the start of the run rather than the kept track
+		moment[1] -= track.Offset
+		table.insert(track.Moments, moment)
+
+		if #track.Moments > MAX_TRACK_MOMENTS then
+			self:_compactMoments(track, track.Moments[MOMENT_TRIM_BLOCK][1])
+
+			-- A fold must free a whole block, or moments that are all different state -- which a forged client can
+			-- send -- would fold the whole track again on every one that arrives. The oldest go outright instead
+			local excess = #track.Moments - (MAX_TRACK_MOMENTS - MOMENT_TRIM_BLOCK)
+			if excess > 0 then
+				track.Moments = table.move(track.Moments, excess + 1, #track.Moments, 1, {})
+			end
 		end
 	end
 end
@@ -138,8 +198,7 @@ function ReplayManager:SaveDropReplay(track, trail): string?
 	end
 
 	local key = string.format(KEY_FORMAT, os.time(), trail.UserId)
-
-	self._store:SetAsync(key, {
+	local record = {
 		Version = ReplayFormat.VERSION,
 		SampleRate = ReplayFormat.SAMPLE_RATE,
 		UserId = trail.UserId,
@@ -150,8 +209,19 @@ function ReplayManager:SaveDropReplay(track, trail): string?
 		StepEnteredAt = trail.StepAt - trail.StartedAt,
 		Duration = trail.EndedAt - trail.StartedAt,
 		Samples = track.Samples,
+		Moments = track.Moments,
 		Events = trail.Entries,
-	})
+	}
+
+	self._store:SetAsync(key, record)
+
+	-- A playtest's key would otherwise only reach Discord, which Studio runs usually aren't posting to
+	if RunService:IsStudio() then
+		print(
+			`[ReplayManager] saved replay {key}: {#track.Samples} samples, {#track.Moments} moments, `
+				.. `{#HttpService:JSONEncode(record)} bytes`
+		)
+	end
 
 	return key
 end
@@ -205,8 +275,8 @@ function ReplayManager:OnStart()
 	-- Registered rather than required back, so a fault here can never stop a drop report going out
 	FtueLogManager:SetReplayProvider(self)
 
-	self.LogReplaySamplesEvent:OnServerEvent(function(player: Player, samples: { any })
-		self:RecordReplaySamples(player, samples)
+	self.LogReplaySamplesEvent:OnServerEvent(function(player: Player, samples: { any }, moments: { any })
+		self:RecordReplaySamples(player, samples, moments)
 	end)
 
 	TutorialManager.OnFunnelStep:Connect(function(player: Player, variant: string, stepIndex: number, stepName: string)
