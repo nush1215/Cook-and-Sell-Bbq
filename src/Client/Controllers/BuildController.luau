@@ -203,17 +203,24 @@ function BuildController:GetGroundOrigin(): CFrame?
 	return self._ground and self._ground.Origin
 end
 
--- The placement state one replay sample records: the cell the ghost sits on, its verdict, and whether the
--- on-screen hints resolved. Read-only -- nothing here drives placement.
+-- The placement state one replay sample records: the cell the ghost sits on, its verdict, and which on-screen
+-- hints were up. Read-only -- nothing here drives placement.
 function BuildController:GetPlacementSnapshot()
+	local guide = self:_getGuide()
+	local invalid = self:_getInvalid()
+
+	-- The target cell outlives a hidden ghost, so it's only reported while the player could actually see one
+	local ghostShown = self._ghostShown == true
+
 	return {
 		Placing = self._structure ~= nil,
-		CellX = self._targetCellX,
-		CellZ = self._targetCellZ,
+		StructureId = self._structure and self._structure.Id,
+		CellX = if ghostShown then self._targetCellX else nil,
+		CellZ = if ghostShown then self._targetCellZ else nil,
 		Rotation = self._rotation,
 		Refusal = self._refusal,
-		GuideShown = self:_getGuide() ~= nil,
-		InvalidShown = self:_getInvalid() ~= nil,
+		GuideShown = guide ~= nil and guide.Visible,
+		InvalidShown = invalid ~= nil and invalid.Visible,
 	}
 end
 

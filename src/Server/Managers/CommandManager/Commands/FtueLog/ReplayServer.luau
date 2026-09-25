@@ -30,6 +30,7 @@ return function(context, key: string)
 
 	ReplayManager:SendReplayToViewer(player, record)
 
-	return `Playing {record.Username}'s {#record.Samples} samples on your base. Space plays, E is their view, `
-		.. `"replay stop" ends it. Run it on an empty base -- your own build is not in the recording.`
+	return `Playing {record.Username}'s {#record.Samples} samples and {#record.Moments} moments on your base. Space `
+		.. `plays, E is their view, F the moment list, "replay stop" ends it. Run it on an empty base -- your own `
+		.. `build is not in the recording.`
 end

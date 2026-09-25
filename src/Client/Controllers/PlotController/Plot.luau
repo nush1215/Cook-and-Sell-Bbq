@@ -84,7 +84,7 @@ function Plot.new(model: Model, baseId: string)
 		self:RefreshSign()
 	end)
 
-	-- No first paint: RefreshSign yields on player data, and these are built inside the controller's OnStart
+	-- No first paint here: the controller paints once player data is in, which RefreshSign reads
 
 	return self
 end
@@ -125,21 +125,19 @@ end
 function Plot:_syncSignUI(buttons: { [string]: () -> () }): Instance?
 	local sign = self._model:FindFirstChild(Plots.SIGN_NAME)
 
-	if not sign then
-		if self._signUI then
-			self._cleaner:Remove(self._signUI.Cleaner)
-			self._signUI = nil
-		end
+	-- The sign replicates ahead of its parts; the constructor's DescendantAdded brings us back
+	local board = sign and sign:FindFirstChild("Board")
 
-		return nil
-	end
-
-	if self._signUI then
+	-- Kept only while it adorns the board that's there now, since a board streaming back in is a new part
+	if self._signUI and board and self._signUI.UI.Adornee == board then
 		return self._signUI.UI
 	end
 
-	-- The sign replicates ahead of its parts; the constructor's DescendantAdded brings us back
-	local board = sign:FindFirstChild("Board")
+	if self._signUI then
+		self._cleaner:Remove(self._signUI.Cleaner)
+		self._signUI = nil
+	end
+
 	if not board then
 		return nil
 	end
