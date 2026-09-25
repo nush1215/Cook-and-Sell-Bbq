@@ -11,6 +11,7 @@ local Spr = require(Packages.Spr)
 -- Shared
 local Shared = ReplicatedStorage.Shared
 local StickModel = require(Shared.StickModel)
+local Sticks = require(Shared.Config.Sticks)
 local Highlights = require(Shared.Config.Highlights)
 
 -- Controllers
@@ -335,10 +336,13 @@ function SkewerStand:RefreshPrompt()
 	end
 end
 
--- Any skewer with room qualifies, however it cooked. One a customer ordered keeps the prompt but drops the glow
+-- Any skewer with room qualifies, however it cooked, bar a borrowed one the server would refuse. One a customer ordered keeps the prompt but drops the glow
 function SkewerStand:_refreshPlaceEligibility()
 	local skewer = EquippedItem.GetSkewer()
-	local hasRoom = self:_owned() and skewer ~= nil and self._count < MAX_SKEWERS
+	local hasRoom = self:_owned()
+		and skewer ~= nil
+		and not Sticks.IsBorrowed(skewer:GetAttribute("StickId"))
+		and self._count < MAX_SKEWERS
 
 	self._sellStall:SetAttribute("HighlightColor", Highlights.CLAIM)
 	if hasRoom and not CustomOrderNpcController:GetOrderTargetNpc() then

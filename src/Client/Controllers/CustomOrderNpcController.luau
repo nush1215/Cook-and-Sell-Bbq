@@ -16,6 +16,7 @@ local Shared = ReplicatedStorage.Shared
 local Network = require(Shared.Network)
 local GuiUtil = require(Shared.GuiUtil)
 local RandomUtil = require(Shared.RandomUtil)
+local Sticks = require(Shared.Config.Sticks)
 local Highlights = require(Shared.Config.Highlights)
 local Structures = require(Shared.Config.Structures)
 local Ingredients = require(Shared.Config.Ingredients)
@@ -183,10 +184,10 @@ function CustomOrderNpcController:_attach(npc: Model)
 	self:_render(npc)
 end
 
--- The customer waiting on exactly what's in hand, or nil. Raw never counts: a hand-over is graded on its cook too.
+-- The customer waiting on exactly what's in hand, or nil. Raw never counts: a hand-over is graded on its cook too. Nor does a borrowed stick, which an order refuses.
 function CustomOrderNpcController:_findOrderTarget(): Model?
 	local skewer = EquippedItem.GetSkewer()
-	if not skewer or not skewer:GetAttribute("Cooked") then
+	if not skewer or not skewer:GetAttribute("Cooked") or Sticks.IsBorrowed(skewer:GetAttribute("StickId")) then
 		return nil
 	end
 

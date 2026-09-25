@@ -15,6 +15,7 @@ local Rating = require(Shared.Config.Rating)
 local PlayerDataManager
 local SellNpcManager
 local GrillerManager
+local CustomOrderNpcManager
 
 -- The player's star reputation, scored off the rolling windows and the build they've put up. Nothing here is saved: the rating is derived, so retuning Config.Rating re-rates everyone's existing history rather than leaving old entries priced by old rules. The stats panel's counters are mirrored onto the player beside it, so a visitor at their board can read those too.
 local RatingManager = {
@@ -52,6 +53,7 @@ function RatingManager:GetPlayerRating(player: Player)
 		Satisfaction = Rating.ScoreSatisfaction(data.CustomOrderHistory, refusals),
 		Menu = Rating.ScoreMenu(data.RecentSales),
 		Kitchen = Rating.ScoreKitchen(data, GrillerManager:CountPlacedGrillers(data)),
+		Atmosphere = Rating.ScoreAtmosphere(data, CustomOrderNpcManager:CountPlacedSeats(data)),
 	}
 
 	local rating = { Overall = Rating.ToStars(Rating.CombineTraits(scores)) }
@@ -100,6 +102,7 @@ function RatingManager:OnInit()
 	PlayerDataManager = require(script.Parent.PlayerDataManager)
 	SellNpcManager = require(script.Parent.SellNpcManager)
 	GrillerManager = require(script.Parent.GrillerManager)
+	CustomOrderNpcManager = require(script.Parent.CustomOrderNpcManager)
 end
 
 function RatingManager:OnStart()

@@ -10,6 +10,7 @@
 		RockModule.Crater(center, radius?, minRocks?, maxRocks?, playerCollision?)
 		RockModule.CraterRows(center, radius?, rows?, nextRowRadius?, minRocks?, maxRocks?, playerCollision?)
 		RockModule.Explosion(center, totalRocks?, minSize?, maxSize?, playerCollision?)
+		RockModule.IgnoreInvisibleParts(container)
 		RockModule.ClearDebris(fade?)
 
 	Originally written by @LxckyDev.
@@ -245,6 +246,15 @@ function RockModule.CraterRows(
 		-- Each successive ring is wider and denser (rock count scales with row).
 		RockModule.Crater(Center, currentRadius, MinRocks * i, MaxRocks * i, PlayerCollision)
 		currentRadius += NextRowRadius
+	end
+end
+
+-- Tags every invisible part under `container` so the ground rays fall through to the floor, or the debris copies their invisibility. Idempotent.
+function RockModule.IgnoreInvisibleParts(container: Instance)
+	for _, descendant in container:GetDescendants() do
+		if descendant:IsA("BasePart") and descendant.Transparency >= 1 then
+			descendant:AddTag(IGNORE_TAG)
+		end
 	end
 end
 

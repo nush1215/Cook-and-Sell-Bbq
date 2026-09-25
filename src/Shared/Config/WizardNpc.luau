@@ -8,8 +8,8 @@ WizardNpc.CHECK_INTERVAL = 30
 WizardNpc.SPAWN_CHANCE = 30
 
 -- Seconds since the last visit: never sooner than MIN_GAP, always sent by MAX_GAP (the pity)
-WizardNpc.MIN_GAP = 5 * 60
-WizardNpc.MAX_GAP = 7 * 60
+WizardNpc.MIN_GAP = 8 * 60
+WizardNpc.MAX_GAP = 10 * 60
 
 -- The luck multiplier and how long it lasts in seconds, both rolled when it arrives
 WizardNpc.LUCK_MIN = 1.25

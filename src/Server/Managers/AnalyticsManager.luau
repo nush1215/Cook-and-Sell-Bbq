@@ -19,6 +19,7 @@ local GrillerManager
 local SkewerStandManager
 local SellNpcManager
 local CustomOrderNpcManager
+local HungryJoeNpcManager
 local IndexManager
 local BaseManager
 local BadgeManager
@@ -99,6 +100,15 @@ local function logWizardFunnelStep(player: Player, funnelId: string, stepIndex: 
 	task.spawn(function()
 		pcall(function()
 			AnalyticsService:LogFunnelStepEvent(player, "Wizard Visit 1", funnelId, stepIndex, stepName)
+		end)
+	end)
+end
+
+-- Logs one step of a Hungry Joe visit's funnel. The id is per-visit and survives a rejoin, so a restored one finishes its own run.
+local function logHungryJoeFunnelStep(player: Player, funnelId: string, stepIndex: number, stepName: string)
+	task.spawn(function()
+		pcall(function()
+			AnalyticsService:LogFunnelStepEvent(player, "Hungry Joe Visit 1", funnelId, stepIndex, stepName)
 		end)
 	end)
 end
@@ -290,6 +300,7 @@ function AnalyticsManager:OnInit()
 	SkewerStandManager = require(script.Parent.SkewerStandManager)
 	SellNpcManager = require(script.Parent.SellNpcManager)
 	CustomOrderNpcManager = require(script.Parent.CustomOrderNpcManager)
+	HungryJoeNpcManager = require(script.Parent.HungryJoeNpcManager)
 	IndexManager = require(script.Parent.IndexManager)
 	BaseManager = require(script.Parent.BaseManager)
 	BadgeManager = require(script.Parent.BadgeManager)
@@ -313,7 +324,11 @@ function AnalyticsManager:OnStart()
 		self:_onCurrencyChanged(player, "Bux", "Currency", amount, source, isGain)
 
 		-- The first sale after a broke relief is it working
-		if isGain and self._brokeRelief[player] and (source == "SkewerSale" or source == "CustomOrder") then
+		if
+			isGain
+			and self._brokeRelief[player]
+			and (source == "SkewerSale" or source == "CustomOrder" or source == "HungryJoe")
+		then
 			self:_logBrokeReliefOutcome(player, "Sold")
 		end
 	end)
@@ -504,6 +519,34 @@ function AnalyticsManager:OnStart()
 			Rolls = 0,
 			Luck = luck,
 		}
+	end)
+	-- Hungry Joe: arrived -> accepted -> fed. How he was sent splits the pity from the roll, so the pacing can be read
+	HungryJoeNpcManager.OnHungryJoeVisitSent:Connect(function(player, trigger, sinceLast, funnelId)
+		logCustom(player, "Hungry Joe Visit Sent", math.round(sinceLast), trigger)
+		logHungryJoeFunnelStep(player, funnelId, 1, "Arrived")
+	end)
+	HungryJoeNpcManager.OnHungryJoeOfferResolved:Connect(function(player, outcome, funnelId)
+		logCustom(player, "Hungry Joe Offer Resolved", 1, outcome)
+
+		if outcome == "Accepted" then
+			logHungryJoeFunnelStep(player, funnelId, 2, "Accepted")
+		end
+	end)
+	-- The value is the Bux it landed, and the fields are what drove the extras, so the dashboard reads what the feast is worth to aim for
+	HungryJoeNpcManager.OnHungryJoeFed:Connect(function(player, _, reward, waited, funnelId)
+		logCustom(
+			player,
+			"Hungry Joe Fed",
+			reward.Bux,
+			reward.CookState,
+			`{reward.Filled} filled`
+		)
+		logCustom(player, "Hungry Joe Wait", math.round(waited / 60), reward.CookState)
+		logHungryJoeFunnelStep(player, funnelId, 3, "Fed")
+	end)
+	-- Which clock ran out says whether the idle limit or the cook leeway is the one to loosen. A warning restored off a rejoin has lost it
+	HungryJoeNpcManager.OnHungryJoeLeftAngry:Connect(function(player, clockPhase)
+		logCustom(player, "Hungry Joe Left Angry", 1, clockPhase or "Unknown")
 	end)
 	IndexManager.OnIngredientDiscovered:Connect(function(player, ingredientId)
 		logCustom(player, "Ingredient Discovered", 1, ingredientId, getIngredientTier(ingredientId))

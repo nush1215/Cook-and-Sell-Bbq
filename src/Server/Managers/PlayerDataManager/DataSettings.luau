@@ -48,6 +48,8 @@ return {
 		PurchasedOnceProducts = {},
 		GiftedGamepasses = {},
 		PurchaseLogs = {},
+		-- When each first-of-the-day discount comes back, absolute on workspace:GetServerTimeNow(); missing is available
+		FirstPurchaseOfTheDay = {}, -- [full-price product id] = when its discount returns
 
 		-- Daily Rewards
 		-- Every daily reward ever claimed; never reset, so the day is this mod the week and a missed day costs nothing -- see docs/player-data.md
@@ -64,6 +66,8 @@ return {
 		Ingredients = {}, -- [ingredientId] = amount owned
 		-- Each stand's last unclaimed pull, held with no expiry. SpeedLevel is stamped on the roll, not read live
 		PendingRolls = {}, -- [standId] = { IngredientId, RolledAt, SpeedLevel }
+		-- Random Ingredient rolls bought but not yet handed over, banked while the reveal plays; the next join settles leftovers
+		PendingRandomIngredients = {}, -- [uid] = ingredientId
 		-- Rolls since each tracked tier or better landed. Counted per roll, not per pull -- see docs/player-data.md
 		Pity = {}, -- [tierId] = ingredient rolls since that tier or better
 
@@ -122,6 +126,14 @@ return {
 		LastCheckingVisit = 0,
 		-- When the last wizard was sent. Wall-clock; 0 means its clock hasn't started, so it isn't a pity visit on join
 		LastWizardVisit = 0,
+		-- When Hungry Joe's last visit ended. Wall-clock; 0 means its clock hasn't started, so it isn't a pity visit on join
+		LastHungryJoeVisit = 0,
+		-- Whether Hungry Joe has ever visited; the first comes on a shorter gap, so meeting him isn't an hour's wait
+		SeenHungryJoe = false,
+		-- When the Hungry Joe still owed his stick arrived, floored to the second; 0 is none owed. Brings him back on join
+		HungryJoeVisitStartedAt = 0,
+		-- His clock while he's owed, banked as what's left so time away never runs it down -- see docs/player-data.md
+		HungryJoeClock = {}, -- { Phase = "Idle" | "Cook" | "Warning", SecondsLeft }
 
 		-- Custom Orders
 		-- When the last custom order was put to them. Wall-clock, so a rejoin can't hand out a fresh one
@@ -149,7 +161,7 @@ return {
 
 		-- Tutorial
 		-- The onboarding runs once; leaving unfinished wipes gameplay progress on the way out
-		TutorialCompleted = false,
+		TutorialCompleted = true,
 		-- Furthest funnel step reached, for analytics only. An index into that variant's own funnel
 		TutorialStep = 0,
 

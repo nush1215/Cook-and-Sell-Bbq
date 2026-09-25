@@ -1,4 +1,4 @@
--- The player's 0-5 star reputation and the four traits behind it. Every weight table must add up to 1; see docs/balance.md.
+-- The player's 0-5 star reputation and the five traits behind it. Every weight table must add up to 1; see docs/balance.md.
 
 -- Shared
 local MathUtil = require(script.Parent.Parent.MathUtil)
@@ -10,6 +10,7 @@ local Structures = require(script.Parent.Structures)
 local Plots = require(script.Parent.Plots)
 local BaseUnlocks = require(script.Parent.BaseUnlocks)
 local SellNpc = require(script.Parent.SellNpc)
+local CustomOrderNpc = require(script.Parent.CustomOrderNpc)
 
 --
 local Rating = {}
@@ -23,7 +24,7 @@ Rating.TITLE_DECIMALS = 2
 -- What stands in for a rating with too little behind it to score
 Rating.PENDING_TEXT = "—"
 
--- How the headline reads above the four traits, and how the world sign's own title reads
+-- How the headline reads above the five traits, and how the world sign's own title reads
 Rating.OVERALL_NAME = "Overall Rating"
 Rating.SIGN_TITLE = "Rating"
 
@@ -45,7 +46,7 @@ Rating.MIN_ORDER_SAMPLE = 3
 Rating.WEIGHT_SUM_TOLERANCE = 0.001
 
 -- The traits behind the headline, in display order
-Rating.TRAITS = { "Cooking", "Satisfaction", "Menu", "Kitchen" }
+Rating.TRAITS = { "Cooking", "Satisfaction", "Menu", "Kitchen", "Atmosphere" }
 
 table.freeze(Rating.TRAITS)
 
@@ -55,6 +56,7 @@ Rating.TraitDisplay = {
 	Satisfaction = { Name = "Customer Satisfaction", Frame = "CustomerSatisfaction" },
 	Menu = { Name = "Menu", Frame = "Menu" },
 	Kitchen = { Name = "Kitchen", Frame = "Kitchen" },
+	Atmosphere = { Name = "Atmosphere", Frame = "Atmosphere" },
 }
 
 table.freeze(Rating.TraitDisplay)
@@ -76,13 +78,14 @@ Rating.OVERALL_ATTRIBUTE = "Rating"
 Rating.TRAIT_WEIGHTS = {
 	Cooking = 0.35,
 	Satisfaction = 0.3,
-	Menu = 0.2,
-	Kitchen = 0.15,
+	Menu = 0.15,
+	Kitchen = 0.1,
+	Atmosphere = 0.1,
 }
 
 table.freeze(Rating.TRAIT_WEIGHTS)
 
--- Stars the headline may sit above the weaker of Cooking and Satisfaction, so Kitchen can't buy a reputation
+-- Stars the headline may sit above the weaker of Cooking and Satisfaction, so Kitchen and Atmosphere can't buy a reputation
 Rating.SKILL_CAP_HEADROOM = 1
 
 -- What a BBQ in each state is worth, 0-1. Authored, not off CookStates.Multiplier, where Raw (1) outranks Charred (0.98)
@@ -125,6 +128,15 @@ Rating.KITCHEN_WEIGHTS = {
 
 table.freeze(Rating.KITCHEN_WEIGHTS)
 
+-- Seating leads, since tables are the one piece of decor customers actually use
+Rating.ATMOSPHERE_WEIGHTS = {
+	Seating = 0.4,
+	Variety = 0.3,
+	Rarity = 0.3,
+}
+
+table.freeze(Rating.ATMOSPHERE_WEIGHTS)
+
 -- Distinct ingredients across the window that reads as a full menu
 Rating.VARIETY_TARGET = 12
 
@@ -134,8 +146,20 @@ Rating.TIER_TARGET = 3
 -- Grillers placed that reads as a full kitchen; past this the count stops paying
 Rating.GRILL_COUNT_TARGET = 4
 
+-- Table seats placed that reads as a full dining room: the ones that unlock the top concurrent order cap
+Rating.SEAT_TARGET = CustomOrderNpc.CONCURRENT_ORDER_MARKS[#CustomOrderNpc.CONCURRENT_ORDER_MARKS].Seats
+
+-- Different decor pieces placed that reads as a fully dressed stall. Kinds, not copies, so a stack of one path can't max it
+Rating.DECOR_VARIETY_TARGET = 8
+
 -- The folder grillers are authored under, matching the category their models live in
 local GRILLER_CATEGORY = "Grillers"
+
+-- The structure categories Atmosphere reads: everything the Cosmetic Shop sells
+local DECOR_CATEGORIES = {
+	Cosmetics = true,
+	Tables = true,
+}
 
 -- Warns on a weight table that doesn't add up, naming what it costs and what to change.
 local function validateWeights(label: string, weights: { [string]: number })
@@ -163,6 +187,7 @@ validateWeights("TRAIT_WEIGHTS", Rating.TRAIT_WEIGHTS)
 validateWeights("SATISFACTION_WEIGHTS", Rating.SATISFACTION_WEIGHTS)
 validateWeights("MENU_WEIGHTS", Rating.MENU_WEIGHTS)
 validateWeights("KITCHEN_WEIGHTS", Rating.KITCHEN_WEIGHTS)
+validateWeights("ATMOSPHERE_WEIGHTS", Rating.ATMOSPHERE_WEIGHTS)
 
 -- [grillerId] = its rung, off config order (cheapest first). Position is safe here and not in saved data, being re-derived every read
 local GRILLER_RUNGS = {}
@@ -176,6 +201,15 @@ for _, structure in Structures.Data do
 end
 
 table.freeze(GRILLER_RUNGS)
+
+-- The rarest rung any decor piece sits on, ranked on the ingredient tier ladder -- the one rarity order the game keeps
+local DECOR_TOP_RARITY = 1
+
+for _, structure in Structures.Data do
+	if DECOR_CATEGORIES[structure.Category] then
+		DECOR_TOP_RARITY = math.max(DECOR_TOP_RARITY, Ingredients.GetTierFromId(structure.Rarity).Index)
+	end
+end
 
 -- An unlock's top level, so a trait normalises against the ladder rather than a number written twice.
 local function getUnlockLimit(unlockId: string): number
@@ -314,6 +348,36 @@ function Rating.ScoreKitchen(data, grillCount: number): number
 		+ rollingStands * weights.RollingStands
 		+ rollSpeed * weights.RollSpeed
 		+ plots * weights.Plots
+end
+
+-- How inviting the stall is: seats for customers, how many kinds of decor, and the rarest of them. Read off the build like Kitchen, so it never withholds.
+function Rating.ScoreAtmosphere(data, seatCount: number): number
+	local distinctCount, distinct = 0, {}
+	local bestRarity = 1
+
+	for _, placed in data.Structures do
+		-- Nil on a type retired from config but still in someone's save
+		local structure = Structures.GetStructureFromId(placed.Type)
+		if not structure or not DECOR_CATEGORIES[structure.Category] then
+			continue
+		end
+
+		if not distinct[placed.Type] then
+			distinct[placed.Type] = true
+			distinctCount += 1
+		end
+
+		bestRarity = math.max(bestRarity, Ingredients.GetTierFromId(structure.Rarity).Index)
+	end
+
+	local seating = math.clamp(seatCount / Rating.SEAT_TARGET, 0, 1)
+	local variety = math.clamp(distinctCount / Rating.DECOR_VARIETY_TARGET, 0, 1)
+
+	-- The best piece rather than the mean, like GrillQuality, so putting down a cheap path never lowers it
+	local rarity = (bestRarity - 1) / math.max(DECOR_TOP_RARITY - 1, 1)
+
+	local weights = Rating.ATMOSPHERE_WEIGHTS
+	return seating * weights.Seating + variety * weights.Variety + rarity * weights.Rarity
 end
 
 -- The headline, over whichever traits are rated. Held under the skill cap, so upgrades can't outrun the cooking.

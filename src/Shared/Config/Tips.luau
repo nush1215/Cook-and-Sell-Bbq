@@ -31,11 +31,13 @@ Tips.Data = {
 	"Customers only wait 30 seconds for an answer, then they walk away!",
 
 	-- Rating
-	"Your Rating sign gives you up to 5 stars for Cooking, Satisfaction, Menu and Kitchen",
+	"Your Rating sign gives you up to 5 stars for Cooking, Satisfaction, Menu, Kitchen and Atmosphere",
 	"Selling the same ingredient over and over lowers your Menu stars. Try 12 different ones!",
 	"Fill every slot on your Stick to help your Menu stars",
+	"Place Tables to raise your Atmosphere stars. 12 seats is a full house",
+	"Different decorations raise your Atmosphere stars, and rarer ones count for more",
 	"You can't buy 5 stars with upgrades. You have to cook well too!",
-	"Cooking and Satisfaction are 65% of your Rating. Menu and Kitchen are the rest",
+	"Cooking and Satisfaction are 65% of your Rating. Menu, Kitchen and Atmosphere are the rest",
 	"Visit another player's base to see their Rating and stats",
 
 	-- Custom orders

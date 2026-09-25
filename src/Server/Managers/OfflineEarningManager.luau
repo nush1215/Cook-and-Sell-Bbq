@@ -165,9 +165,9 @@ function OfflineEarningManager:SimulateOfflineEarnings(data, horizon: number)
 			if type(record) ~= "table" then
 				standCapacity += 1
 			elseif not record.Cooked then
-				-- Part-built stands are the player's to finish, so only a full stick is picked up
+				-- Part-built stands are the player's to finish, so only a full stick is picked up. A borrowed one goes back to its lender, never to the stall
 				local stick = Sticks.GetStickFromId(record.StickId)
-				if stick and #record.Ingredients >= stick.Capacity then
+				if stick and not stick.Borrowed and #record.Ingredients >= stick.Capacity then
 					standCapacity += 1
 					table.insert(seeds, {
 						Source = "Stand",
@@ -182,7 +182,8 @@ function OfflineEarningManager:SimulateOfflineEarnings(data, horizon: number)
 			local grill = { Uid = uid, FreeAt = 0 }
 			table.insert(grills, grill)
 
-			if record and record.Cooking then
+			-- A borrowed stick cooking is the player's to pull for its lender, so it holds the grill rather than selling
+			if record and record.Cooking and not Sticks.IsBorrowed(record.StickId) then
 				table.insert(seeds, {
 					Source = "Grill",
 					Uid = uid,

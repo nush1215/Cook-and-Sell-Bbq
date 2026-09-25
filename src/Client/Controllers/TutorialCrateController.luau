@@ -38,9 +38,6 @@ local LocalPlayer = Players.LocalPlayer
 local CRATE_TAG = "Crate"
 local TIMER_UI_NAME = "TutorialCrateUI"
 
--- RockModule's own ignore tag: anything carrying it is left out of its ground raycasts.
-local ROCK_IGNORE_TAG = "RockModuleIgnore"
-
 -- The crate that crashes in for finishing the tutorial. The crash and open come over remotes; the countdown comes off the crate's own attributes, so it survives a rejoin. Its Trove's identity doubles as the loop's guard.
 
 --
@@ -57,15 +54,6 @@ local TutorialCrateController = {
 local function formatTime(seconds: number): string
 	seconds = math.max(0, math.floor(seconds))
 	return string.format("%02d:%02d", seconds // 60, seconds % 60)
-end
-
--- Tags invisible parts so RockModule's ground rays fall through to the floor, or the debris copies their invisibility. Idempotent, and re-run per landing.
-local function tagInvisibleBaseParts(baseModel: Model)
-	for _, descendant in baseModel:GetDescendants() do
-		if descendant:IsA("BasePart") and descendant.Transparency >= 1 then
-			descendant:AddTag(ROCK_IGNORE_TAG)
-		end
-	end
 end
 
 -- Tears down the countdown -- billboard, loop, prompt and all -- if one is running.
@@ -231,8 +219,9 @@ function TutorialCrateController:PlayCrash(uniqueId: string, duration: number, l
 			CrateController:IdleCrate(model)
 			releaseCamera()
 
+			-- Re-run per landing, since the build has changed since the last
 			if baseModel then
-				tagInvisibleBaseParts(baseModel)
+				RockModule.IgnoreInvisibleParts(baseModel)
 			end
 
 			local impactCFrame = CFrame.new(landingPos)

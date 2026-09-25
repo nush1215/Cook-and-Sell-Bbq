@@ -27,6 +27,8 @@ local WizardNpc = require(Shared.Config.WizardNpc)
 local Employees = require(Shared.Config.Employees)
 local CookStates = require(Shared.Config.CookStates)
 local EarlyBoost = require(Shared.Config.EarlyBoost)
+local Rating = require(Shared.Config.Rating)
+local RatingPerks = require(Shared.Config.RatingPerks)
 
 -- Managers
 local CustomerTipManager = require(script.Parent.CustomerTipManager)
@@ -73,6 +75,7 @@ local BaseManager
 local StatsManager
 local SoundManager
 local BoostManager
+local HungryJoeNpcManager
 
 -- Sends customer NPCs to a base's sell stand: one visit thread per placed skewer, retrying until it sells
 local SellNpcManager = {
@@ -357,6 +360,17 @@ function SellNpcManager:GetCustomerRecord(player: Player, npc: Model)
 	return nil
 end
 
+-- Whether a wizard or a rich customer is with them, which Hungry Joe waits out so two special customers never arrive together.
+function SellNpcManager:HasSpecialCustomer(player: Player): boolean
+	for _, record in self._npcs[player] or {} do
+		if record.isWizard or record.isRich then
+			return true
+		end
+	end
+
+	return false
+end
+
 -- Whether any of their customers is holding a skewer taken off the stall, which either pays or comes back once it settles.
 function SellNpcManager:IsCustomerHoldingSkewer(player: Player): boolean
 	for _, record in self._npcs[player] or {} do
@@ -466,6 +480,8 @@ function SellNpcManager:_negotiateSale(
 	-- Whether a customer has countered this player before -- the first is given, not rolled for.
 	local hasData, seenHaggle = PlayerDataManager:GetPlayerDataKey(player, "SeenHaggle"):await()
 
+	local offerLift = RatingPerks.GetOfferLift(player:GetAttribute(Rating.OVERALL_ATTRIBUTE))
+
 	for _, skewerRecord in record.skewerRecords do
 		local cookState = CookStates.GetStateFromId(StickModel.GetCookStateId(skewerRecord))
 		local skewerValue = StickModel.GetSellValue(skewerRecord)
@@ -473,6 +489,9 @@ function SellNpcManager:_negotiateSale(
 		-- Floored at plain worth so a refusal never sells at a loss; the spread stops a state quoting one number
 		local offerMin = math.max(cookState.OfferMin - penalty, 1)
 		local offerMax = math.max(cookState.OfferMax - penalty, offerMin + SellNpc.MIN_OFFER_SPREAD)
+
+		-- A well-rated stall lifts only the floor, so it opens higher without ever passing what anyone could roll
+		offerMin += (offerMax - offerMin) * offerLift
 
 		value += skewerValue
 		offer += skewerValue * self._rng:NextNumber(offerMin, offerMax)
@@ -813,8 +832,9 @@ function SellNpcManager:_runVisit(player: Player)
 	if self._guaranteed[player] then
 		task.wait(SellNpc.GUARANTEED_SPAWN_DELAY)
 	else
-		-- New players wait less, on the same taper as their income head start.
+		-- New players wait less, on the same taper as their income head start, and a well-rated stall less again
 		local scale = EarlyBoost.GetSpawnDelayScale(CurrencyManager:GetEarlyBoostEarnings(player))
+			* RatingPerks.GetArrivalScale(player:GetAttribute(Rating.OVERALL_ATTRIBUTE))
 		task.wait(self._rng:NextNumber(SellNpc.SPAWN_DELAY_MIN, SellNpc.SPAWN_DELAY_MAX) * scale)
 	end
 
@@ -964,13 +984,19 @@ function SellNpcManager:_rollRichVisits()
 			continue
 		end
 
+		-- Two new special customers never arrive together, so this waits out a Hungry Joe still walking in
+		if HungryJoeNpcManager:IsHungryJoeArriving(player) then
+			continue
+		end
+
 		if not RandomUtil.RollChance(RichNpc.SPAWN_CHANCE, self._rng) then
 			continue
 		end
 
-		-- In their data on the synced clock, so rejoining can't hand out a fresh rich customer
+		-- In their data on the synced clock, so rejoining can't hand out a fresh rich customer. A well-rated stall waits less
 		local hasStamp, lastRichVisit = PlayerDataManager:GetPlayerDataKey(player, "LastRichVisit"):await()
-		if not hasStamp or (workspace:GetServerTimeNow() - lastRichVisit) < RichNpc.COOLDOWN then
+		local cooldown = RichNpc.COOLDOWN * RatingPerks.GetRichCooldownScale(player:GetAttribute(Rating.OVERALL_ATTRIBUTE))
+		if not hasStamp or (workspace:GetServerTimeNow() - lastRichVisit) < cooldown then
 			continue
 		end
 
@@ -1312,6 +1338,11 @@ function SellNpcManager:_rollWizardVisits()
 			end
 		end
 		if busy then
+			continue
+		end
+
+		-- Two new special customers never arrive together, so this waits out a Hungry Joe still walking in
+		if HungryJoeNpcManager:IsHungryJoeArriving(player) then
 			continue
 		end
 
@@ -1692,6 +1723,7 @@ function SellNpcManager:OnInit()
 	StatsManager = require(script.Parent.StatsManager)
 	SoundManager = require(script.Parent.SoundManager)
 	BoostManager = require(script.Parent.BoostManager)
+	HungryJoeNpcManager = require(script.Parent.HungryJoeNpcManager)
 end
 
 function SellNpcManager:OnStart()

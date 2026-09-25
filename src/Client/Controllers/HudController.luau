@@ -82,6 +82,14 @@ local HIDE_HUD_FOR_UI = {
 		"BottomRight",
 	},
 
+	OddsUI = {
+		"Top",
+		"Left",
+		"Right",
+		"BottomLeft",
+		"BottomRight",
+	},
+
 	-- BottomLeft stays, as the shop's does: they're reading prices, so the Bux they have is the one thing
 	-- worth leaving on screen
 	HireEmployeeUI = {

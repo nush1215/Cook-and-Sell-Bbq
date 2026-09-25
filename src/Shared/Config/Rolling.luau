@@ -8,6 +8,16 @@ Rolling.CYCLE_WAIT_INCREMENT = 0.0062
 Rolling.CYCLE_MAX_WAIT = 0.5
 Rolling.INTRO_DURATION = 0.25
 
+-- Each cycled ingredient pops in at CYCLE_SCALE, CYCLE_RISE studs low, and springs up to full size on the landing
+Rolling.CYCLE_SCALE = 0.8
+Rolling.CYCLE_RISE = 0.5
+
+-- The landed result's idle float. Shared with the Random Ingredient reveal, so both rolls read as one machine
+Rolling.RESULT_SPIN_SPEED = 0.5 -- radians/sec the result spins about Y
+Rolling.RESULT_HOVER_AMPLITUDE = 0.1 -- studs the result bobs
+Rolling.RESULT_HOVER_SPEED = 3 -- radians/sec the bob cycles
+Rolling.RESULT_FLOAT_DELAY = 0.1 -- lets the landing spring settle before the float takes the pivot
+
 -- The gap above the stand's top; the ingredient's own height is added at runtime, so any size sits right
 Rolling.LANDING_GAP = 2
 

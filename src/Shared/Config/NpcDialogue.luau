@@ -2195,6 +2195,147 @@ local NpcDialogue = {
 		"Off to my tower",
 	},
 
+	-- Hungry Joe. No cook-state variants -- the reward already reads the cook
+
+	-- Arriving at the stand, before he puts his job to them
+	HungryJoeNPCArrived = {
+		"Chef! I need a feast",
+		"My stomach sent me",
+		"Something smells amazing here",
+		"I skipped lunch for this",
+		"They say you grill the best",
+		"My belly led me straight here",
+		"I could eat a whole grill",
+		"Make way, big appetite coming",
+		"Is this the famous BBQ stand?",
+		"Been hungry since breakfast",
+	},
+
+	-- The offer frame line: {count} is his stick's slots and {amount} the reward, swapped in by the controller
+	HungryJoeNPCOffer = {
+		"Fill my stick with {count} for a {amount}",
+		"{count} of anything, cooked. {amount}",
+		"Load it up with {count}! {amount}",
+		"Feed me {count} and get a {amount}",
+		"Stack {count} on here for a {amount}",
+		"Cook me {count}, I'll pay a {amount}",
+		"My stick, {count} bites. {amount}",
+		"Up to {count} on this for a {amount}",
+	},
+
+	-- The player turned the job down
+	HungryJoeNPCPlayerDeclined = {
+		"Fine, I'll starve then",
+		"My stomach will remember this",
+		"Back to the snack bar",
+		"Guess I'm eating crackers",
+		"You broke my heart and my belly",
+		"Alright, alright, I'm going",
+	},
+
+	-- The player let the offer run out without answering
+	HungryJoeNPCOfferIgnored = {
+		"Hello? My stomach's waiting",
+		"Too slow, I'm too hungry",
+		"I can't wait this long, bye",
+		"Nobody home? Fine",
+	},
+
+	-- The player took the job, as he hands his stick over
+	HungryJoeNPCPlayerAccepted = {
+		"Here's my stick, don't drop it",
+		"Fill it with anything good",
+		"The more the better, chef",
+		"Cook it right, I'll wait",
+		"Make it a feast!",
+		"Treat that stick with care",
+	},
+
+	-- Back after a rejoin, still owed his stick
+	HungryJoeNPCReturned = {
+		"Did you think I'd forget?",
+		"I'm back for my feast",
+		"Still hungry, chef",
+		"Where's my stick at?",
+	},
+
+	-- Now and then while he waits, however long that takes
+	HungryJoeNPCWaiting = {
+		"Is it ready yet?",
+		"Up to ten on there, remember",
+		"My belly's rumbling over here",
+		"Take your time... but hurry",
+		"I can smell it from here",
+		"Don't forget to cook it",
+		"Every slot counts, chef",
+		"I'm patient. Mostly",
+		"The fuller the better!",
+	},
+
+	-- A hand-over with nothing in hand
+	HungryJoeNPCEmptyHanded = {
+		"Where's my food?",
+		"Your hands are empty, chef",
+		"Bring me my stick!",
+		"Nothing? Really?",
+	},
+
+	-- A hand-over of some other stick
+	HungryJoeNPCWrongStick = {
+		"That's not my stick!",
+		"Use the stick I gave you",
+		"I only eat off my own stick",
+		"Wrong stick, chef",
+	},
+
+	-- A hand-over of his stick, still raw
+	HungryJoeNPCNotReady = {
+		"Cook it first!",
+		"I don't eat it raw",
+		"Put it on the grill first",
+		"It's still raw, chef",
+	},
+
+	-- Out of patience, as the last warning goes up
+	HungryJoeNPCHurry = {
+		"I'm STARVING over here!",
+		"Where's my BBQ?!",
+		"Tick tock, chef!",
+		"My belly can't wait much longer!",
+		"Last chance, chef!",
+	},
+
+	-- Storming off with his stick
+	HungryJoeNPCAngry = {
+		"That's it, I'm out!",
+		"Worst service EVER",
+		"Give me my stick back!",
+		"I'll eat somewhere else!",
+		"Never coming back... maybe",
+	},
+
+	-- Eating the feast
+	HungryJoeNPCEating = {
+		"Now THAT is a feast",
+		"Every bite is different",
+		"Best stick I've ever had",
+		"Oh this is heavenly",
+		"Nom nom nom",
+		"Worth the wait, chef",
+		"My belly thanks you",
+		"Mmm, keep them coming",
+	},
+
+	-- Heading back out
+	HungryJoeNPCLeaving = {
+		"See you next feast",
+		"I'll be back when I'm hungry",
+		"That'll hold me an hour",
+		"Time for a nap",
+		"Tell your friends about me",
+		"Burp... excuse me",
+	},
+
 	-- Looking the stand over on the way in, before it turns any of it down
 	CustomNPCInspecting = {
 		"Let me see what you've got",

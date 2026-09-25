@@ -49,7 +49,7 @@ local BbqMaker = {}
 -- Where a fresh maker starts: hanging around the hut. Its work begins and ends at the store
 BbqMaker.Initial = "Hover"
 
--- How much a stand still has room for, or 0 when it's full, cooked, or not something to build on.
+-- How much a stand still has room for, or 0 when it's full, cooked, borrowed, or not something to build on.
 local function getRoom(record): number
 	if type(record) ~= "table" or record.Cooked then
 		return 0
@@ -57,7 +57,8 @@ local function getRoom(record): number
 
 	local stick = Sticks.GetStickFromId(record.StickId)
 
-	return if stick then math.max(stick.Capacity - #record.Ingredients, 0) else 0
+	-- A borrowed stick is the player's to fill for the customer who lent it, so a maker never builds on one
+	return if stick and not stick.Borrowed then math.max(stick.Capacity - #record.Ingredients, 0) else 0
 end
 
 -- Whether the player has worked this stand recently enough that it's still theirs to finish.

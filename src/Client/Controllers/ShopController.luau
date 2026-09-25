@@ -16,6 +16,7 @@ local Sticks = require(Shared.Config.Sticks)
 local Crates = require(Shared.Config.Crates)
 local StarterPackConfig = require(Shared.Config.StarterPack)
 local BuxPacks = require(Shared.Config.BuxPacks)
+local RandomIngredientConfig = require(Shared.Config.RandomIngredient)
 
 -- Controllers
 local PlayerDataController
@@ -25,6 +26,7 @@ local ConfettiController
 local SoundController
 local UIController
 local HudController
+local OddsUIController
 
 -- Local Player
 local LocalPlayer = Players.LocalPlayer
@@ -37,7 +39,7 @@ local DIM_TWEEN = TweenInfo.new(0.2)
 -- How long the shop takes to scroll down to the Bux packs when the currency button opens it.
 local BUX_SCROLL_TWEEN = TweenInfo.new(0.5, Enum.EasingStyle.Sine)
 
--- Seconds a mystery slot's silhouette holds each reward before cycling to the next.
+-- Seconds a cycling icon (a mystery slot, the Random Ingredient button) holds each reward before the next.
 local MYSTERY_ICON_INTERVAL = 2
 
 --
@@ -177,6 +179,19 @@ local function fillRewardSlot(slot: Frame, reward: Crates.RewardEntry)
 	end
 end
 
+-- Shows each icon in turn on a spawned loop, forever, so a slot or button can show everything a roll might give.
+local function cycleIcons(icon: ImageLabel, icons: { string })
+	task.spawn(function()
+		local index = 0
+
+		while true do
+			index = index % #icons + 1
+			icon.Image = icons[index]
+			task.wait(MYSTERY_ICON_INTERVAL)
+		end
+	end)
+end
+
 -- Fills one crate's card. Preview slots are numbered in config order, so the rarest land on the special ones.
 function ShopController:_setupCrateCard(crate: Crates.Crate, card: Frame)
 	local slotIndex = 0
@@ -240,15 +255,7 @@ function ShopController:_setupMysterySlot(slot: Frame, pool: Crates.RewardEntry)
 		table.insert(icons, resolveRewardDisplay(reward).Icon)
 	end
 
-	task.spawn(function()
-		local index = 0
-
-		while true do
-			index = index % #icons + 1
-			slot.Icon.Image = icons[index]
-			task.wait(MYSTERY_ICON_INTERVAL)
-		end
-	end)
+	cycleIcons(slot.Icon, icons)
 end
 
 -- Binds the odds frame's exit, and hands back to the shop whenever it closes without another panel taking over.
@@ -488,6 +495,64 @@ function ShopController:_runStarterPackOffer(card: Frame, hudFrame: GuiObject?)
 	end
 end
 
+-- Binds the Random Ingredient HUD button. The press always names the full-price product; the server swaps in the discounted one while it's due.
+function ShopController:_setupRandomIngredientHudButton()
+	local hudButton = HudController:BindHudButton("RandomIngredient", function()
+		self:PromptProductPurchaseFromId(RandomIngredientConfig.Id)
+	end)
+
+	if not hudButton then
+		warn("HudUI has no RandomIngredient button, so the random ingredient can't be sold")
+		return
+	end
+
+	-- BindHudButton returns the wrapper, which is where the labels hang
+	local hudFrame = hudButton.Button
+
+	-- Hidden until the policy allows it, rather than shown and pulled, which would leave a window to buy
+	hudFrame.Visible = false
+
+	task.spawn(function()
+		hudFrame.Visible = PolicyController:CanPurchaseRandomItems()
+	end)
+
+	-- Filled once, since this pool is the only thing the panel shows
+	OddsUIController:PopulateIngredientOdds(RandomIngredientConfig.Pool)
+
+	UIController:BindButtonClick(hudFrame.Odds, function()
+		OddsUIController:OpenOdds()
+	end, true)
+
+	local icons = {}
+	for _, entry in RandomIngredientConfig.Pool do
+		table.insert(icons, Ingredients.GetIngredientFromId(entry.Id).Icon)
+	end
+
+	cycleIcons(hudFrame.Icon, icons)
+
+	hudFrame.Price.Text = `{GuiUtil.ROBUX_ICON}-`
+
+	-- Spawned because GetPrice yields on its first lookup; the loop below paints whichever lands
+	task.spawn(function()
+		self:GetPrice(RandomIngredientConfig.Id)
+		self:GetPrice(RandomIngredientConfig.FirstOfDayId)
+	end)
+
+	-- Re-read each second like the starter pack's countdown, so a used discount comes back without a rejoin
+	task.spawn(function()
+		while true do
+			local availableAt = PlayerDataController:GetKey("FirstPurchaseOfTheDay")[RandomIngredientConfig.Id] or 0
+			local eligible = availableAt <= workspace:GetServerTimeNow()
+			local productId = if eligible then RandomIngredientConfig.FirstOfDayId else RandomIngredientConfig.Id
+
+			hudFrame.Discount.Visible = eligible
+			hudFrame.Price.Text = `{GuiUtil.ROBUX_ICON}{self:GetCachedPrice(productId) or "-"}`
+
+			task.wait(1)
+		end
+	end)
+end
+
 -- Paints every bundle button with its price. A button with no Title is skipped -- already warned once.
 function ShopController:_refreshPurchasePrices()
 	for _, frame in self._purchaseFrames do
@@ -638,6 +703,8 @@ function ShopController:_setupUI()
 		end
 	end
 
+	self:_setupRandomIngredientHudButton()
+
 	local gamepassCategory = scrollingFrame:FindFirstChild("Gamepass")
 	if gamepassCategory then
 		self:_setupGamepasses(gamepassCategory)
@@ -687,6 +754,7 @@ function ShopController:OnInit()
 	SoundController = require(script.Parent.SoundController)
 	UIController = require(script.Parent.UIController)
 	HudController = require(script.Parent.HudController)
+	OddsUIController = require(script.Parent.OddsUIController)
 
 	self.UI = PlayerGui:WaitForChild("ShopUI")
 end

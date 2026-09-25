@@ -423,7 +423,8 @@ guess creeps toward the real price; past 1, skewers sell for less than they were
 
 `SPAWN_DELAY` and `INTERESTED_CHANCE` are what an *established* player faces — a new one's spawn wait is
 scaled by `EarlyBoost.MAX_SPAWN_SPEEDUP` and their walk-off share cut by
-`EarlyBoost.MAX_DECLINE_REDUCTION`. `GUARANTEED_SPAWN_DELAY` is its own number because the range above is
+`EarlyBoost.MAX_DECLINE_REDUCTION`. A well-rated stall's wait and opening floor move too (see Rating perks).
+`GUARANTEED_SPAWN_DELAY` is its own number because the range above is
 balance and this is pacing: short enough not to read as the tutorial hanging, long enough that the
 customer still walks up rather than materialising.
 
@@ -477,7 +478,8 @@ Gotcha: `SPAWN_CHANCE` and `COUNTER_CHANCE` are both out of 100, matching the co
 `CounterChance` rather than `SellNpc.INTERESTED_CHANCE` (out of 1).
 
 Past the cooldown, the expected wait is `(100 / SPAWN_CHANCE) * CHECK_INTERVAL` — 150s at today's
-numbers, about 5 minutes between visits once the cooldown is counted.
+numbers, about 5 minutes between visits once the cooldown is counted. A well-rated stall's `COOLDOWN` is shorter
+(see Rating perks).
 
 `BULK_MULTIPLIER` is the premium on top of the batch. Every skewer is first priced by its own cook state
 exactly as a normal customer would price it, and the total is then multiplied by this — so cooking well
@@ -553,6 +555,86 @@ Not simulated offline, same as rich and checking customers.
 | `LUCK_MAX` | the trade is a no-brainer | barely worth a skewer |
 | `DURATION` | more rolls per boost, and the luck gate holds the next wizard back longer | ends before the player gets to a stand |
 | `OFFER_TIMEOUT` | the skewer sits off the stand longer | a player at the grill misses it |
+
+## Selling — Hungry Joe
+
+`Shared/Config/HungryJoeNpc.luau`, run by `HungryJoeNpcManager`. The one customer who **gives** the player something. He
+walks to his own spot beside the stand and offers a job, a "GREAT REWARD" with no number on it, since the feast
+is only worked out once the stick comes back. If the player accepts, he lends them his stick (`HungryJoeStick`, 10 slots,
+see Borrowed sticks below). They fill it with **whatever they like**, grill it, and hand it back through the "Give
+BBQ" prompt on him. Declining or ignoring the offer sends him off with **no refusal charged**, the same as the wizard.
+
+**He takes any fill but never raw.** A partly filled stick is paid, and the feast scales with it. A raw one
+(`REFUSED_COOK_STATES`), another stick, or an empty hand gets a line and, where it needs explaining, a toast. The
+stick stays with the player.
+
+**The feast** (`GrantHungryJoeFeastReward`, the one place the reward model lives):
+
+| What | When | Reward |
+|---|---|---|
+| Bux | always | `GetSellValue × FEAST_MULTIPLIER` (1.5), paid as a sale so the player's boosts apply. Ingredient tier, fill, cook state and mutation all count through the sell value |
+| Gems | always | `GEMS_MIN..GEMS_MAX` (30–50), scaled by the fraction of the stick filled, so one ingredient can't farm the full handful |
+| Luck | full stick only | `LUCK_BY_COOK_STATE`: Perfect 1.5x for 5m, Cooked 1.25x for 3m, Overcooked and Charred none |
+
+Worked example: ten different Commons at the cheapest prices, cooked Perfect, come to about 2.8K Bux. Sold as five
+Wooden BBQs at a typical 1.2x offer, the same ingredients bring about 2.2K, so the Bux alone is about 25% up. On top
+of that come about 40 Gems and the 1.5x luck. A Diamond-stick sale still pays more Bux per
+ingredient (its +80%), and the extras are what close that gap. Ten ingredients cook one after another on one grill,
+so a high-tier feast ties a grill up for a long time: ten Commons take about 3.5 minutes on a basic grill, ten Rares
+about 20. That trade-off is the player's.
+
+**His patience runs on a clock with three stages**, shown on his `WaitingText` billboard:
+1. **Idle** (hidden, `IDLE_TIMEOUT` 15m) runs from the accept. The billboard just cycles "Waiting." through
+   "Waiting...". Adding ingredients doesn't stop it; only his stick reaching a grill does.
+2. **Cook** (shown as a countdown) starts the first time his stick goes on a grill. It's sized like a custom order's
+   clock: `GetTotalCookTime / RAW_END + COOK_LEEWAY_BASE (90) + COOK_LEEWAY_PER_INGREDIENT (45) × ingredients`.
+   Pulling the stick off and re-grilling never resets it.
+3. **Warning** (shown, `WARNING_DURATION` 1:30) starts when either clock above runs out. It toasts "HUNGRY JOE is
+   waiting for his BBQ!" with the red pulse. **Only a hand-over stops it.** When it runs out he leaves ANGRY with his
+   stick, taking it from wherever it is. Raw ingredients on it go back to the player; on a grill or cooked, they go
+   with him.
+
+The countdown turns red in its last minute. `HungryJoeVisitStartedAt` is saved when they accept, and the clock is
+banked as `HungryJoeClock` on the last save, so leaving and rejoining brings him back `RESTORE_DELAY` after the base
+loads with the same time left: **offline time never runs it down**. If the stick has gone missing somehow, he lends
+another. No fresh Hungry Joe comes while one is owed.
+
+**Pacing** is the wizard's "random, but not too random", with two differences. `LastHungryJoeVisit` is stamped when he
+**leaves** (fed, declined, or the player left mid-offer), not when he's sent, so `MIN_GAP` is quiet time after each
+visit. And `SPAWN_CHANCE` is a low 5%: at 30% nearly every visit would land a minute after `MIN_GAP`. At today's
+numbers (30s, 5%, 40m, 60m) he comes back about 49 minutes after the last visit ended on average, and about one in eight
+returns is the 60-minute pity. With a visit's own length on top, that's roughly one Hungry Joe an hour (the user's ask).
+The gap is wall-clock, so a player back after an hour or more away gets him about 30 seconds after joining.
+**Their first visit is sooner:** until `SeenHungryJoe` is set, the gap is `FIRST_MIN_GAP..FIRST_MAX_GAP` (15–20m) from when his
+clock starts, the first check after the tutorial. So a new player meets him in their first session, and a live player
+meets him about 15–20 minutes into their first session after the update. At 5% a check, most first visits are the
+20-minute pity.
+
+**Two new special customers never arrive together.** He's held back while a wizard or a rich customer is at the
+stall, or while a custom order customer is still on its way in. In the other direction, the wizard, rich and
+custom-order rolls all wait while Hungry Joe is walking in or putting his job to them. Once he's waiting on his
+stick he holds nobody back. He never comes during the tutorial.
+
+Not simulated offline. His stick on a stand or a grill is left exactly as it was (see Borrowed sticks). His feast
+counts as a sale for stats, the rating and the daily sale quests. No customer tip is rolled on top, since the feast
+already pays Gems.
+
+Analytics: the `Hungry Joe Visit 1` funnel (Arrived, Accepted, Fed), plus `Hungry Joe Visit Sent` (Roll, Pity or Forced),
+`Hungry Joe Offer Resolved`, `Hungry Joe Fed` (value the Bux; fields the cook state and fill) and
+`Hungry Joe Wait` (minutes he waited) and `Hungry Joe Left Angry` (field: the clock that ran out, Idle or Cook).
+Debug with `joe`, which also brings him back if he's still owed his stick.
+
+| Knob | Higher | Lower |
+|---|---|---|
+| `SPAWN_CHANCE` | visits bunch up just after `MIN_GAP` | most visits are pity visits |
+| `MIN_GAP` / `MAX_GAP` | rarer, more of an event | a grill spends more of its time tied up by feasts |
+| `FEAST_MULTIPLIER` | Hungry Joe beats every stick for Bux | only the extras are worth it |
+| `GEMS_MIN/MAX` | Hungry Joe is a Gems farm next to tips | Gems feel like a footnote |
+| `LUCK_BY_COOK_STATE` | the cook is what the feast is about | Perfect stops mattering past the Bux |
+| `OFFER_TIMEOUT` | he stands there longer on a busy base | a player at the grill misses him |
+| `IDLE_TIMEOUT` | a slow start is forgiven | players must grill his stick soon after accepting |
+| `COOK_LEEWAY_*` | plenty of time to pull and deliver | the warning lands before a slow grill finishes |
+| `WARNING_DURATION` | the warning is a formality | the warning is a real scramble |
 
 ## Selling — checking customers
 
@@ -724,7 +806,8 @@ the server seats customers with `Seat:Sit`.
 **Free seats bring customers faster.** Each seat no customer has claimed adds `SEAT_SPAWN_CHANCE_STEP` to
 `SPAWN_CHANCE`, up to `SEAT_SPAWN_CHANCE_MAX_BONUS`, and takes `SEAT_COOLDOWN_STEP` seconds off `COOLDOWN`,
 down to `SEAT_COOLDOWN_MIN`. The pacing rule is unchanged: a new customer still only comes in once every
-present one is waiting for its BBQ.
+present one is waiting for its BBQ. The table below is at 2★ or under. A better rating cuts the cooldown further,
+never under the same floor (see Rating perks).
 
 | Free seats | Spawn chance | Cooldown | Expected wait past the cooldown |
 |---|---|---|---|
@@ -809,6 +892,8 @@ order = CUSTOM_ORDER_CHANCE × accuracy × boost ÷ COOK_STATE_MULTIPLIERS.Perfe
   an 8-slot stick would be penalised.
 - **A rich customer's haul gets one roll**, on the mean chance across its skewers.
 - **Anything past 100 is a certain tip.** Nothing is capped.
+- **A well-rated stall tips more often.** Past 2★, both lines are multiplied by `RatingPerks.GetTipChanceScale`,
+  up to ×1.25 at 5★ (see Rating perks). The table below is at 2★ or under.
 
 | BBQ | Stand | Custom order | Custom order, seated |
 |---|---|---|---|
@@ -1154,6 +1239,72 @@ Every dial runs off this one fade, so none of them can drift onto its own curve 
 returns the identity at and past `THRESHOLD` (0 for the additive ones, 1 for the multiplicative), so a
 caller can apply it unconditionally.
 
+## Rating perks
+
+`Shared/Config/RatingPerks.luau`. What the headline star is worth in play: a well-rated stall pulls more,
+better-paying customers. Four dials rise together from `START_STARS` (2) to full stars (5), read live off the
+`Rating` attribute `RatingManager` publishes. It is the early boost's twin, and the two stack: one helps a new
+player, the other rewards a good one.
+
+**Only ever a bonus.** At and below `START_STARS` every getter returns the identity, so the base numbers in
+`SellNpc`, `RichNpc`, `CustomOrderNpc` and `CustomerTips` are still what a stall plays at. A low rating never
+makes anything worse than it was. A struggling player earning less would find it harder to recover, and a new
+player would feel that first.
+
+**Linear, not stepped.** Every star past the start is worth the same, and there's no threshold to flicker across
+while the 50-sale window moves the rating a few hundredths either way.
+
+- **`MAX_ARRIVAL_SPEEDUP`** (0.2): how much of the wait for a customer comes off. It scales the stand's
+  `SPAWN_DELAY` range on top of the early boost's scale, and the custom order `COOLDOWN` after the seats have
+  taken theirs off. `SEAT_COOLDOWN_MIN` still floors the order cooldown, so a full dining room gains nothing
+  more here. The rating reaches the fastest pace with fewer tables, but never passes it. The retry wait after a
+  walk-off or refusal is left alone, since that one is a penalty.
+- **`MAX_RICH_SPEEDUP`** (0.2): how much of `RichNpc.COOLDOWN` comes off. Only the stand's rich customer. The
+  custom order's rich one stays a Fancy Table draw (`RICH_CHANCE` is 0 on purpose), so the Cosmetic Shop keeps
+  its reason to sell them.
+- **`MAX_OFFER_LIFT`** (0.4): how far the opening offer's floor rises towards its top, after the refusal
+  penalty has moved the range. **Only the floor moves**, so the best opening is still one any stall could roll,
+  and the haggle gap to `CounterCap` is untouched. It can't go negative on a narrow state like Raw, and it
+  can't push a rich haul past `OFFER_CAP_FACTOR`. That's why it isn't a flat price bonus. Cooking well already
+  pays through the cook state, and a price multiplier would pay for it twice.
+- **`MAX_TIP_BONUS`** (0.25): what the tip chance is multiplied by, on top of the quality boosts. The Gems a
+  tip leaves don't change, and `MIN_GAP` still caps the rate.
+
+| Headline | Stand wait | Order cooldown (no seats) | Rich cooldown | Perfect opening (avg) | Cooked opening (avg) | Ordinary stand tip |
+|---|---|---|---|---|---|---|
+| ≤2★ | 6–12s | 100s | 150s | 1.10–1.35 (1.225) | 1.05–1.30 (1.175) | 20% |
+| 3★ | 5.6–11.2s | 93s | 140s | 1.133–1.35 (+1.4%) | 1.083–1.30 (+1.4%) | 21.7% |
+| 4★ | 5.2–10.4s | 87s | 130s | 1.167–1.35 (+2.7%) | 1.117–1.30 (+2.8%) | 23.3% |
+| 5★ | 4.8–9.6s | 80s | 120s | 1.20–1.35 (+4.1%) | 1.15–1.30 (+4.3%) | 25% |
+
+For scale: a steady cook around 2.8★ gets about a quarter of every dial, and a strong all-rounder around 4★
+gets two thirds. Full marks need a maxed kitchen and dining room on top of near-perfect cooking, because
+`SKILL_CAP_HEADROOM` holds the headline within a star of the weaker skill trait.
+
+**What it's worth, simulated.** A Monte Carlo of an hour's selling at 3–16 BBQ a minute puts the Bux gain
+over 2★ at about +1.5% at 3★, +3% at 4★ and +3.5–5.5% at 5★. Almost all of it is the offer lift. The
+stand clears about 25 BBQ a minute before customers become the limit, so stalls are cook-bound, and
+`MAX_ARRIVAL_SPEEDUP` only takes about 1.4s off the wait. That's something players feel, not money. It even
+shrinks rich hauls a little, since fewer skewers sit on the stand. The rich cooldown adds 3% (a thin stand
+rarely holds two) up to 21% more rich visits at 5★. The custom order cooldown only helps a base that fills
+orders faster than the cooldown. Both rolls check every 10s, so a cut under 10s often lands on the same
+check and changes nothing. Tips gain 5–16% Gems an hour, less than the chance bonus because `MIN_GAP` caps
+busy stalls.
+
+**Live play only.** Offline earnings keep the base pace and rates. They already run at full pace for up to
+24h, and the rating is about how the stall is run while the player is there. The tip bonus is applied in
+`CustomerTipManager:_tryCustomerTip` rather than `GetStandTipChance` for this reason, since the offline pass
+shares the latter. Live sales answered by a seller employee still get the perks: they're the stall's
+customers, whoever answers them.
+
+| Knob | Higher | Lower |
+|---|---|---|
+| `START_STARS` | fewer players feel anything, and the top end is steeper | nearly everyone gets a slice, so it inflates the baseline |
+| `MAX_ARRIVAL_SPEEDUP` | a good rating visibly fills the stall | the rating stops changing the pace |
+| `MAX_RICH_SPEEDUP` | rich visits chain for top stalls, and hoarding pays more | rich customers ignore the rating |
+| `MAX_OFFER_LIFT` | a top stall always opens near the top of the range, so there's less to fish for | openings don't care about the rating |
+| `MAX_TIP_BONUS` | Gems come faster for good stalls, feeding decor and so Atmosphere | tips only follow the food |
+
 ## Boosts
 
 `Shared/Config/Boosts.luau`. Timed consumables, held several at a time. **The biggest live one applies and
@@ -1289,6 +1440,21 @@ Above common the boost is pure profit, and that's where the tiers are meant to b
 bamboo carry none on purpose: at $3 and $17 a slot their price is already noise, and what they sell is
 capacity.
 
+### Borrowed sticks
+
+A stick flagged `Borrowed` is lent by a customer, and it sits after the ladder rather than being a tier. Today the
+only one is `HungryJoeStick` (see Selling — Hungry Joe). It has `Price` 0 and `ValueBoost` 0, since the premium is the
+customer's own, and it's never `Restockable` and has no Robux product. `Sticks.IsBorrowed` is checked everywhere the
+stick could leave the player's hands for someone else:
+- the sell stall refuses it, which also keeps it from every stall customer, the wizard and the custom-order
+  auto-collect
+- a custom order refuses it at the hand-over and never counts what's on it
+- hut storage refuses it
+- makers never build on it, and cookers never pick it up, take it off a stand or pull it off a grill
+- the offline sim leaves a stand or a grill holding it untouched
+
+It's built and cooked on the ordinary stand and grill, so the Skip Cook product works on it.
+
 ## Broke relief
 
 The loop can't bankrupt anyone on its own — rolls are free and even a charred skewer sells above cost — so
@@ -1309,6 +1475,9 @@ free, so affording it is a way in, however many pulls it takes) and the cheapest
 `RestockChance` of 100 (so affording it is at most one restock's wait — and buying out that window's stock
 means owning sticks). Gems, daily rewards and quest claims deliberately don't count.
 
+**Hungry Joe's stick counts like any other.** He takes any fill, so an empty loaned stick plus the gifted ingredient
+is a way back to a sale, and one with something on it already is.
+
 **When unsure, it errs toward gifting.** A mixed crate (the Grill Starter) counts for neither half, and a
 skewer plated on a dormant sauce dispenser isn't looked at. A wrong gift costs ~$160; a wrong refusal leaves
 someone stuck.
@@ -1325,7 +1494,7 @@ skewer between hand-over and payment, and a crate's rewards during its opening s
 one unneeded gift.
 
 Logged as `Broke Relief Granted` (value: the Bux they were down to; fields: what they lacked —
-`Ingredients`, `Stick` or `Both` — and that Bux figure again, as text for breakdowns), then one `Broke Relief Outcome` per gift — `Sold` at their next skewer sale or custom order,
+`Ingredients`, `Stick` or `Both` — and that Bux figure again, as text for breakdowns), then one `Broke Relief Outcome` per gift — `Sold` at their next skewer sale, custom order or Hungry Joe feast,
 `Regranted` if they went broke again first, `Left` if the session ended first — valued in seconds since
 the gift. A high `Left` share is the sign the gift isn't enough.
 
@@ -1378,7 +1547,7 @@ horizon carries nil: they were still working when the player came back.
 
 ### Tips
 
-Away customers tip Gems on the same terms watched ones do. Once the sales are walked in the order they
+Away customers tip Gems on the same terms watched ones do, less the rating's tip bonus (see Rating perks). Once the sales are walked in the order they
 landed, each rolls `CustomerTipManager:GetStandTipChance` — the one formula the live stand uses, so the cook
 state, the mutation, the ingredients' mean tier and a filled stick all pay off offline exactly as they do
 live — and `CustomerTips.MIN_GAP` spaces the hits against the simulated clock. A hit leaves

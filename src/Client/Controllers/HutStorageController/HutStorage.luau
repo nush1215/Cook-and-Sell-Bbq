@@ -110,8 +110,9 @@ function HutStorage:_getStorable(): (string?, number)
 		return name, PlayerDataController:GetKey("Ingredients")[ingredientId] or 0
 	end
 
+	-- A borrowed stick is on loan to the customer waiting for it back, so the server refuses to store it
 	local stickId = EquippedItem.GetStickId()
-	if stickId then
+	if stickId and not Sticks.IsBorrowed(stickId) then
 		local stick = Sticks.GetStickFromId(stickId)
 		local name = if stick then `{stick.Name} Stick` else "Stick"
 		return name, PlayerDataController:GetKey("Sticks")[stickId] or 0

@@ -20,6 +20,7 @@ export type Stick = {
 	RestockAmount: NumberRange?, -- how many units a successful roll stocks, min..max (nil if not restockable)
 	Rarity: string, -- rarity word shown in the shop, keyed into Shared.Colors for its tint
 	RobuxProductId: number?, -- Robux dev-product asset id; buying it grants this stick (0 = not sold for Robux yet)
+	Borrowed: boolean?, -- lent by a customer: never stocked, sold on the stall, stored in a hut, or worked by staff
 	Model: Model, -- not authored below, back-filled from Assets.Sticks
 }
 
@@ -29,7 +30,7 @@ local Sticks = {}
 -- The slice of a stick's Price that comes back on a sale -- the stick liquidated, never refunded. Cross the ceiling and the shop is a money loop; see docs/balance.md before moving it.
 Sticks.SALE_RETURN_FACTOR = 0.15
 
--- Lowest to highest; array order is the tier. ValueBoost is solved so every stick pays for itself on commons -- see docs/balance.md.
+-- Lowest to highest; array order is the tier. ValueBoost is solved so every stick pays for itself on commons -- see docs/balance.md. A Borrowed stick sits after the ladder and is no tier.
 Sticks.Data = {
 	{
 		Id = "WoodenStick",
@@ -120,6 +121,19 @@ Sticks.Data = {
 		Rarity = "Mythic",
 		RobuxProductId = 3709026270, -- the only way to get one: no shop row sells it for currency
 	},
+	{
+		Id = "HungryJoeStick",
+		Name = "Hungry Joe's",
+		Price = 0, -- lent, never bought, so it adds no liquidated slice to the feast
+		Capacity = 10,
+		ValueBoost = 0, -- the premium is HungryJoeNpc.FEAST_MULTIPLIER, so it isn't counted twice
+		Icon = "rbxassetid://135179026727588",
+		TextColor = Color3.fromRGB(255, 140, 60),
+		StrokeColor = Color3.fromRGB(77, 42, 18),
+		Restockable = false,
+		Rarity = "Legendary",
+		Borrowed = true,
+	},
 }
 
 -- Resolves each entry's model, dropping any that's missing so a typo can't error mid-build.
@@ -152,6 +166,12 @@ end
 function Sticks.GetValueMultiplier(id: string?): number
 	local stick = id and Sticks.GetStickFromId(id)
 	return if stick then 1 + stick.ValueBoost / 100 else 1
+end
+
+-- Whether a stick is only on loan, which every sale, store and staff path refuses. An id the config no longer has reads as not.
+function Sticks.IsBorrowed(id: string): boolean
+	local stick = Sticks.GetStickFromId(id)
+	return stick ~= nil and stick.Borrowed == true
 end
 
 function Sticks.GetAllSticks(): { Stick }

@@ -122,6 +122,13 @@ the currency for an expensive one and come back, a rejoin included. The claim is
 animation having had time to play; `SpeedLevel` is stamped on the roll rather than read live, so a level
 bought mid-pull can't move the goalposts under an animation already playing.
 
+**`PendingRandomIngredients`** — `{ [uid] = ingredientId }`, Random Ingredient rolls that have been bought
+but not handed over yet. The roll is **banked the moment the receipt clears**, before the crash-and-roll
+reveal plays, and moves into `Ingredients` when the buyer's client claims at the reveal's end or the server's
+fallback fires. Banking first is what makes the Robux safe: leaving mid-reveal, or a server dying, leaves the
+entry in the save, and `RandomIngredientManager`'s post-load callback settles every leftover on the next
+join. An entry naming an ingredient the config has since dropped is cleared with nothing granted.
+
 **`PityCounters`** — ingredient rolls since one landed at each tracked tier *or better* (see
 `Ingredients.PITY_TIERS`). A counter reaching its tier's `PityThreshold` forces the next roll to that tier;
 whatever lands then clears every counter at or below it, so a Legendary doesn't leave a forced Rare queued
@@ -143,6 +150,13 @@ the server if that client never gets there.
 claimed; a past value is one sitting ready. Absolute rather than a countdown, so it keeps running offline.
 
 ## Shops
+
+**`FirstPurchaseOfTheDay`** — `{ [productId] = availableAt }`, keyed by the **full-price** product's id (e.g.
+`RandomIngredient`). A product with a `FirstOfDayProduct` in `Config.Products` is prompted as that discounted
+twin while `availableAt` is past; buying the twin stamps its `FirstOfDayFor` key with
+`workspace:GetServerTimeNow()` plus 24 hours. A missing key reads as available, so nothing needs seeding and a
+new discounted product needs no data change. The stamp goes on the buyer, and a gift is always prompted at full
+price.
 
 **`StickShop`** / **`GrillStandShop`** — per-player purchases for the current restock window. `Seed` ties
 `Bought` to the window it was counted in; a stale `Seed` means the window rolled over, so `Bought` reads as
@@ -209,6 +223,31 @@ and stamped *before* the visit runs. **0 means the clock hasn't started yet.** T
 current time instead of reading it as "forever ago", so neither a new player nor a live save reconciled
 onto this key gets a pity wizard on their first check. Reset along with the rest of the sell stall when a
 tutorial restarts.
+
+**`LastHungryJoeVisit`** — when the last Hungry Joe visit **ended**: fed, turned down, ignored, or left mid-offer (that last
+one is stamped on the outgoing profile by a pre-cleanup callback). Unlike the wizard's stamp it's written when he
+leaves rather than when he's sent, so his gap is quiet time after each visit. **0 means the clock hasn't started
+yet**, the same as `LastWizardVisit`. Reset when a tutorial restarts.
+
+**`SeenHungryJoe`** — whether Hungry Joe has ever been sent to them. Set as he's sent, however the visit goes. Until
+it's set, his gap is the shorter `FIRST_MIN_GAP..FIRST_MAX_GAP`, so the first one lands 15–20 minutes after his clock
+starts rather than an hour. Reset when a tutorial restarts.
+
+**`HungryJoeVisitStartedAt`** — when the Hungry Joe still owed his stick arrived, floored to the second. **0 means none is
+owed.** It's written the moment the player takes his job, before the stick is handed over, and zeroed in the same
+step as the stick being taken back and paid for. Non-zero on join brings him back into the wait, and he lends a new
+stick if none is found in `Sticks`, `StickStands`, `FilledSticks`, `Grillers` or `SauceDispensers`. It also serves as
+the analytics funnel id, so a restored visit finishes its own run. Reset when a tutorial restarts.
+
+**`HungryJoeClock`** — his patience clock while he's owed his stick, `{ Phase, SecondsLeft }` with `Phase` one of
+`Idle`, `Cook` or `Warning`. Empty (`{}`) when none is owed. It's written whenever the phase changes and banked with
+the exact time left on the last save, so a rejoin restamps it rather than counting time offline. An owed visit with an
+empty clock (saved before the clock existed) starts `Idle` from the full `IDLE_TIMEOUT`. Cleared with
+`HungryJoeVisitStartedAt` when he's fed or leaves angry. Reset when a tutorial restarts.
+
+His stick, `HungryJoeStick`, lives in the ordinary stick keys (`Sticks`, `StickStands`, `FilledSticks`, `Grillers`) like
+any other. It's flagged `Borrowed` in the config, which keeps it out of `SkewerStand` and `HutStorage` and away from
+staff.
 
 ## Custom orders
 

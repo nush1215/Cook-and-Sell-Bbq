@@ -20,5 +20,9 @@ return {
 			"rbxassetid://123275644103833",
 			"rbxassetid://133084718656141",
 		},
+		-- Hungry Joe's own eat, for his full-size stick
+		HungryJoeEat = {
+			"rbxassetid://72979953359610",
+		},
 	},
 }

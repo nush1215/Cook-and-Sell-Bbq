@@ -22,6 +22,7 @@ local bindCounter = 0
 export type MeteorFallOptions = {
 	Duration: number,
 	LandingCFrame: CFrame,
+	EntryOffset: Vector3?, -- where it starts relative to the landing; defaults to the high diagonal the tutorial crate uses
 	OnFrame: ((alpha: number, position: Vector3) -> ())?, -- fires on in-flight frames only, not the landing frame
 	OnLanded: (() -> ())?, -- fires once, after the final PivotTo to the landing CFrame
 }
@@ -52,7 +53,7 @@ function MeteorFall.Play(model: Model, options: MeteorFallOptions): () -> ()
 	local landingPos = landingCFrame.Position
 
 	-- Diagonal meteor entry: high up and off to one side
-	local startPos = landingPos + Vector3.new(ENTRY_HORIZONTAL, ENTRY_HEIGHT, ENTRY_HORIZONTAL)
+	local startPos = landingPos + (options.EntryOffset or Vector3.new(ENTRY_HORIZONTAL, ENTRY_HEIGHT, ENTRY_HORIZONTAL))
 	local travelDir = (landingPos - startPos).Unit
 
 	-- Orient the crate diving along its travel direction, then settle to the landing orientation

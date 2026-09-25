@@ -26,6 +26,8 @@ local Structures = require(Shared.Config.Structures)
 local Ingredients = require(Shared.Config.Ingredients)
 local CustomOrderNpc = require(Shared.Config.CustomOrderNpc)
 local RichNpc = require(Shared.Config.RichNpc)
+local Rating = require(Shared.Config.Rating)
+local RatingPerks = require(Shared.Config.RatingPerks)
 
 -- Managers
 local CustomerTipManager = require(script.Parent.CustomerTipManager)
@@ -54,6 +56,7 @@ local SellNpcManager
 local GrillerManager
 local StickStandManager
 local BaseManager
+local HungryJoeNpcManager
 
 -- Sends the customer who asks for a named recipe against a clock. Its rig, walk and fade are the sell stand's; what is its own is the order, the timer and the hand-over.
 local CustomOrderNpcManager = {
@@ -92,6 +95,11 @@ local function getBestOwnedStick(data)
 	local best = nil
 
 	for _, stick in Sticks.GetAllSticks() do
+		-- A borrowed stick is only on loan for its own customer, so no order is sized or priced against it
+		if stick.Borrowed then
+			continue
+		end
+
 		if (data.Sticks[stick.Id] or 0) > 0 and (not best or stick.Capacity > best.Capacity) then
 			best = stick
 		end
@@ -119,6 +127,11 @@ local function countIngredientsToHand(data): { [string]: number }
 	local counts = table.clone(data.Ingredients)
 
 	local function addFrom(record)
+		-- What's on a borrowed stick is promised to its lender, so it can't fill this order
+		if record.StickId and Sticks.IsBorrowed(record.StickId) then
+			return
+		end
+
 		for _, id in record.Ingredients or {} do
 			counts[id] = (counts[id] or 0) + 1
 		end
@@ -614,6 +627,18 @@ function CustomOrderNpcManager:DeliverOrder(player: Player, npc: Model)
 	local delivered = StickManager:GetEquippedFilledStick(player, data)
 	if not delivered then
 		self:_scoldEmptyHanded(player, npc, record)
+		self._delivering[player] = nil
+		return
+	end
+
+	-- Never taken, unlike any other BBQ: it's on loan from the customer waiting for it back
+	if Sticks.IsBorrowed(delivered.StickId) then
+		NotificationManager:NotifyNormal(player, {
+			Text = "That's a borrowed stick, they won't take it!",
+			Duration = 3,
+			Sound = "Reject",
+			Effect = "Error",
+		})
 		self._delivering[player] = nil
 		return
 	end
@@ -1643,12 +1668,13 @@ function CustomOrderNpcManager:_rollCustomOrderVisits()
 			continue
 		end
 
-		-- Room to sit them draws them in more often and sooner, each within its cap
+		-- Room to sit them draws them in more often and sooner, and a good rating sooner again, each within its cap
 		local freeSeats = self:CountFreeSeats(player, data)
 		local chance = CustomOrderNpc.SPAWN_CHANCE
 			+ math.min(freeSeats * CustomOrderNpc.SEAT_SPAWN_CHANCE_STEP, CustomOrderNpc.SEAT_SPAWN_CHANCE_MAX_BONUS)
 		local cooldown = math.max(
-			CustomOrderNpc.COOLDOWN - freeSeats * CustomOrderNpc.SEAT_COOLDOWN_STEP,
+			(CustomOrderNpc.COOLDOWN - freeSeats * CustomOrderNpc.SEAT_COOLDOWN_STEP)
+				* RatingPerks.GetArrivalScale(player:GetAttribute(Rating.OVERALL_ATTRIBUTE)),
 			CustomOrderNpc.SEAT_COOLDOWN_MIN
 		)
 
@@ -1658,6 +1684,11 @@ function CustomOrderNpcManager:_rollCustomOrderVisits()
 
 		-- Read off the tracked customers rather than a flag, so an errored visit can't leave it stuck set
 		if not self:CanSendAnotherCustomOrder(player, data) then
+			continue
+		end
+
+		-- Two new customers never arrive together, so this waits out a Hungry Joe still walking in
+		if HungryJoeNpcManager:IsHungryJoeArriving(player) then
 			continue
 		end
 
@@ -1767,6 +1798,17 @@ function CustomOrderNpcManager:CanSendAnotherCustomOrder(player: Player, data): 
 	return #tracked < self:GetMaxConcurrentOrders(data)
 end
 
+-- Whether a custom order customer is still arriving, asking or collecting rather than stood waiting on its BBQ, which Hungry Joe waits out so two never arrive together.
+function CustomOrderNpcManager:HasUnsettledCustomer(player: Player): boolean
+	for _, record in self._npcs[player] or {} do
+		if not record.awaitingDelivery then
+			return true
+		end
+	end
+
+	return false
+end
+
 -- Waits until the player has something on their stand to look over. Yields, possibly for a long time.
 function CustomOrderNpcManager:_awaitPlacedSkewer(player: Player)
 	-- The signal fires for every player, and the condition re-reads this one, so no filtering is needed
@@ -1817,6 +1859,7 @@ function CustomOrderNpcManager:OnInit()
 	GrillerManager = require(script.Parent.GrillerManager)
 	StickStandManager = require(script.Parent.StickStandManager)
 	BaseManager = require(script.Parent.BaseManager)
+	HungryJoeNpcManager = require(script.Parent.HungryJoeNpcManager)
 
 	-- On Init, so the fold is in place before any profile can finish loading
 	PlayerDataManager:RegisterPostLoadCallback(function(_, data)

@@ -38,14 +38,14 @@ local SPIN_TURNS = 1
 local BOARD_SPIN_AXIS = Vector3.yAxis
 
 local INTRO_SCALE = 0.3
-local CYCLE_SCALE = 0.8
-local CYCLE_RISE = 0.5 -- studs below the landing that each cycled ingredient pops up from
+local CYCLE_SCALE = RollingConfig.CYCLE_SCALE
+local CYCLE_RISE = RollingConfig.CYCLE_RISE
 
 -- Driven off the live base each frame rather than PartFloat, so it follows a grid reflow
-local RESULT_SPIN_SPEED = 0.5 -- radians/sec the result spins about Y
-local RESULT_HOVER_AMPLITUDE = 0.1 -- studs the result bobs
-local RESULT_HOVER_SPEED = 3 -- radians/sec the bob cycles
-local RESULT_FLOAT_DELAY = 0.1 -- lets the landing spring settle before the float takes the pivot
+local RESULT_SPIN_SPEED = RollingConfig.RESULT_SPIN_SPEED
+local RESULT_HOVER_AMPLITUDE = RollingConfig.RESULT_HOVER_AMPLITUDE
+local RESULT_HOVER_SPEED = RollingConfig.RESULT_HOVER_SPEED
+local RESULT_FLOAT_DELAY = RollingConfig.RESULT_FLOAT_DELAY
 local RESULT_HIGHLIGHT_DELAY = 0.7
 local PROMPT_DISTANCE = 13
 

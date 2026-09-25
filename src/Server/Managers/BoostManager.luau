@@ -79,8 +79,14 @@ function BoostManager:_pruneExpired(player: Player)
 	PlayerDataManager:SetPlayerDataKey(player, "Boosts", kept)
 end
 
--- Gives the player a boost of `amount` for `duration` seconds. Stacks -- it only applies while it's their biggest.
-function BoostManager:GrantBoost(player: Player, boostId: string, amount: number, duration: number)
+-- Gives the player a boost of `amount` for `duration` seconds. Stacks -- it only applies while it's their biggest. `announcement` replaces the plain "Luck 1.25x for 4m" toast, for a grant that says who gave it.
+function BoostManager:GrantBoost(
+	player: Player,
+	boostId: string,
+	amount: number,
+	duration: number,
+	announcement: string?
+)
 	if not Boosts.GetBoostFromId(boostId) then
 		warn(`No boost called {boostId}, nothing granted`)
 		return
@@ -105,7 +111,7 @@ function BoostManager:GrantBoost(player: Player, boostId: string, amount: number
 	end
 
 	NotificationManager:NotifyNormal(player, {
-		Text = `{Boosts.GetLabel(boostId, amount)} for {GuiUtil.ConvertSecondsToDHMS(duration)}`,
+		Text = announcement or `{Boosts.GetLabel(boostId, amount)} for {GuiUtil.ConvertSecondsToDHMS(duration)}`,
 		Effect = "Success",
 	})
 end

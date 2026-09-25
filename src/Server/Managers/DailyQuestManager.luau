@@ -28,6 +28,7 @@ local FreeWorkersManager = require(script.Parent.FreeWorkersManager)
 local BaseManager = require(script.Parent.BaseManager)
 local SellNpcManager = require(script.Parent.SellNpcManager)
 local CustomOrderNpcManager = require(script.Parent.CustomOrderNpcManager)
+local HungryJoeNpcManager = require(script.Parent.HungryJoeNpcManager)
 local GrillerManager = require(script.Parent.GrillerManager)
 local IngredientRollingManager = require(script.Parent.IngredientRollingManager)
 local StickShopManager = require(script.Parent.StickShopManager)
@@ -472,6 +473,11 @@ function DailyQuestManager:OnStart()
 		if entry.Matched == entry.Slots and entry.Extras == 0 and entry.CookState == "Perfect" then
 			self:ProgressDailyQuestType(player, "PerfectCustomOrders", 1)
 		end
+	end)
+
+	-- Hungry Joe is a customer served with a BBQ too, so his stick counts toward the sale quests
+	HungryJoeNpcManager.OnHungryJoeFed:Connect(function(player, delivered)
+		self:ProgressDailyQuestsFromSale(player, { delivered })
 	end)
 
 	GrillerManager.OnCookCompleted:Connect(function(player, cookStateId)

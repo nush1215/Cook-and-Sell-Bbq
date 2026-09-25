@@ -52,6 +52,9 @@ local MAX_GAMEPASS_VERIFY_RETRIES = 3
 local GAMEPASS_VERIFY_RETRY_DELAY = 0.5
 local MAX_PURCHASE_LOGS = 100
 
+-- How long after a discounted first-of-the-day buy the discount comes back, in seconds
+local FIRST_OF_DAY_INTERVAL = 24 * 60 * 60
+
 --
 local function validatePlayer(player: Player?): boolean
 	return player ~= nil and player:IsDescendantOf(Players)
@@ -227,13 +230,27 @@ function ShopManager:AttemptProductPurchase(player: Player, id: string, toGift: 
 				return
 			end
 
+			-- The discount is the buyer's own, so a gift goes at full price; ownerData is the buyer's whenever it isn't one
+			local firstOfDayKey = productData.FirstOfDayFor or (productData.FirstOfDayProduct and id)
+			if firstOfDayKey then
+				local availableAt = ownerData.FirstPurchaseOfTheDay[firstOfDayKey] or 0
+				local eligible = not isGift and availableAt <= workspace:GetServerTimeNow()
+
+				if eligible and productData.FirstOfDayProduct then
+					productData = Products.GetProductFromId(productData.FirstOfDayProduct)
+				elseif not eligible and productData.FirstOfDayFor then
+					-- Only a tampered client names the discounted twin, since the HUD always asks for the full-price one
+					return
+				end
+			end
+
 			if isGift then
-				setupGiftTracking(player, id, toGift)
+				setupGiftTracking(player, productData.Id, toGift)
 			end
 
 			if productData.ProductId then
 				MarketplaceService:PromptProductPurchase(player, productData.ProductId)
-				self.OnPurchasePromptShown:Fire(player, id, "Product", isGift)
+				self.OnPurchasePromptShown:Fire(player, productData.Id, "Product", isGift)
 			end
 		end)
 		:catch(function(error)
@@ -512,6 +529,15 @@ function ShopManager:_processProductPurchase(
 	if productData.PurchaseOnce then
 		PlayerDataManager:InsertPlayerDataKey(target, "PurchasedOnceProducts", productData.Id)
 		target:AddTag(productData.Id)
+	end
+
+	-- On the buyer, whose discount it was -- a gift is never prompted as the discounted twin
+	if productData.FirstOfDayFor then
+		PlayerDataManager:SetPlayerDataKey(
+			buyer,
+			{ "FirstPurchaseOfTheDay", productData.FirstOfDayFor },
+			workspace:GetServerTimeNow() + FIRST_OF_DAY_INTERVAL
+		)
 	end
 
 	self.PlayerPurchased:Fire(target, productData.Id)

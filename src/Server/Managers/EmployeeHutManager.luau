@@ -477,6 +477,18 @@ function EmployeeHutManager:StoreHeldItem(player: Player, uid: string, storeAll:
 		return
 	end
 
+	-- On loan to the customer waiting for it back, so it stays in their hands rather than a maker's
+	if stickId and Sticks.IsBorrowed(stickId) then
+		NotificationManager:NotifyNormal(player, {
+			Text = "Borrowed sticks can't be stored!",
+			Duration = 3,
+			Sound = "Reject",
+			Effect = "Error",
+		})
+		self._storing[player] = nil
+		return
+	end
+
 	-- The count, not the tool, is the proof they have one. A tool outlives its last unit by however long the
 	-- reconcile takes to destroy it, so trusting the tool alone would bank a free item off a fast second press
 	local owned = if ingredientId then data.Ingredients[ingredientId] else data.Sticks[stickId]

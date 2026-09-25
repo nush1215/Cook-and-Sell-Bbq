@@ -10,6 +10,7 @@ local Signal = require(Packages.Signal)
 -- Shared
 local Shared = ReplicatedStorage.Shared
 local Network = require(Shared.Network)
+local Sticks = require(Shared.Config.Sticks)
 
 --
 local PlayerDataManager
@@ -112,6 +113,17 @@ end
 
 -- Puts a skewer record on display and calls the customer. Takes the caller's already-awaited `data`, so an employee delivering one reaches the same checks as a player placing one, and `byEmployee` marks that delivery.
 function SkewerStandManager:PlaceSkewerRecord(player: Player, data, filled, byEmployee: boolean?): boolean
+	-- On loan to the customer waiting for it back, so no stall customer, wizard or order can buy it off here
+	if Sticks.IsBorrowed(filled.StickId) then
+		NotificationManager:NotifyNormal(player, {
+			Text = "That's a borrowed stick, it isn't for sale!",
+			Duration = 3,
+			Sound = "Reject",
+			Effect = "Error",
+		})
+		return false
+	end
+
 	local skewers = data.SkewerStand
 	if #skewers >= self.MAX_SKEWERS then
 		NotificationManager:NotifyNormal(player, {

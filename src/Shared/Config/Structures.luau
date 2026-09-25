@@ -233,7 +233,7 @@ Structures.Data = {
 	},
 
 	--------------------- [[[ COSMETICS ]]] ---------------------
-	-- Purely visual, so they need no code. Sold for Gems by Config.CosmeticShop, which owns their prices and sets their Rarity by tier; Cost 0 and Restockable false keep them out of the Grill & Stand Shop
+	-- Purely visual bar the Atmosphere rating, so they need no code. Sold for Gems by Config.CosmeticShop, which owns their prices and sets their Rarity by tier; Cost 0 and Restockable false keep them out of the Grill & Stand Shop
 	{
 		Id = "SmallDirtPath",
 		Name = "Small Dirt Path",
@@ -466,13 +466,13 @@ Structures.Data = {
 	},
 
 	--------------------- [[[ TABLES ]]] ---------------------
-	-- Where custom order customers sit to wait and eat; more seats bring them faster. Sold for Gems by Config.CosmeticShop like the cosmetics, see docs/balance.md
+	-- Where custom order customers sit to wait and eat; more seats bring them faster and raise the Atmosphere rating. Sold for Gems by Config.CosmeticShop like the cosmetics, see docs/balance.md
 	{
 		Id = "SmallWoodenTable",
 		Name = "Small Wooden Table",
 		Category = "Tables",
 		Cost = 0,
-		Description = `Seats 2 Customers! <font color="{SPEED_COLOR}">Faster</font> custom orders and more <font color="{VALUE_COLOR}">Gem</font> tips`,
+		Description = `Seats 2 Customers! <font color="{SPEED_COLOR}">Faster</font> orders, more <font color="{VALUE_COLOR}">Gem</font> tips and <font color="{VALUE_COLOR}">stars</font>`,
 		Icon = "rbxassetid://137472177697700",
 		TextColor = WOOD_TEXT_COLOR,
 		StrokeColor = WOOD_STROKE_COLOR,
@@ -485,7 +485,7 @@ Structures.Data = {
 		Name = "Medium Wooden Table",
 		Category = "Tables",
 		Cost = 0,
-		Description = `Seats 4 Customers! <font color="{SPEED_COLOR}">Faster</font> custom orders and more <font color="{VALUE_COLOR}">Gem</font> tips`,
+		Description = `Seats 4 Customers! <font color="{SPEED_COLOR}">Faster</font> orders, more <font color="{VALUE_COLOR}">Gem</font> tips and <font color="{VALUE_COLOR}">stars</font>`,
 		Icon = "rbxassetid://137472177697700",
 		TextColor = WOOD_TEXT_COLOR,
 		StrokeColor = WOOD_STROKE_COLOR,
@@ -498,7 +498,7 @@ Structures.Data = {
 		Name = "Large Wooden Table",
 		Category = "Tables",
 		Cost = 0,
-		Description = `Seats 6 Customers! <font color="{SPEED_COLOR}">Faster</font> custom orders and more <font color="{VALUE_COLOR}">Gem</font> tips`,
+		Description = `Seats 6 Customers! <font color="{SPEED_COLOR}">Faster</font> orders, more <font color="{VALUE_COLOR}">Gem</font> tips and <font color="{VALUE_COLOR}">stars</font>`,
 		Icon = "rbxassetid://78634151113048",
 		TextColor = WOOD_TEXT_COLOR,
 		StrokeColor = WOOD_STROKE_COLOR,
@@ -511,7 +511,7 @@ Structures.Data = {
 		Name = "Circular Table",
 		Category = "Tables",
 		Cost = 0,
-		Description = `Seats 3 Customers! <font color="{SPEED_COLOR}">Faster</font> custom orders and more <font color="{VALUE_COLOR}">Gem</font> tips`,
+		Description = `Seats 3 Customers! <font color="{SPEED_COLOR}">Faster</font> orders, more <font color="{VALUE_COLOR}">Gem</font> tips and <font color="{VALUE_COLOR}">stars</font>`,
 		Icon = "rbxassetid://127578690612337",
 		TextColor = WOOD_TEXT_COLOR,
 		StrokeColor = WOOD_STROKE_COLOR,

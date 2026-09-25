@@ -43,7 +43,7 @@ local Cooker = {}
 -- Where a fresh cooker starts. Named here rather than assumed, since a role's states are its own
 Cooker.Initial = "Idle"
 
--- Whether a stand's stick is loaded to its capacity and ready to be taken away and cooked.
+-- Whether a stand's stick is loaded to its capacity and ready to be taken away and cooked. A borrowed one never is: it goes back to its lender, never to the stall.
 local function isStandReady(record): boolean
 	-- A legacy string-shaped entry reads as empty rather than erroring on .Ingredients
 	if type(record) ~= "table" or record.Cooked then
@@ -52,7 +52,7 @@ local function isStandReady(record): boolean
 
 	local stick = Sticks.GetStickFromId(record.StickId)
 
-	return stick ~= nil and #record.Ingredients >= stick.Capacity
+	return stick ~= nil and not stick.Borrowed and #record.Ingredients >= stick.Capacity
 end
 
 -- The uid of a stand whose stick is finished and can be taken away now.
@@ -78,7 +78,12 @@ local function findWorkableStand(employee, data): string?
 	end
 
 	for uid, record in data.StickStands do
-		if type(record) ~= "table" or record.Cooked or #record.Ingredients == 0 then
+		if
+			type(record) ~= "table"
+			or record.Cooked
+			or #record.Ingredients == 0
+			or Sticks.IsBorrowed(record.StickId)
+		then
 			continue
 		end
 
@@ -108,8 +113,13 @@ end
 -- The uid of a griller already cooking that no employee has taken on, or nil. This is how a skewer the player put down themselves gets finished rather than left to burn.
 local function findUnattendedCook(employee, data): string?
 	for uid, record in data.Grillers do
-		-- Its own claims read as free, so a cook it's already timing is skipped by name
-		if record.Cooking and not employee._cooks[uid] and employee:ClaimStation(uid) then
+		-- Its own claims read as free, so a cook it's already timing is skipped by name. A borrowed stick is the player's to pull, since the stall would refuse it
+		if
+			record.Cooking
+			and not employee._cooks[uid]
+			and not Sticks.IsBorrowed(record.StickId)
+			and employee:ClaimStation(uid)
+		then
 			return uid
 		end
 	end

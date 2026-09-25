@@ -87,6 +87,10 @@ local PROGRESS_RESET_KEYS = {
 	"SeenHaggle",
 	"SeenRichCustomer",
 	"LastWizardVisit",
+	"LastHungryJoeVisit",
+	"SeenHungryJoe",
+	"HungryJoeVisitStartedAt",
+	"HungryJoeClock",
 	"TutorialStep",
 
 	-- The lifetime counters go too -- a run being thrown away shouldn't leave a trail in the leaderboards

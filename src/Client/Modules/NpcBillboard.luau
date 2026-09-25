@@ -209,8 +209,14 @@ end
 
 InputController.OnGamepadConnectionChanged:Connect(refreshOfferTargeting)
 
--- Mounts `templateName`'s billboards on the NPC's head and returns the state a caller drives them through, or nil only if the rig left the world before its head arrived. `billboards` is every BillboardGui the template held, by name.
-function NpcBillboard.Attach(npc: Model, templateName: string, dialogueVariant: string?, dialoguePrefix: string)
+-- Mounts `templateName`'s billboards on the NPC's head and returns the state a caller drives them through, or nil only if the rig left the world before its head arrived. `billboards` is every BillboardGui the template held, by name. `bubbleClearances` lifts the named billboards that many studs per chat bubble; the rest stay put.
+function NpcBillboard.Attach(
+	npc: Model,
+	templateName: string,
+	dialogueVariant: string?,
+	dialoguePrefix: string,
+	bubbleClearances: { [string]: number }?
+)
 	-- Held for as long as it takes: under streaming the parts can trail the model by however long the player takes to walk over
 	local head = npc:FindFirstChild("Head")
 	while not head and npc.Parent do
@@ -269,8 +275,9 @@ function NpcBillboard.Attach(npc: Model, templateName: string, dialogueVariant: 
 
 	-- Springs the billboards clear of the current bubble stack, settling back as they expire
 	local function updateRaise()
-		local lift = restOffset + Vector3.new(0, BUBBLE_CLEARANCE * state.bubbleCount, 0)
-		for _, billboard in billboards do
+		for name, billboard in billboards do
+			local clearance = bubbleClearances and bubbleClearances[name] or BUBBLE_CLEARANCE
+			local lift = restOffset + Vector3.new(0, clearance * state.bubbleCount, 0)
 			Spr.target(billboard, RAISE_DAMPING, RAISE_FREQUENCY, { StudsOffsetWorldSpace = lift })
 		end
 	end

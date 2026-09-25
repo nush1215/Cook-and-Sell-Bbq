@@ -275,10 +275,13 @@ function DailyRewardController:OnStart()
 
 		-- Day 7's tile has none, so a finished week shows its first six stamped
 		local claimed = button:FindFirstChild("Claimed")
-		local claimedScale = claimed and claimed:FindFirstChildOfClass("UIScale")
-		if claimed and not claimedScale then
+
+		-- The stamp is the Icon inside the Claimed frame where the art carries one, as the worker cards' Hired does
+		local stamp = claimed and (claimed:FindFirstChild("Icon") or claimed)
+		local claimedScale = stamp and stamp:FindFirstChildOfClass("UIScale")
+		if stamp and not claimedScale then
 			claimedScale = Instance.new("UIScale")
-			claimedScale.Parent = claimed
+			claimedScale.Parent = stamp
 		end
 
 		-- A worker day's rating is coloured in its title

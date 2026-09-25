@@ -14,6 +14,8 @@ local RandomUtil = require(Shared.RandomUtil)
 local Sticks = require(Shared.Config.Sticks)
 local Ingredients = require(Shared.Config.Ingredients)
 local CustomerTips = require(Shared.Config.CustomerTips)
+local Rating = require(Shared.Config.Rating)
+local RatingPerks = require(Shared.Config.RatingPerks)
 
 -- Managers
 local PlayerDataManager = require(script.Parent.PlayerDataManager)
@@ -124,6 +126,9 @@ function CustomerTipManager:_tryCustomerTip(
 	source: string,
 	sayTipping: () -> ()
 )
+	-- Here rather than in GetStandTipChance, which the offline pass shares, so the rating only pays out on live play
+	chance *= RatingPerks.GetTipChanceScale(player:GetAttribute(Rating.OVERALL_ATTRIBUTE))
+
 	-- Their first tip is a given, so Gems are shown to them rather than left to luck. Never on food that couldn't earn one
 	local data = PlayerDataManager:GetLoadedPlayerData(player)
 	local isFirstTip = data ~= nil and not data.SeenCustomerTip and chance > 0

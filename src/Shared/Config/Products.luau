@@ -12,6 +12,7 @@ local BuxPacks = require(script.Parent.BuxPacks)
 local Ingredients = require(script.Parent.Ingredients)
 local Structures = require(script.Parent.Structures)
 local EmployeeHut = require(script.Parent.EmployeeHut)
+local RandomIngredient = require(script.Parent.RandomIngredient)
 
 --
 export type Product = {
@@ -24,6 +25,8 @@ export type Product = {
 	ProductId: number,
 	CurrencyPrice: number?,
 	Value: number?, -- this is optional mostly used for reference how much X amount an X thing is
+	FirstOfDayProduct: string?, -- the discounted twin a buyer's first purchase of the day is prompted as instead
+	FirstOfDayFor: string?, -- on that twin: the product whose daily discount buying it spends
 	Callback: (player: Player, toGift: Player?) -> ()?,
 }
 
@@ -260,6 +263,45 @@ table.insert(Products.Data, {
 		-- Lazy require, to avoid pulling DailyRewardManager's dependency graph at module load
 		local DailyRewardManager = require(ServerScriptService.Server.Managers.DailyRewardManager)
 		DailyRewardManager:SkipDailyRewardWait(player)
+	end,
+})
+
+-- One ingredient rolled off the Random Ingredient pool. ShopManager prompts the discounted twin instead while the buyer's daily discount is up
+table.insert(Products.Data, {
+	Id = RandomIngredient.Id,
+	Name = RandomIngredient.Name,
+	Type = "Core",
+	Description = "Instantly get a random ingredient",
+	PurchaseOnce = false,
+	ProductId = RandomIngredient.RobuxProductId,
+	FirstOfDayProduct = RandomIngredient.FirstOfDayId,
+	Callback = function(player: Player)
+		if RunService:IsClient() then
+			return
+		end
+
+		-- Lazy require, to avoid pulling RandomIngredientManager's dependency graph at module load
+		local RandomIngredientManager = require(ServerScriptService.Server.Managers.RandomIngredientManager)
+		RandomIngredientManager:GrantRandomIngredient(player)
+	end,
+})
+
+table.insert(Products.Data, {
+	Id = RandomIngredient.FirstOfDayId,
+	Name = RandomIngredient.Name,
+	Type = "Core",
+	Description = "Instantly get a random ingredient, discounted once a day",
+	PurchaseOnce = false,
+	ProductId = RandomIngredient.FirstOfDayRobuxProductId,
+	FirstOfDayFor = RandomIngredient.Id,
+	Callback = function(player: Player)
+		if RunService:IsClient() then
+			return
+		end
+
+		-- Lazy require, to avoid pulling RandomIngredientManager's dependency graph at module load
+		local RandomIngredientManager = require(ServerScriptService.Server.Managers.RandomIngredientManager)
+		RandomIngredientManager:GrantRandomIngredient(player, true)
 	end,
 })
 

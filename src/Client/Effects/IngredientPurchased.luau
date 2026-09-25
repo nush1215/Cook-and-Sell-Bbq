@@ -34,6 +34,9 @@ return function(ingredientModel: Model, targetPlayer: Player?)
 
 	local startPos = ingredientModel:GetPivot().Position
 
+	-- Shrunk relative to where it starts, since a reveal hands it over at a display size rather than 1
+	local startScale = ingredientModel:GetScale()
+
 	local elapsed = 0
 	local spinCFrame = CFrame.identity
 
@@ -52,7 +55,7 @@ return function(ingredientModel: Model, targetPlayer: Player?)
 
 		-- Shrink and spin as it flies in
 		spinCFrame *= CFrame.Angles(0, SPIN_SPEED * dt, 0)
-		ingredientModel:ScaleTo(MathUtil.Lerp(1, 0.3, t))
+		ingredientModel:ScaleTo(startScale * MathUtil.Lerp(1, 0.3, t))
 		ingredientModel:PivotTo(CFrame.new(pos) * spinCFrame)
 
 		if alpha >= 1 then
